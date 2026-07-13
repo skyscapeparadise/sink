@@ -340,3 +340,14 @@ void trigger_print_dialog(const char* text_utf8) {
         });
     }
 }
+
+std::string get_bundle_resource_path(const std::string& filename) {
+    @autoreleasepool {
+        NSBundle* bundle = [NSBundle mainBundle];
+        NSString* path = [bundle pathForResource:[NSString stringWithUTF8String:filename.c_str()] ofType:nil];
+        if (path) {
+            return [path UTF8String];
+        }
+        return filename;
+    }
+}

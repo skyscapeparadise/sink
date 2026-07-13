@@ -41,3 +41,8 @@ void trigger_print_dialog(const char* text_utf8);
 #ifdef __cplusplus
 }
 #endif
+
+#ifdef __cplusplus
+#include <string>
+std::string get_bundle_resource_path(const std::string& filename);
+#endif

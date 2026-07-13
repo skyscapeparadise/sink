@@ -222,12 +222,46 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
     *appstate = state;
     g_app_state = state;
 
-    state->video_path = "sinkpool.mp4";
+    std::string default_video = "sinkpool.mp4";
+    std::string resolved_video = get_bundle_resource_path(default_video);
+    FILE* f_vid = fopen(resolved_video.c_str(), "r");
+    if (f_vid) {
+        fclose(f_vid);
+        state->video_path = resolved_video;
+    } else {
+        state->video_path = default_video;
+    }
+
     if (argc > 1) {
         state->video_path = argv[1];
     }
     state->video_is_hdr = inspect_hdr(state->video_path);
-    state->font_path = "/Users/kady/Projects/sink/fonts/MonaspaceNeon-Regular.otf";
+
+    std::string resolved_font = get_bundle_resource_path("MonaspaceNeon-Regular.otf");
+    FILE* f_font = fopen(resolved_font.c_str(), "r");
+    if (f_font) {
+        fclose(f_font);
+        state->font_path = resolved_font;
+    } else {
+        const char* fallbacks[] = {
+            "fonts/MonaspaceNeon-Regular.otf",
+            "/Users/kady/Projects/sink/fonts/MonaspaceNeon-Regular.otf",
+            "/System/Library/Fonts/SFNSMono.ttf",
+            "/System/Library/Fonts/Supplemental/Courier New.ttf"
+        };
+        state->font_path = "";
+        for (const char* path : fallbacks) {
+            FILE* f_fb = fopen(path, "r");
+            if (f_fb) {
+                fclose(f_fb);
+                state->font_path = path;
+                break;
+            }
+        }
+        if (state->font_path.empty()) {
+            state->font_path = "Courier New.ttf";
+        }
+    }
 
     // Spawn first window
     TerminalWindow* tw = create_terminal_window(state, nullptr);

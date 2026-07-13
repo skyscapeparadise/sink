@@ -4,6 +4,7 @@ CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
 Makefile
+sink.app/
 
 # macOS system files
 .DS_Store
@@ -13,3 +14,6 @@ Makefile
 # Icon design source & temporary assets
 icon.iconset/
 icon.psd
+
+# Release build scripts & artifacts
+releases/

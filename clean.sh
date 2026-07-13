@@ -9,8 +9,8 @@ if [ -d "build" ]; then
     echo "  removed build/ directory."
 fi
 
-# Remove macOS system metadata files
-find . -name ".DS_Store" -type f -delete
+# Remove macOS system metadata files (skip releases/)
+find . -path ./releases -prune -o -name ".DS_Store" -type f -delete
 echo "  removed all .DS_Store files."
 
 echo "clean complete!"
