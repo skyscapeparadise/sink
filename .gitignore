@@ -1,0 +1,15 @@
+# CMake Build Artifacts
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Icon design source & temporary assets
+icon.iconset/
+icon.psd
