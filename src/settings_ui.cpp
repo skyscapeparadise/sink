@@ -2,6 +2,11 @@
 #include <iostream>
 #include <cstring>
 #include <algorithm>
+#include <SDL3_image/SDL_image.h>
+
+#if defined(__APPLE__)
+#include "macos_menu.h"
+#endif
 
 // Static callbacks for file dialogs.
 static void background_dialog_callback(void* userdata, const char* const* filelist, int filter) {
@@ -66,12 +71,48 @@ bool SettingsUI::open(SDL_Window* parent_window) {
         font_manager_.load_font(renderer_, font_path, 13.0f * scale);
     }
 
+    // Load SVG logo textures
+    std::string sink_logo_path = "logos/sinklogo.svg";
+    std::string rain_logo_path = "logos/rainlogo.svg";
+#if defined(__APPLE__)
+    std::string resolved_sink = get_bundle_resource_path("sinklogo.svg");
+    FILE* f_sl = fopen(resolved_sink.c_str(), "r");
+    if (f_sl) { fclose(f_sl); sink_logo_path = resolved_sink; }
+    std::string resolved_rain = get_bundle_resource_path("rainlogo.svg");
+    FILE* f_rl = fopen(resolved_rain.c_str(), "r");
+    if (f_rl) { fclose(f_rl); rain_logo_path = resolved_rain; }
+#endif
+
+    sink_logo_ = IMG_LoadTexture(renderer_, sink_logo_path.c_str());
+    if (sink_logo_) {
+        SDL_SetTextureBlendMode(sink_logo_, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(sink_logo_, SDL_SCALEMODE_LINEAR);
+    } else {
+        std::cerr << "Failed to load sink logo: " << SDL_GetError() << std::endl;
+    }
+
+    rain_logo_ = IMG_LoadTexture(renderer_, rain_logo_path.c_str());
+    if (rain_logo_) {
+        SDL_SetTextureBlendMode(rain_logo_, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(rain_logo_, SDL_SCALEMODE_LINEAR);
+    } else {
+        std::cerr << "Failed to load rain logo: " << SDL_GetError() << std::endl;
+    }
+
     init_layout();
     return true;
 }
 
 void SettingsUI::close() {
     font_manager_.cleanup();
+    if (sink_logo_) {
+        SDL_DestroyTexture(sink_logo_);
+        sink_logo_ = nullptr;
+    }
+    if (rain_logo_) {
+        SDL_DestroyTexture(rain_logo_);
+        rain_logo_ = nullptr;
+    }
     if (renderer_) {
         SDL_DestroyRenderer(renderer_);
         renderer_ = nullptr;
@@ -290,23 +331,55 @@ void SettingsUI::render() {
     draw_rect_filled(font_card, colors_.card, 10.0f * scale);
     draw_rect_outline(font_card, colors_.border, 10.0f * scale);
 
-    // 3. Draw Labels (all lowercase matching samplesidekick)
-    draw_text("sink settings", 16.0f * scale, 20.0f * scale, colors_.text_primary);
+    // 3. Draw Logos in Header Bar
+    if (sink_logo_) {
+        float w = 0.0f, h = 0.0f;
+        SDL_GetTextureSize(sink_logo_, &w, &h);
+        float aspect = (h > 0.0f) ? (w / h) : 1.0f;
+        float draw_h = 36.0f * scale;
+        float draw_w = draw_h * aspect;
+        SDL_FRect sink_dst = { 16.0f * scale, 12.0f * scale, draw_w, draw_h };
+        SDL_RenderTexture(renderer_, sink_logo_, nullptr, &sink_dst);
+    } else {
+        draw_text("sink", 16.0f * scale, 20.0f * scale, colors_.text_primary);
+    }
+
+    if (rain_logo_) {
+        float w = 0.0f, h = 0.0f;
+        SDL_GetTextureSize(rain_logo_, &w, &h);
+        float aspect = (h > 0.0f) ? (w / h) : 1.0f;
+        float draw_h = 36.0f * scale;
+        float draw_w = draw_h * aspect;
+        float draw_x = (480.0f * scale) - draw_w - 16.0f * scale;
+        float draw_y = 12.0f * scale;
+        SDL_FRect rain_dst = { draw_x, draw_y, draw_w, draw_h };
+        SDL_RenderTexture(renderer_, rain_logo_, nullptr, &rain_dst);
+    } else {
+        draw_text("rain", (480.0f * scale) - 60.0f * scale, 20.0f * scale, colors_.text_secondary);
+    }
     
     draw_text("background media", 24.0f * scale, 70.0f * scale, colors_.text_secondary);
     std::string bg_disp = bg_path_;
-    if (bg_disp.length() > 18) {
-        bg_disp = "..." + bg_disp.substr(bg_disp.length() - 15);
-    }
     std::transform(bg_disp.begin(), bg_disp.end(), bg_disp.begin(), ::tolower);
+    if (bg_disp.find("sinkpool.mp4") != std::string::npos || bg_disp.empty() || bg_disp == "default") {
+        bg_disp = "default";
+    } else {
+        if (bg_disp.length() > 18) {
+            bg_disp = "..." + bg_disp.substr(bg_disp.length() - 15);
+        }
+    }
     draw_text(bg_disp, 260.0f * scale, 70.0f * scale, colors_.text_primary);
 
     draw_text("terminal typeface font", 24.0f * scale, 205.0f * scale, colors_.text_secondary);
     std::string font_disp = font_path_;
-    if (font_disp.length() > 28) {
-        font_disp = "..." + font_disp.substr(font_disp.length() - 25);
-    }
     std::transform(font_disp.begin(), font_disp.end(), font_disp.begin(), ::tolower);
+    if (font_disp.find("monaspaceneon-regular.otf") != std::string::npos || font_disp == "default") {
+        font_disp = "default (monaspace neon)";
+    } else {
+        if (font_disp.length() > 28) {
+            font_disp = "..." + font_disp.substr(font_disp.length() - 25);
+        }
+    }
     draw_text(font_disp, 164.0f * scale, 239.0f * scale, colors_.text_primary);
 
     // 4. Draw Buttons (ghost buttons with thin outline borders)

@@ -46,6 +46,17 @@ bool PTYBridge::spawn(int cols, int rows) {
         setenv("LANG", "en_US.UTF-8", 1);
         setenv("LC_ALL", "en_US.UTF-8", 1);
 
+        // Change working directory to user home if launched with root directory (Finder launch default)
+        char cwd_buf[1024];
+        if (getcwd(cwd_buf, sizeof(cwd_buf))) {
+            if (std::string(cwd_buf) == "/") {
+                const char* home = getenv("HOME");
+                if (home) {
+                    chdir(home);
+                }
+            }
+        }
+
         // Determine user shell
         const char* shell = getenv("SHELL");
         if (!shell) {

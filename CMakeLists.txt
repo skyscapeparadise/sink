@@ -4,9 +4,10 @@ project(SinkTerminal CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Find SDL3 and SDL3_ttf
+# Find SDL3, SDL3_ttf, and SDL3_image
 find_package(SDL3 REQUIRED)
 find_package(SDL3_ttf REQUIRED)
+find_package(SDL3_image REQUIRED)
 
 # Find FFmpeg using pkg-config
 find_package(PkgConfig REQUIRED)
@@ -39,6 +40,7 @@ target_include_directories(sink PRIVATE src)
 target_link_libraries(sink PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
+    SDL3_image::SDL3_image
     PkgConfig::AVCODEC
     PkgConfig::AVFORMAT
     PkgConfig::AVUTIL

@@ -9,6 +9,9 @@
 #include <mutex>
 #include <thread>
 #include <queue>
+#include <fstream>
+#include <sstream>
+#include <sys/stat.h>
 #include "terminal_grid.hpp"
 #include "pty_bridge.hpp"
 #include "ansi_parser.hpp"
@@ -101,7 +104,126 @@ struct AppState {
     float display_scale = 1.0f;
     Uint64 last_tick = 0;
     bool input_broadcasting = false;
+    float exposure = 0.7f;
+    bool animated_typing = true;
 };
+
+static std::string resolve_default_video_path() {
+    std::string default_video = "sinkpool.mp4";
+    std::string resolved_video = get_bundle_resource_path(default_video);
+    FILE* f_vid = fopen(resolved_video.c_str(), "r");
+    if (f_vid) {
+        fclose(f_vid);
+        return resolved_video;
+    }
+    
+    // Check fallback locations
+    const char* fallbacks[] = {
+        "sinkpool.mp4",
+        "../sinkpool.mp4",
+        "/Users/kady/Projects/sink/sinkpool.mp4"
+    };
+    for (const char* fb : fallbacks) {
+        FILE* f_fb = fopen(fb, "r");
+        if (f_fb) {
+            fclose(f_fb);
+            return fb;
+        }
+    }
+    return default_video;
+}
+
+static std::string resolve_default_font_path() {
+    std::string resolved_font = get_bundle_resource_path("MonaspaceNeon-Regular.otf");
+    FILE* f_font = fopen(resolved_font.c_str(), "r");
+    if (f_font) {
+        fclose(f_font);
+        return resolved_font;
+    }
+    const char* fallbacks[] = {
+        "fonts/MonaspaceNeon-Regular.otf",
+        "../fonts/MonaspaceNeon-Regular.otf",
+        "/Users/kady/Projects/sink/fonts/MonaspaceNeon-Regular.otf",
+        "/System/Library/Fonts/SFNSMono.ttf",
+        "/System/Library/Fonts/Supplemental/Courier New.ttf"
+    };
+    for (const char* path : fallbacks) {
+        FILE* f_fb = fopen(path, "r");
+        if (f_fb) {
+            fclose(f_fb);
+            return path;
+        }
+    }
+    return "Courier New.ttf";
+}
+
+static void save_config(AppState* state) {
+    const char* home = getenv("HOME");
+    if (!home) return;
+    std::string config_dir = std::string(home) + "/.config/sink";
+    mkdir(config_dir.c_str(), 0755); // Ensure folder exists
+    
+    std::ofstream f(config_dir + "/config.txt");
+    if (f.is_open()) {
+        std::string v_path = state->video_path;
+        if (v_path.find("sinkpool.mp4") != std::string::npos) {
+            v_path = "default";
+        }
+        
+        std::string f_path = state->font_path;
+        if (f_path.find("MonaspaceNeon-Regular.otf") != std::string::npos) {
+            f_path = "default";
+        }
+        
+        f << "video_path=" << v_path << "\n";
+        f << "font_path=" << f_path << "\n";
+        f << "exposure=" << state->exposure << "\n";
+        f << "animated_typing=" << (state->animated_typing ? "true" : "false") << "\n";
+        f.close();
+    }
+}
+
+static void load_config(AppState* state) {
+    const char* home = getenv("HOME");
+    if (!home) return;
+    std::ifstream f(std::string(home) + "/.config/sink/config.txt");
+    if (f.is_open()) {
+        std::string line;
+        while (std::getline(f, line)) {
+            size_t eq = line.find('=');
+            if (eq == std::string::npos) continue;
+            std::string key = line.substr(0, eq);
+            std::string val = line.substr(eq + 1);
+            
+            if (key == "video_path") {
+                if (val == "default" || val.empty()) {
+                    state->video_path = resolve_default_video_path();
+                } else {
+                    state->video_path = val;
+                }
+            } else if (key == "font_path") {
+                if (val == "default" || val.empty()) {
+                    state->font_path = resolve_default_font_path();
+                } else {
+                    state->font_path = val;
+                }
+            } else if (key == "exposure") {
+                try {
+                    state->exposure = std::stof(val);
+                } catch (...) {}
+            } else if (key == "animated_typing") {
+                state->animated_typing = (val == "true");
+            }
+        }
+        f.close();
+        
+        // Apply loaded settings to any active windows
+        for (auto* tw : state->windows) {
+            tw->exposure = state->exposure;
+            tw->animated_typing = state->animated_typing;
+        }
+    }
+}
 
 // Spawn a new terminal window container
 static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* parent_tab_window) {
@@ -179,8 +301,8 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
         }
     }
 
-    tw->animated_typing = true;
-    tw->exposure = 0.7f;
+    tw->animated_typing = state->animated_typing;
+    tw->exposure = state->exposure;
     tw->fade_state = TerminalWindow::FADE_HOLD_BLACK;
     tw->fade_opacity = 1.0f;
     tw->scroll_accumulator = 0.0f;
@@ -210,7 +332,9 @@ static void destroy_terminal_window(TerminalWindow* tw) {
 
 // SDL3 Application initialization entry point
 SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
-    SDL_SetAppMetadata("sink", "1.0.0", "org.sink.terminal");
+    SDL_SetAppMetadata("sink", "0.5.0", "com.rainmultimedia.sink");
+    SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_CREATOR_STRING, "rain multimedia");
+    SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_COPYRIGHT_STRING, "copyright © 2026 rain multimedia. all rights reserved.");
 
     // Initialize SDL3 Video
     if (!SDL_Init(SDL_INIT_VIDEO)) {
@@ -222,46 +346,17 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
     *appstate = state;
     g_app_state = state;
 
-    std::string default_video = "sinkpool.mp4";
-    std::string resolved_video = get_bundle_resource_path(default_video);
-    FILE* f_vid = fopen(resolved_video.c_str(), "r");
-    if (f_vid) {
-        fclose(f_vid);
-        state->video_path = resolved_video;
-    } else {
-        state->video_path = default_video;
-    }
+    state->video_path = resolve_default_video_path();
+
+    // Load config if present
+    load_config(state);
 
     if (argc > 1) {
         state->video_path = argv[1];
+        state->video_is_hdr = inspect_hdr(state->video_path);
     }
-    state->video_is_hdr = inspect_hdr(state->video_path);
 
-    std::string resolved_font = get_bundle_resource_path("MonaspaceNeon-Regular.otf");
-    FILE* f_font = fopen(resolved_font.c_str(), "r");
-    if (f_font) {
-        fclose(f_font);
-        state->font_path = resolved_font;
-    } else {
-        const char* fallbacks[] = {
-            "fonts/MonaspaceNeon-Regular.otf",
-            "/Users/kady/Projects/sink/fonts/MonaspaceNeon-Regular.otf",
-            "/System/Library/Fonts/SFNSMono.ttf",
-            "/System/Library/Fonts/Supplemental/Courier New.ttf"
-        };
-        state->font_path = "";
-        for (const char* path : fallbacks) {
-            FILE* f_fb = fopen(path, "r");
-            if (f_fb) {
-                fclose(f_fb);
-                state->font_path = path;
-                break;
-            }
-        }
-        if (state->font_path.empty()) {
-            state->font_path = "Courier New.ttf";
-        }
-    }
+    state->font_path = resolve_default_font_path();
 
     // Spawn first window
     TerminalWindow* tw = create_terminal_window(state, nullptr);
@@ -634,6 +729,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             }
 
             state->settings_ui.set_paths(state->video_path, state->font_path);
+            save_config(state);
             free(path);
         } else if (event->user.code == 2) { // Font selected
             char* path = (char*)event->user.data1;
@@ -658,21 +754,29 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             }
 
             state->settings_ui.set_paths(state->video_path, state->font_path);
+            save_config(state);
             free(path);
-        } else if (event->user.code == 3) { // Clear media
-            std::cout << "Settings Event: background cleared." << std::endl;
-            state->video_path = "";
+        } else if (event->user.code == 3) { // Clear media -> reset to default pool video background
+            std::cout << "Settings Event: background cleared to default." << std::endl;
+            state->video_path = resolve_default_video_path();
+            state->video_is_hdr = inspect_hdr(state->video_path);
             for (auto* tw : state->windows) {
                 tw->video_engine.stop();
                 tw->video_engine.close_video();
                 tw->has_video = false;
-                tw->fade_state = TerminalWindow::FADE_DONE;
-                tw->fade_opacity = 0.0f;
+                if (tw->video_engine.open_video(tw->renderer, state->video_path)) {
+                    tw->video_engine.start();
+                    tw->has_video = true;
+                    tw->fade_state = TerminalWindow::FADE_HOLD_BLACK;
+                    tw->fade_opacity = 1.0f;
+                }
             }
             state->settings_ui.set_paths(state->video_path, state->font_path);
+            save_config(state);
         } else if (event->user.code == 4) { // Typing effect toggle
             bool anim = (bool)(intptr_t)event->user.data1;
             std::cout << "Settings Event: typing effect toggled: " << (anim ? "ON" : "OFF") << std::endl;
+            state->animated_typing = anim;
             for (auto* tw : state->windows) {
                 tw->animated_typing = anim;
                 if (!tw->animated_typing) {
@@ -682,6 +786,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                     }
                 }
             }
+            save_config(state);
         } else if (event->user.code == 5) { // Input broadcasting toggle
             bool broadcast = (bool)(intptr_t)event->user.data1;
             std::cout << "Settings Event: input broadcasting toggled: " << (broadcast ? "ON" : "OFF") << std::endl;
@@ -770,8 +875,12 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
     // Sync exposure setting from UI in real-time
     if (state->settings_ui.is_open()) {
         float exp = state->settings_ui.get_exposure();
-        for (auto* tw : state->windows) {
-            tw->exposure = exp;
+        if (state->exposure != exp) {
+            state->exposure = exp;
+            for (auto* tw : state->windows) {
+                tw->exposure = exp;
+            }
+            save_config(state);
         }
     }
 

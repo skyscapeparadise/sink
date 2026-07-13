@@ -80,6 +80,9 @@ private:
 
     FontManager font_manager_;
 
+    SDL_Texture* sink_logo_ = nullptr;
+    SDL_Texture* rain_logo_ = nullptr;
+
     void init_layout();
     void update_slider_value(int slider_id, float mouse_x);
     void draw_text(const std::string& text, float x, float y, const SDL_FColor& color, bool monospace = false);
