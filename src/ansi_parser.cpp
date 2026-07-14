@@ -2,10 +2,24 @@
 #include <iostream>
 #include <sstream>
 #include <algorithm>
+#include <limits>
 
 ANSIParser::ANSIParser() {}
 
 ANSIParser::~ANSIParser() {}
+
+// Parses a CSI numeric parameter without throwing on overflow or malformed input
+// (terminal input is attacker-controlled, e.g. `cat`'d files or remote shell output).
+static int parse_csi_param(const std::string& buffer) {
+    if (buffer.empty()) return 0;
+    try {
+        return std::stoi(buffer);
+    } catch (const std::out_of_range&) {
+        return std::numeric_limits<int>::max();
+    } catch (const std::invalid_argument&) {
+        return 0;
+    }
+}
 
 void ANSIParser::reset_csi() {
     csi_params_.clear();
@@ -116,15 +130,11 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
             } else if (c >= '0' && c <= '9') {
                 csi_buffer_ += static_cast<char>(c);
             } else if (c == ';') {
-                if (csi_buffer_.empty()) {
-                    csi_params_.push_back(0);
-                } else {
-                    csi_params_.push_back(std::stoi(csi_buffer_));
-                    csi_buffer_.clear();
-                }
+                csi_params_.push_back(parse_csi_param(csi_buffer_));
+                csi_buffer_.clear();
             } else if (c >= 0x40 && c <= 0x7E) {
                 if (!csi_buffer_.empty()) {
-                    csi_params_.push_back(std::stoi(csi_buffer_));
+                    csi_params_.push_back(parse_csi_param(csi_buffer_));
                 }
                 process_csi_sequence(grid, static_cast<char>(c));
                 state_ = STATE_NORMAL;
@@ -240,12 +250,16 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
         case 'h': { // Set Mode (SM / DECSET)
             if (is_private_mode_ && get_param(0, 0) == 1049) {
                 grid.set_alt_screen(true);
+            } else if (is_private_mode_ && get_param(0, 0) == 2004) {
+                grid.set_bracketed_paste(true);
             }
             break;
         }
         case 'l': { // Reset Mode (RM / DECRST)
             if (is_private_mode_ && get_param(0, 0) == 1049) {
                 grid.set_alt_screen(false);
+            } else if (is_private_mode_ && get_param(0, 0) == 2004) {
+                grid.set_bracketed_paste(false);
             }
             break;
         }

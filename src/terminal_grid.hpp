@@ -69,6 +69,9 @@ public:
 
     void set_alt_screen(bool active) { alt_screen_active_ = active; }
     bool is_alt_screen_active() const { return alt_screen_active_; }
+
+    void set_bracketed_paste(bool active) { bracketed_paste_active_ = active; }
+    bool is_bracketed_paste_active() const { return bracketed_paste_active_; }
     
     void set_prompt_boundary(int col) { prompt_boundary_col_ = col; }
     int get_prompt_boundary() const { return prompt_boundary_col_; }
@@ -103,6 +106,7 @@ private:
     int select_end_row_ = -1;
     bool selecting_ = false;
     bool alt_screen_active_ = false;
+    bool bracketed_paste_active_ = false;
     int prompt_boundary_col_ = -1;
 
     // Cursor position & formatting attributes

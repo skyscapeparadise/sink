@@ -815,7 +815,15 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             if (SDL_HasClipboardText()) {
                 char* text = SDL_GetClipboardText();
                 if (text) {
-                    tw->pty.write_to_pty(text, strlen(text));
+                    if (tw->terminal.is_bracketed_paste_active()) {
+                        // Wrap in bracketed-paste markers so the shell treats the
+                        // content as literal text instead of executing embedded newlines.
+                        tw->pty.write_to_pty("\x1b[200~", 6);
+                        tw->pty.write_to_pty(text, strlen(text));
+                        tw->pty.write_to_pty("\x1b[201~", 6);
+                    } else {
+                        tw->pty.write_to_pty(text, strlen(text));
+                    }
                     SDL_free(text);
                 }
             }
