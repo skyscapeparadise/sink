@@ -499,13 +499,13 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         }
     } else if (event->type == SDL_EVENT_MOUSE_MOTION) {
         if (event->motion.windowID == SDL_GetWindowID(target_tw->window)) {
-            if (event->motion.state & SDL_BUTTON_LMASK) {
-                float mx = event->motion.x;
-                float my = event->motion.y;
-                
-                int col = static_cast<int>((mx - state->padding) / target_tw->cell_w);
-                int row = static_cast<int>((my - state->padding) / target_tw->cell_h);
-                
+            float mx = event->motion.x;
+            float my = event->motion.y;
+            
+            int col = static_cast<int>((mx - state->padding) / target_tw->cell_w);
+            int row = static_cast<int>((my - state->padding) / target_tw->cell_h);
+            
+            if (target_tw->terminal.is_selecting()) {
                 target_tw->terminal.update_selection(col, row);
             }
         }
@@ -623,34 +623,36 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                             int len = end_col - start_col + 1;
                             
                             // 1. Move cursor to end_col + 1
+                            std::string payload;
                             int target_pos = end_col + 1;
                             if (cursor_col < target_pos) {
                                 for (int i = 0; i < (target_pos - cursor_col); ++i) {
-                                    tw->pty.write_to_pty("\x1b[C", 3); // Right Arrow
+                                    payload += "\x1b[C"; // Right Arrow
                                 }
                             } else if (cursor_col > target_pos) {
                                 for (int i = 0; i < (cursor_col - target_pos); ++i) {
-                                    tw->pty.write_to_pty("\x1b[D", 3); // Left Arrow
+                                    payload += "\x1b[D"; // Left Arrow
                                 }
                             }
                             
                             // 2. Send backspaces to delete the selection
                             for (int i = 0; i < len; ++i) {
-                                const char bs = '\x7f';
-                                tw->pty.write_to_pty(&bs, 1);
+                                payload += "\x7f";
                             }
                             
                             // 3. Move cursor back to its target position
                             if (cursor_col > target_pos) {
                                 int final_target = cursor_col - len;
                                 for (int i = 0; i < (final_target - start_col); ++i) {
-                                    tw->pty.write_to_pty("\x1b[C", 3); // Right Arrow
+                                    payload += "\x1b[C"; // Right Arrow
                                 }
                             } else if (cursor_col <= start_col) {
                                 for (int i = 0; i < (start_col - cursor_col); ++i) {
-                                    tw->pty.write_to_pty("\x1b[D", 3); // Left Arrow
+                                    payload += "\x1b[D"; // Left Arrow
                                 }
                             }
+                            
+                            tw->pty.write_to_pty(payload.data(), payload.size());
                             
                             tw->terminal.clear_selection();
                             handled = true;
@@ -797,7 +799,6 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
     return SDL_APP_CONTINUE;
 }
 
-// SDL3 Application iterate loop frame iteration entry point
 SDL_AppResult SDL_AppIterate(void* appstate) {
     AppState* state = static_cast<AppState*>(appstate);
     if (!state) return SDL_APP_FAILURE;

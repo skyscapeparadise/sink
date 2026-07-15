@@ -57,6 +57,11 @@ bool PTYBridge::spawn(int cols, int rows) {
             }
         }
 
+        // Ensure child shell runs with UTF-8 locale support and xterm capabilities
+        setenv("LANG", "en_US.UTF-8", 1);
+        setenv("LC_ALL", "en_US.UTF-8", 1);
+        setenv("TERM", "xterm-256color", 1);
+
         // Determine user shell
         const char* shell = getenv("SHELL");
         if (!shell) {

@@ -399,7 +399,7 @@ void SettingsUI::render() {
 
         float text_w = 0.0f;
         for (char c : btn.label) {
-            const GlyphInfo* glyph = font_manager_.get_glyph(static_cast<char32_t>(c));
+            const GlyphInfo* glyph = font_manager_.get_glyph(renderer_, static_cast<char32_t>(c));
             if (glyph) text_w += glyph->advance;
         }
         
@@ -575,7 +575,7 @@ void SettingsUI::draw_text(const std::string& text, float x, float y, const SDL_
 
     for (char c : text) {
         if (c == '\n' || c == '\r') continue;
-        const GlyphInfo* glyph = font_manager_.get_glyph(static_cast<char32_t>(c));
+        const GlyphInfo* glyph = font_manager_.get_glyph(renderer_, static_cast<char32_t>(c));
         if (glyph) {
             SDL_FRect src = glyph->src_rect;
             SDL_FRect dst = {

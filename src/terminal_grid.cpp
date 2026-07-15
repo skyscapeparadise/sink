@@ -393,6 +393,8 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
     SDL_Texture* atlas = font_manager.get_atlas_texture();
     if (!atlas) return;
 
+    SDL_Texture* dyn_atlas = font_manager.get_dynamic_atlas_texture();
+
     int win_w = 0, win_h = 0;
     SDL_GetRenderOutputSize(renderer, &win_w, &win_h);
 
@@ -402,10 +404,18 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
         return;
     }
 
+    float dyn_atlas_w = 0.0f;
+    float dyn_atlas_h = 0.0f;
+    if (dyn_atlas) {
+        SDL_GetTextureSize(dyn_atlas, &dyn_atlas_w, &dyn_atlas_h);
+    }
+
     bg_vertices_.clear();
     bg_indices_.clear();
     text_vertices_.clear();
     text_indices_.clear();
+    dyn_text_vertices_.clear();
+    dyn_text_indices_.clear();
     
 
     // 1. Draw Grid Cells
@@ -443,32 +453,66 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
 
             // Populate Text Geometry
             if (cell.codepoint != 32 && cell.codepoint != 0) {
-                const GlyphInfo* glyph = font_manager.get_glyph(cell.codepoint);
+                const GlyphInfo* glyph = font_manager.get_glyph(renderer, cell.codepoint);
                 if (glyph && glyph->src_rect.w > 0.0f && glyph->src_rect.h > 0.0f) {
-                    int base_idx = static_cast<int>(text_vertices_.size());
+                    bool is_dynamic = (cell.codepoint < 32 || cell.codepoint > 126);
+                    float tex_w = is_dynamic ? dyn_atlas_w : atlas_w;
+                    float tex_h = is_dynamic ? dyn_atlas_h : atlas_h;
 
-                    float u0 = glyph->src_rect.x / atlas_w;
-                    float v0 = glyph->src_rect.y / atlas_h;
-                    float u1 = (glyph->src_rect.x + glyph->src_rect.w) / atlas_w;
-                    float v1 = (glyph->src_rect.y + glyph->src_rect.h) / atlas_h;
+                    if (tex_w > 0.0f && tex_h > 0.0f) {
+                        float u0 = glyph->src_rect.x / tex_w;
+                        float v0 = glyph->src_rect.y / tex_h;
+                        float u1 = (glyph->src_rect.x + glyph->src_rect.w) / tex_w;
+                        float v1 = (glyph->src_rect.y + glyph->src_rect.h) / tex_h;
 
-                    float glyph_w = glyph->src_rect.w;
-                    float gx0 = x0 + (cell_w - glyph_w) / 2.0f;
-                    float gy0 = y0;
-                    float gx1 = gx0 + glyph_w;
-                    float gy1 = gy0 + glyph->src_rect.h;
+                        float glyph_w = glyph->src_rect.w;
+                        float glyph_h = glyph->src_rect.h;
 
-                    text_vertices_.push_back({ {gx0, gy0}, cell.fg, {u0, v0} });
-                    text_vertices_.push_back({ {gx1, gy0}, cell.fg, {u1, v0} });
-                    text_vertices_.push_back({ {gx0, gy1}, cell.fg, {u0, v1} });
-                    text_vertices_.push_back({ {gx1, gy1}, cell.fg, {u1, v1} });
+                        if (glyph->is_color) {
+                            float target_w = cell_w;
+                            float scale_factor = target_w / glyph_w;
+                            glyph_w = target_w;
+                            glyph_h *= scale_factor;
+                        }
 
-                    text_indices_.push_back(base_idx + 0);
-                    text_indices_.push_back(base_idx + 1);
-                    text_indices_.push_back(base_idx + 2);
-                    text_indices_.push_back(base_idx + 2);
-                    text_indices_.push_back(base_idx + 1);
-                    text_indices_.push_back(base_idx + 3);
+                        float gx0 = x0 + (cell_w - glyph_w) / 2.0f;
+                        float gy0 = y0 + (cell_h - glyph_h) / 2.0f;
+                        float gx1 = gx0 + glyph_w;
+                        float gy1 = gy0 + glyph_h;
+
+                        SDL_FColor render_color = cell.fg;
+                        if (glyph->is_color) {
+                            render_color = {1.0f, 1.0f, 1.0f, 1.0f}; // Don't color-tint color emojis
+                        }
+
+                        if (is_dynamic) {
+                            int base_idx = static_cast<int>(dyn_text_vertices_.size());
+                            dyn_text_vertices_.push_back({ {gx0, gy0}, render_color, {u0, v0} });
+                            dyn_text_vertices_.push_back({ {gx1, gy0}, render_color, {u1, v0} });
+                            dyn_text_vertices_.push_back({ {gx0, gy1}, render_color, {u0, v1} });
+                            dyn_text_vertices_.push_back({ {gx1, gy1}, render_color, {u1, v1} });
+
+                            dyn_text_indices_.push_back(base_idx + 0);
+                            dyn_text_indices_.push_back(base_idx + 1);
+                            dyn_text_indices_.push_back(base_idx + 2);
+                            dyn_text_indices_.push_back(base_idx + 2);
+                            dyn_text_indices_.push_back(base_idx + 1);
+                            dyn_text_indices_.push_back(base_idx + 3);
+                        } else {
+                            int base_idx = static_cast<int>(text_vertices_.size());
+                            text_vertices_.push_back({ {gx0, gy0}, render_color, {u0, v0} });
+                            text_vertices_.push_back({ {gx1, gy0}, render_color, {u1, v0} });
+                            text_vertices_.push_back({ {gx0, gy1}, render_color, {u0, v1} });
+                            text_vertices_.push_back({ {gx1, gy1}, render_color, {u1, v1} });
+
+                            text_indices_.push_back(base_idx + 0);
+                            text_indices_.push_back(base_idx + 1);
+                            text_indices_.push_back(base_idx + 2);
+                            text_indices_.push_back(base_idx + 2);
+                            text_indices_.push_back(base_idx + 1);
+                            text_indices_.push_back(base_idx + 3);
+                        }
+                    }
                 }
             }
         }
@@ -599,6 +643,9 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
     // 5. Draw Final Crisp Text Glyphs
     if (!text_vertices_.empty()) {
         SDL_RenderGeometry(renderer, atlas, text_vertices_.data(), static_cast<int>(text_vertices_.size()), text_indices_.data(), static_cast<int>(text_indices_.size()));
+    }
+    if (dyn_atlas && !dyn_text_vertices_.empty()) {
+        SDL_RenderGeometry(renderer, dyn_atlas, dyn_text_vertices_.data(), static_cast<int>(dyn_text_vertices_.size()), dyn_text_indices_.data(), static_cast<int>(dyn_text_indices_.size()));
     }
 
     // 6. Draw Translucent macOS Scrollbar Overlay

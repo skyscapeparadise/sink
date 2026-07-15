@@ -24,15 +24,27 @@ void FontManager::cleanup() {
         SDL_DestroyTexture(atlas_texture_);
         atlas_texture_ = nullptr;
     }
+    if (dynamic_atlas_texture_) {
+        SDL_DestroyTexture(dynamic_atlas_texture_);
+        dynamic_atlas_texture_ = nullptr;
+    }
     if (font_) {
         TTF_CloseFont(font_);
         font_ = nullptr;
+    }
+    if (emoji_font_) {
+        TTF_CloseFont(emoji_font_);
+        emoji_font_ = nullptr;
     }
     if (is_ttf_initialized_) {
         TTF_Quit();
         is_ttf_initialized_ = false;
     }
     glyph_cache_.clear();
+    dynamic_glyph_cache_.clear();
+    dynamic_x_ = 0;
+    dynamic_y_ = 0;
+    dynamic_row_h_ = 0;
 }
 
 bool FontManager::load_font(SDL_Renderer* renderer, const std::string& font_path, float font_size, bool bold) {
@@ -44,11 +56,23 @@ bool FontManager::load_font(SDL_Renderer* renderer, const std::string& font_path
         TTF_CloseFont(font_);
         font_ = nullptr;
     }
+    if (emoji_font_) {
+        TTF_CloseFont(emoji_font_);
+        emoji_font_ = nullptr;
+    }
     if (atlas_texture_) {
         SDL_DestroyTexture(atlas_texture_);
         atlas_texture_ = nullptr;
     }
+    if (dynamic_atlas_texture_) {
+        SDL_DestroyTexture(dynamic_atlas_texture_);
+        dynamic_atlas_texture_ = nullptr;
+    }
     glyph_cache_.clear();
+    dynamic_glyph_cache_.clear();
+    dynamic_x_ = 0;
+    dynamic_y_ = 0;
+    dynamic_row_h_ = 0;
 
     font_ = TTF_OpenFont(font_path.c_str(), font_size);
     if (!font_) {
@@ -59,6 +83,25 @@ bool FontManager::load_font(SDL_Renderer* renderer, const std::string& font_path
     if (bold) {
         TTF_SetFontStyle(font_, TTF_STYLE_BOLD);
     }
+
+    // Load fallback emoji font
+    emoji_font_ = TTF_OpenFont("/System/Library/Fonts/Apple Color Emoji.ttc", font_size);
+    if (!emoji_font_) {
+        std::cerr << "Warning: Failed to open Apple Color Emoji font. Emoji support may be degraded." << std::endl;
+    }
+
+    // Create dynamic atlas texture (1024x1024 RGBA32)
+    dynamic_atlas_texture_ = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, 1024, 1024);
+    if (!dynamic_atlas_texture_) {
+        std::cerr << "Failed to create dynamic atlas texture: " << SDL_GetError() << std::endl;
+        return false;
+    }
+    SDL_SetTextureBlendMode(dynamic_atlas_texture_, SDL_BLENDMODE_BLEND);
+    SDL_SetTextureScaleMode(dynamic_atlas_texture_, SDL_SCALEMODE_LINEAR);
+
+    // Initialize dynamic atlas to transparent black
+    std::vector<uint32_t> empty_pixels(1024 * 1024, 0);
+    SDL_UpdateTexture(dynamic_atlas_texture_, nullptr, empty_pixels.data(), 1024 * sizeof(uint32_t));
 
     // Get monospace cell dimensions
     cell_height_ = static_cast<float>(TTF_GetFontHeight(font_));
@@ -188,15 +231,130 @@ bool FontManager::build_atlas(SDL_Renderer* renderer) {
     return true;
 }
 
-const GlyphInfo* FontManager::get_glyph(char32_t codepoint) const {
+static bool is_emoji_codepoint(char32_t cp) {
+    if (cp >= 0x1F000 && cp <= 0x1FBF8) return true;
+    if (cp >= 0x2600 && cp <= 0x27BF) return true;
+    if (cp >= 0x2300 && cp <= 0x23FF) return true;
+    if (cp == 0x2B50) return true; // Star
+    return false;
+}
+
+const GlyphInfo* FontManager::get_glyph(SDL_Renderer* renderer, char32_t codepoint) const {
+    // 1. Static Cache Lookup (ASCII 32-126)
     auto it = glyph_cache_.find(codepoint);
     if (it != glyph_cache_.end()) {
         return &it->second;
     }
-    // Return space fallback if character not in cache
-    it = glyph_cache_.find(32);
-    if (it != glyph_cache_.end()) {
-        return &it->second;
+
+    // 2. Dynamic Cache Lookup
+    auto dyn_it = dynamic_glyph_cache_.find(codepoint);
+    if (dyn_it != dynamic_glyph_cache_.end()) {
+        return &dyn_it->second;
     }
-    return nullptr;
+
+    // 3. Fallback/Ignored checks
+    if (codepoint == 0 || codepoint == 32) {
+        // Return space fallback
+        it = glyph_cache_.find(32);
+        if (it != glyph_cache_.end()) {
+            return &it->second;
+        }
+        return nullptr;
+    }
+
+    if (!renderer || !dynamic_atlas_texture_) {
+        // Return space fallback
+        it = glyph_cache_.find(32);
+        if (it != glyph_cache_.end()) {
+            return &it->second;
+        }
+        return nullptr;
+    }
+
+    // 4. Determine font source & render
+    bool is_color = false;
+    SDL_Surface* glyph_surf = nullptr;
+    SDL_Color white = {255, 255, 255, 255};
+
+    if (is_emoji_codepoint(codepoint)) {
+        if (emoji_font_ && TTF_FontHasGlyph(emoji_font_, codepoint)) {
+            glyph_surf = TTF_RenderGlyph_Blended(emoji_font_, codepoint, white);
+            is_color = true;
+        }
+    } else {
+        if (font_ && TTF_FontHasGlyph(font_, codepoint)) {
+            glyph_surf = TTF_RenderGlyph_Blended(font_, codepoint, white);
+        } else if (emoji_font_ && TTF_FontHasGlyph(emoji_font_, codepoint)) {
+            glyph_surf = TTF_RenderGlyph_Blended(emoji_font_, codepoint, white);
+            is_color = true;
+        }
+    }
+
+    if (!glyph_surf) {
+        // Return space fallback
+        it = glyph_cache_.find(32);
+        if (it != glyph_cache_.end()) {
+            return &it->second;
+        }
+        return nullptr;
+    }
+
+    // 5. Pack glyph into the dynamic atlas
+    int w = glyph_surf->w;
+    int h = glyph_surf->h;
+
+    // Check if we need to wrap to next row
+    if (dynamic_x_ + w + 4 > 1024) {
+        dynamic_x_ = 0;
+        dynamic_y_ += dynamic_row_h_ + 4;
+        dynamic_row_h_ = 0;
+    }
+
+    // Check if atlas is full
+    if (dynamic_y_ + h + 4 > 1024) {
+        // Reset packer coordinates & clear cache
+        dynamic_x_ = 0;
+        dynamic_y_ = 0;
+        dynamic_row_h_ = 0;
+        dynamic_glyph_cache_.clear();
+
+        // Clear dynamic texture
+        std::vector<uint32_t> empty_pixels(1024 * 1024, 0);
+        SDL_UpdateTexture(dynamic_atlas_texture_, nullptr, empty_pixels.data(), 1024 * sizeof(uint32_t));
+    }
+
+    // Copy surface pixels to dynamic texture
+    SDL_Rect dst_rect = { dynamic_x_, dynamic_y_, w, h };
+    SDL_UpdateTexture(dynamic_atlas_texture_, &dst_rect, glyph_surf->pixels, glyph_surf->pitch);
+
+    // Get advance metric
+    int adv = 0;
+    if (is_color) {
+        TTF_GetGlyphMetrics(emoji_font_, codepoint, nullptr, nullptr, nullptr, nullptr, &adv);
+    } else {
+        TTF_GetGlyphMetrics(font_, codepoint, nullptr, nullptr, nullptr, nullptr, &adv);
+    }
+    float actual_advance = adv > 0 ? static_cast<float>(adv) : static_cast<float>(w);
+
+    // Create GlyphInfo
+    GlyphInfo info;
+    info.src_rect = {
+        static_cast<float>(dynamic_x_),
+        static_cast<float>(dynamic_y_),
+        static_cast<float>(w),
+        static_cast<float>(h)
+    };
+    info.advance = actual_advance;
+    info.is_color = is_color;
+
+    // Cache it
+    dynamic_glyph_cache_[codepoint] = info;
+
+    // Advance packer coordinates
+    dynamic_x_ += w + 4;
+    dynamic_row_h_ = std::max(dynamic_row_h_, h);
+
+    SDL_DestroySurface(glyph_surf);
+
+    return &dynamic_glyph_cache_[codepoint];
 }

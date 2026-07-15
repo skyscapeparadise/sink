@@ -63,6 +63,7 @@ public:
     std::string get_selected_text() const;
     void select_all();
     bool has_selection() const { return has_selection_; }
+    bool is_selecting() const { return selecting_; }
 
     void trigger_error_flash() { error_glow_opacity_ = 1.0f; }
     void update_timers(float dt);
@@ -123,4 +124,6 @@ private:
     std::vector<int> bg_indices_;
     std::vector<SDL_Vertex> text_vertices_;
     std::vector<int> text_indices_;
+    std::vector<SDL_Vertex> dyn_text_vertices_;
+    std::vector<int> dyn_text_indices_;
 };

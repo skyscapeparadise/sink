@@ -99,18 +99,25 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                 grid.set_cursor_col(next_tab);
             } else {
                 // Standard printable character
-                grid.write_character(c);
+                // Ignore Unicode Variation Selectors and Zero-Width characters
+                if (!((c >= 0xFE00 && c <= 0xFE0F) || 
+                      (c >= 0xE0100 && c <= 0xE01EF) ||
+                      (c >= 0x200B && c <= 0x200D) ||
+                      c == 0x2060 ||
+                      c == 0xFEFF)) {
+                    grid.write_character(c);
 
-                if (c >= 32 && c < 127) {
-                    trigger_buffer_ += std::tolower(static_cast<char>(c));
-                    if (trigger_buffer_.length() > 32) {
-                        trigger_buffer_ = trigger_buffer_.substr(trigger_buffer_.length() - 32);
-                    }
-                    
-                    if (trigger_buffer_.find("error") != std::string::npos ||
-                        trigger_buffer_.find("failed") != std::string::npos) {
-                        grid.trigger_error_flash();
-                        trigger_buffer_.clear();
+                    if (c >= 32 && c < 127) {
+                        trigger_buffer_ += std::tolower(static_cast<char>(c));
+                        if (trigger_buffer_.length() > 32) {
+                            trigger_buffer_ = trigger_buffer_.substr(trigger_buffer_.length() - 32);
+                        }
+                        
+                        if (trigger_buffer_.find("error") != std::string::npos ||
+                            trigger_buffer_.find("failed") != std::string::npos) {
+                            grid.trigger_error_flash();
+                            trigger_buffer_.clear();
+                        }
                     }
                 }
             }
