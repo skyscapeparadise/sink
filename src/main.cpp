@@ -942,6 +942,16 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         // Process incoming shell data
         std::vector<char> output = tw->pty.read_pending();
         if (!output.empty()) {
+            std::cerr << "[PTY_READ] size=" << output.size() << " content=";
+            for (char c : output) {
+                if (c == '\x1b') std::cerr << "\\e";
+                else if (c == '\x7f') std::cerr << "\\x7f";
+                else if (c == '\x08') std::cerr << "\\b";
+                else if (c < 32 || c > 126) std::cerr << "\\x" << std::hex << (int)(unsigned char)c << std::dec;
+                else std::cerr << c;
+            }
+            std::cerr << std::endl;
+
             if (tw->animated_typing) {
                 if (output.size() > 5) {
                     // Large chunk / burst output (command output): bypass typing effect to maintain performance
