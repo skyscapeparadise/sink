@@ -521,7 +521,8 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 int clicks = event->button.clicks;
                 if (clicks == 1 && col == target_tw->mouse_down_col && row == target_tw->mouse_down_row) {
                     // Snapping cursor on mouse release
-                    if (!target_tw->terminal.is_alt_screen_active() && row == target_tw->terminal.get_cursor_row()) {
+                    SDL_Keymod mod = SDL_GetModState();
+                    if ((mod & SDL_KMOD_ALT) && !target_tw->terminal.is_alt_screen_active() && row == target_tw->terminal.get_cursor_row()) {
                         if (target_tw->terminal.get_prompt_boundary() == -1) {
                             target_tw->terminal.set_prompt_boundary(target_tw->terminal.get_cursor_col());
                         }
@@ -533,11 +534,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                             std::string move_payload;
                             if (offset > 0) {
                                 for (int o = 0; o < offset; ++o) {
-                                    move_payload += "\x1bOC"; // Application Mode Right Arrow
+                                    move_payload += "\x1b[C"; // Standard Right Arrow
                                 }
                             } else if (offset < 0) {
                                 for (int o = 0; o < -offset; ++o) {
-                                    move_payload += "\x1bOD"; // Application Mode Left Arrow
+                                    move_payload += "\x1b[D"; // Standard Left Arrow
                                 }
                             }
                             if (!move_payload.empty()) {
@@ -643,11 +644,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                             int target_pos = end_col + 1;
                             if (cursor_col < target_pos) {
                                 for (int i = 0; i < (target_pos - cursor_col); ++i) {
-                                    payload += "\x1bOC"; // Application Mode Right Arrow
+                                    payload += "\x1b[C"; // Standard Right Arrow
                                 }
                             } else if (cursor_col > target_pos) {
                                 for (int i = 0; i < (cursor_col - target_pos); ++i) {
-                                    payload += "\x1bOD"; // Application Mode Left Arrow
+                                    payload += "\x1b[D"; // Standard Left Arrow
                                 }
                             }
                             
@@ -660,11 +661,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                             if (cursor_col > target_pos) {
                                 int final_target = cursor_col - len;
                                 for (int i = 0; i < (final_target - start_col); ++i) {
-                                    payload += "\x1bOC"; // Application Mode Right Arrow
+                                    payload += "\x1b[C"; // Standard Right Arrow
                                 }
                             } else if (cursor_col <= start_col) {
                                 for (int i = 0; i < (start_col - cursor_col); ++i) {
-                                    payload += "\x1bOD"; // Application Mode Left Arrow
+                                    payload += "\x1b[D"; // Standard Left Arrow
                                 }
                             }
                             
