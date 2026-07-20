@@ -533,11 +533,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                             std::string move_payload;
                             if (offset > 0) {
                                 for (int o = 0; o < offset; ++o) {
-                                    move_payload += "\x06"; // Ctrl-F (Right)
+                                    move_payload += "\x1bOC"; // Application Mode Right Arrow
                                 }
                             } else if (offset < 0) {
                                 for (int o = 0; o < -offset; ++o) {
-                                    move_payload += "\x02"; // Ctrl-B (Left)
+                                    move_payload += "\x1bOD"; // Application Mode Left Arrow
                                 }
                             }
                             if (!move_payload.empty()) {
@@ -643,11 +643,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                             int target_pos = end_col + 1;
                             if (cursor_col < target_pos) {
                                 for (int i = 0; i < (target_pos - cursor_col); ++i) {
-                                    payload += "\x06"; // Ctrl-F (Right)
+                                    payload += "\x1bOC"; // Application Mode Right Arrow
                                 }
                             } else if (cursor_col > target_pos) {
                                 for (int i = 0; i < (cursor_col - target_pos); ++i) {
-                                    payload += "\x02"; // Ctrl-B (Left)
+                                    payload += "\x1bOD"; // Application Mode Left Arrow
                                 }
                             }
                             
@@ -660,11 +660,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                             if (cursor_col > target_pos) {
                                 int final_target = cursor_col - len;
                                 for (int i = 0; i < (final_target - start_col); ++i) {
-                                    payload += "\x06"; // Ctrl-F (Right)
+                                    payload += "\x1bOC"; // Application Mode Right Arrow
                                 }
                             } else if (cursor_col <= start_col) {
                                 for (int i = 0; i < (start_col - cursor_col); ++i) {
-                                    payload += "\x02"; // Ctrl-B (Left)
+                                    payload += "\x1bOD"; // Application Mode Left Arrow
                                 }
                             }
                             
