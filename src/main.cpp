@@ -533,11 +533,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                             std::string move_payload;
                             if (offset > 0) {
                                 for (int o = 0; o < offset; ++o) {
-                                    move_payload += "\x1b[C"; // Right Arrow
+                                    move_payload += "\x06"; // Ctrl-F (Right)
                                 }
                             } else if (offset < 0) {
                                 for (int o = 0; o < -offset; ++o) {
-                                    move_payload += "\x1b[D"; // Left Arrow
+                                    move_payload += "\x02"; // Ctrl-B (Left)
                                 }
                             }
                             if (!move_payload.empty()) {
@@ -643,11 +643,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                             int target_pos = end_col + 1;
                             if (cursor_col < target_pos) {
                                 for (int i = 0; i < (target_pos - cursor_col); ++i) {
-                                    payload += "\x1b[C"; // Right Arrow
+                                    payload += "\x06"; // Ctrl-F (Right)
                                 }
                             } else if (cursor_col > target_pos) {
                                 for (int i = 0; i < (cursor_col - target_pos); ++i) {
-                                    payload += "\x1b[D"; // Left Arrow
+                                    payload += "\x02"; // Ctrl-B (Left)
                                 }
                             }
                             
@@ -660,11 +660,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                             if (cursor_col > target_pos) {
                                 int final_target = cursor_col - len;
                                 for (int i = 0; i < (final_target - start_col); ++i) {
-                                    payload += "\x1b[C"; // Right Arrow
+                                    payload += "\x06"; // Ctrl-F (Right)
                                 }
                             } else if (cursor_col <= start_col) {
                                 for (int i = 0; i < (start_col - cursor_col); ++i) {
-                                    payload += "\x1b[D"; // Left Arrow
+                                    payload += "\x02"; // Ctrl-B (Left)
                                 }
                             }
                             
