@@ -120,16 +120,6 @@ void PTYBridge::resize_pty(int cols, int rows) {
 
 bool PTYBridge::write_to_pty(const char* data, size_t size) {
     if (master_fd_ == -1) return false;
-    std::cerr << "[PTY_WRITE] size=" << size << " content=";
-    for (size_t i = 0; i < size; ++i) {
-        char c = data[i];
-        if (c == '\x1b') std::cerr << "\\e";
-        else if (c == '\x7f') std::cerr << "\\x7f";
-        else if (c == '\x08') std::cerr << "\\b";
-        else if (c < 32 || c > 126) std::cerr << "\\x" << std::hex << (int)(unsigned char)c << std::dec;
-        else std::cerr << c;
-    }
-    std::cerr << std::endl;
     ssize_t written = ::write(master_fd_, data, size);
     return written == static_cast<ssize_t>(size);
 }

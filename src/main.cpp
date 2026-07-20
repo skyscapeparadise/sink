@@ -610,8 +610,6 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 tw->pty.write_to_pty(&c, 1);
             } else if (sym == SDLK_BACKSPACE || sym == SDLK_DELETE) {
                 bool handled = false;
-                std::cerr << "[BACKSPACE] has_selection=" << tw->terminal.has_selection()
-                          << " is_alt=" << tw->terminal.is_alt_screen_active() << std::endl;
                 if (!tw->terminal.is_alt_screen_active() && tw->terminal.has_selection()) {
                     int r0 = tw->terminal.get_select_start_row();
                     int r1 = tw->terminal.get_select_end_row();
@@ -623,20 +621,10 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                     int start_col = std::min(c0, c1);
                     int end_col = std::max(c0, c1);
                     
-                    std::cerr << "[BACKSPACE] r0=" << r0 << " r1=" << r1
-                              << " cursor_row_grid=" << cursor_row_grid
-                              << " prompt_boundary=" << prompt_boundary
-                              << " c0=" << c0 << " c1=" << c1
-                              << " start_col=" << start_col << " end_col=" << end_col << std::endl;
-
                     if (r0 == r1 && r0 == cursor_row_grid) {
-                        std::cerr << "[BACKSPACE] Row match! Checking prompt boundary..." << std::endl;
                         if (prompt_boundary != -1 && start_col >= prompt_boundary) {
                             int cursor_col = tw->terminal.get_cursor_col();
                             int len = end_col - start_col + 1;
-                            
-                            std::cerr << "[BACKSPACE] Boundary match! cursor_col=" << cursor_col
-                                      << " len=" << len << std::endl;
 
                             // 1. Move cursor to start_col
                             std::string payload;
@@ -670,14 +658,6 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                                 }
                             }
                             
-                            std::cerr << "[BACKSPACE] payload size=" << payload.size() << " payload=";
-                            for (char c : payload) {
-                                if (c == '\x1b') std::cerr << "\\e";
-                                else if (c == '\x7f') std::cerr << "\\x7f";
-                                else std::cerr << c;
-                            }
-                            std::cerr << std::endl;
-
                             tw->pty.write_to_pty(payload.data(), payload.size());
                             
                             tw->terminal.clear_selection();
@@ -942,16 +922,6 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         // Process incoming shell data
         std::vector<char> output = tw->pty.read_pending();
         if (!output.empty()) {
-            std::cerr << "[PTY_READ] size=" << output.size() << " content=";
-            for (char c : output) {
-                if (c == '\x1b') std::cerr << "\\e";
-                else if (c == '\x7f') std::cerr << "\\x7f";
-                else if (c == '\x08') std::cerr << "\\b";
-                else if (c < 32 || c > 126) std::cerr << "\\x" << std::hex << (int)(unsigned char)c << std::dec;
-                else std::cerr << c;
-            }
-            std::cerr << std::endl;
-
             if (tw->animated_typing) {
                 if (output.size() > 5) {
                     // Large chunk / burst output (command output): bypass typing effect to maintain performance
