@@ -521,8 +521,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 int clicks = event->button.clicks;
                 if (clicks == 1 && col == target_tw->mouse_down_col && row == target_tw->mouse_down_row) {
                     // Snapping cursor on mouse release
-                    SDL_Keymod mod = SDL_GetModState();
-                    if ((mod & SDL_KMOD_ALT) && !target_tw->terminal.is_alt_screen_active() && row == target_tw->terminal.get_cursor_row()) {
+                    if (!target_tw->terminal.is_alt_screen_active() && row == target_tw->terminal.get_cursor_row()) {
                         if (target_tw->terminal.get_prompt_boundary() == -1) {
                             target_tw->terminal.set_prompt_boundary(target_tw->terminal.get_cursor_col());
                         }
@@ -639,9 +638,9 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                             std::cerr << "[BACKSPACE] Boundary match! cursor_col=" << cursor_col
                                       << " len=" << len << std::endl;
 
-                            // 1. Move cursor to end_col + 1
+                            // 1. Move cursor to start_col
                             std::string payload;
-                            int target_pos = end_col + 1;
+                            int target_pos = start_col;
                             if (cursor_col < target_pos) {
                                 for (int i = 0; i < (target_pos - cursor_col); ++i) {
                                     payload += "\x1b[C"; // Standard Right Arrow
@@ -652,18 +651,20 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                                 }
                             }
                             
-                            // 2. Send backspaces to delete the selection
+                            // 2. Send Delete keys to delete the selection forward
                             for (int i = 0; i < len; ++i) {
-                                payload += "\x7f";
+                                payload += "\x1b[3~"; // vt100 delete key sequence
                             }
                             
                             // 3. Move cursor back to its target position
-                            if (cursor_col > target_pos) {
-                                int final_target = cursor_col - len;
-                                for (int i = 0; i < (final_target - start_col); ++i) {
-                                    payload += "\x1b[C"; // Standard Right Arrow
+                            if (cursor_col > start_col) {
+                                if (cursor_col >= start_col + len) {
+                                    int final_target = cursor_col - len;
+                                    for (int i = 0; i < (final_target - start_col); ++i) {
+                                        payload += "\x1b[C"; // Standard Right Arrow
+                                    }
                                 }
-                            } else if (cursor_col <= start_col) {
+                            } else if (cursor_col < start_col) {
                                 for (int i = 0; i < (start_col - cursor_col); ++i) {
                                     payload += "\x1b[D"; // Standard Left Arrow
                                 }
