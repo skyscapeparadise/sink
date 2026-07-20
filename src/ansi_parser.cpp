@@ -244,6 +244,11 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
             grid.set_cursor_col(grid.get_cursor_col() - offset);
             break;
         }
+        case 'P': { // Delete Character (DCH)
+            int count = get_param(0, 1);
+            grid.delete_character(count);
+            break;
+        }
         case 'J': { // Erase in Display (ED)
             int mode = get_param(0, 0);
             if (mode == 2) {

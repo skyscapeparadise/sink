@@ -31,6 +31,7 @@ public:
     void clear_screen();
     void clear_scrollback();
     void clear_line(int row, int mode); // 0 = cursor to end, 1 = start to cursor, 2 = entire line
+    void delete_character(int count);
     
     // Render the grid with display_scale to support cell padding offsets and smooth cursor animation
     void render(SDL_Renderer* renderer, const FontManager& font_manager, float start_x, float start_y, float display_scale = 1.0f, float dt = 0.016f, bool animated_typing = false);

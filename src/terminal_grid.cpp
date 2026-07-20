@@ -322,6 +322,27 @@ void TerminalGrid::set_cursor_row(int row) {
     cursor_row_ = std::clamp(row, 0, rows_ - 1);
 }
 
+void TerminalGrid::delete_character(int count) {
+    if (cursor_row_ < 0 || cursor_row_ >= rows_) return;
+    if (cursor_col_ < 0 || cursor_col_ >= cols_) return;
+    if (count <= 0) return;
+    
+    int row_start = cursor_row_ * cols_;
+    int remaining = cols_ - cursor_col_;
+    int to_delete = std::min(count, remaining);
+    
+    // Shift cells leftward
+    for (int i = cursor_col_; i < cols_ - to_delete; ++i) {
+        cells_[row_start + i] = cells_[row_start + i + to_delete];
+    }
+    
+    // Fill the end of the row with empty cells
+    Cell empty_cell = { 32, current_fg_, current_bg_ };
+    for (int i = cols_ - to_delete; i < cols_; ++i) {
+        cells_[row_start + i] = empty_cell;
+    }
+}
+
 void TerminalGrid::scroll_view(int delta) {
     scroll_offset_ += delta;
     int max_offset = static_cast<int>(scrollback_history_.size());
