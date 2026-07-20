@@ -81,31 +81,66 @@ void TerminalGrid::resize(int cols, int rows) {
         raw_rows.push_back({ std::move(row_cells), is_wrapped });
     }
 
+    // Track the 1D index of the cursor cell in the raw rows stream
+    size_t cursor_1d_index = (scrollback_history_.size() + cursor_row_) * cols_ + cursor_col_;
+    int cursor_line_idx = -1;
+    int cursor_col_idx = -1;
+
     // 2. Reconstruct logical lines by joining soft-wrapped rows
     std::vector<std::vector<Cell>> logical_lines;
     std::vector<Cell> current_line;
-    for (const auto& rr : raw_rows) {
+    for (size_t row_idx = 0; row_idx < raw_rows.size(); ++row_idx) {
+        const auto& rr = raw_rows[row_idx];
+        for (size_t col_idx = 0; col_idx < rr.cells.size(); ++col_idx) {
+            size_t cell_1d = row_idx * cols_ + col_idx;
+            if (cell_1d == cursor_1d_index) {
+                cursor_line_idx = static_cast<int>(logical_lines.size());
+                cursor_col_idx = static_cast<int>(current_line.size() + col_idx);
+            }
+        }
         current_line.insert(current_line.end(), rr.cells.begin(), rr.cells.end());
         if (!rr.wrapped) {
             // Hard break: strip trailing spaces to make wrapping/unwrapping cleaner
             while (!current_line.empty() && current_line.back().codepoint == 32 && current_line.back().bg.a == 0.0f) {
                 current_line.pop_back();
             }
+            // Clamp cursor position if it fell into the stripped area
+            if (cursor_line_idx == static_cast<int>(logical_lines.size())) {
+                if (cursor_col_idx > static_cast<int>(current_line.size())) {
+                    cursor_col_idx = static_cast<int>(current_line.size());
+                }
+            }
             logical_lines.push_back(std::move(current_line));
             current_line.clear();
         }
     }
     if (!current_line.empty()) {
+        if (cursor_line_idx == static_cast<int>(logical_lines.size())) {
+            if (cursor_col_idx > static_cast<int>(current_line.size())) {
+                cursor_col_idx = static_cast<int>(current_line.size());
+            }
+        }
         logical_lines.push_back(std::move(current_line));
     }
 
     // 3. Re-wrap all logical lines to the new width `cols`
     std::vector<RawRow> wrapped_rows;
     Cell space_cell = { 32, current_fg_, current_bg_ };
-    for (const auto& line : logical_lines) {
+    
+    int new_cursor_row_wrapped = -1;
+    int new_cursor_col_wrapped = -1;
+    int current_wrapped_row_idx = 0;
+
+    for (size_t line_idx = 0; line_idx < logical_lines.size(); ++line_idx) {
+        const auto& line = logical_lines[line_idx];
         if (line.empty()) {
+            if (static_cast<int>(line_idx) == cursor_line_idx) {
+                new_cursor_row_wrapped = current_wrapped_row_idx;
+                new_cursor_col_wrapped = 0;
+            }
             std::vector<Cell> empty_cells(cols, space_cell);
             wrapped_rows.push_back({ std::move(empty_cells), false });
+            current_wrapped_row_idx++;
             continue;
         }
         size_t idx = 0;
@@ -115,9 +150,21 @@ void TerminalGrid::resize(int cols, int rows) {
             for (size_t i = 0; i < chunk_size; ++i) {
                 row_cells[i] = line[idx + i];
             }
+            
+            // Check if this chunk contains the cursor
+            if (static_cast<int>(line_idx) == cursor_line_idx) {
+                bool is_last_chunk = (idx + chunk_size == line.size());
+                if ((cursor_col_idx >= static_cast<int>(idx) && cursor_col_idx < static_cast<int>(idx + chunk_size)) ||
+                    (is_last_chunk && cursor_col_idx == static_cast<int>(line.size()))) {
+                    new_cursor_row_wrapped = current_wrapped_row_idx;
+                    new_cursor_col_wrapped = cursor_col_idx - static_cast<int>(idx);
+                }
+            }
+            
             idx += chunk_size;
             bool is_wrapped = (idx < line.size());
             wrapped_rows.push_back({ std::move(row_cells), is_wrapped });
+            current_wrapped_row_idx++;
         }
     }
 
@@ -163,6 +210,14 @@ void TerminalGrid::resize(int cols, int rows) {
     scrollback_history_ = std::move(new_history);
     cols_ = cols;
     rows_ = rows;
+
+    if (new_cursor_row_wrapped >= active_start_idx) {
+        cursor_row_ = new_cursor_row_wrapped - active_start_idx;
+        cursor_col_ = new_cursor_col_wrapped;
+    } else {
+        cursor_row_ = 0;
+        cursor_col_ = 0;
+    }
 
     cursor_col_ = std::clamp(cursor_col_, 0, cols_ - 1);
     cursor_row_ = std::clamp(cursor_row_, 0, rows_ - 1);
