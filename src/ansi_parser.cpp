@@ -211,6 +211,11 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
             }
             break;
         }
+        case 'G': { // Cursor Horizontal Absolute (CHA)
+            int col = get_param(0, 1) - 1;
+            grid.set_cursor_col(col);
+            break;
+        }
         case 'H':
         case 'f': { // Cursor Position (CUP)
             int row = get_param(0, 1) - 1;
