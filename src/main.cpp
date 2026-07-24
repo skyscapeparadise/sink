@@ -78,6 +78,8 @@ struct TerminalWindow {
     bool animated_typing = true;
     std::vector<char> animation_buffer;
     float scroll_accumulator = 0.0f;
+    float scroll_velocity = 0.0f;
+    Uint64 last_wheel_time = 0;
 
     // Dissolve state
     enum FadeState { FADE_HOLD_BLACK, FADE_OUT, FADE_DONE };
@@ -306,6 +308,8 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     tw->fade_state = TerminalWindow::FADE_HOLD_BLACK;
     tw->fade_opacity = 1.0f;
     tw->scroll_accumulator = 0.0f;
+    tw->scroll_velocity = 0.0f;
+    tw->last_wheel_time = 0;
 
     // Attach as tab if a parent window is present
     if (parent_tab_window) {
@@ -453,21 +457,26 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             wheel_y = -wheel_y;
         }
         
-        target_tw->scroll_accumulator += wheel_y;
-        int lines = 0;
-        if (target_tw->scroll_accumulator >= 1.0f) {
-            lines = static_cast<int>(std::floor(target_tw->scroll_accumulator));
-            target_tw->scroll_accumulator -= lines;
-        } else if (target_tw->scroll_accumulator <= -1.0f) {
-            lines = static_cast<int>(std::ceil(target_tw->scroll_accumulator));
-            target_tw->scroll_accumulator -= lines;
+        Uint64 now = SDL_GetTicks();
+        float delta_sec = (target_tw->last_wheel_time > 0) ? static_cast<float>(now - target_tw->last_wheel_time) / 1000.0f : 0.1f;
+        target_tw->last_wheel_time = now;
+        
+        if ((wheel_y > 0.0f && target_tw->scroll_velocity < 0.0f) || (wheel_y < 0.0f && target_tw->scroll_velocity > 0.0f)) {
+            target_tw->scroll_velocity = 0.0f;
         }
         
-        if (lines != 0) {
-            target_tw->terminal.scroll_view(lines);
+        float target_v = 0.0f;
+        if (delta_sec > 0.001f && delta_sec < 0.2f) {
+            target_v = (wheel_y * 15.0f) / delta_sec;
+        } else {
+            target_v = wheel_y * 40.0f;
         }
+        
+        target_tw->scroll_velocity = target_tw->scroll_velocity * 0.2f + target_v * 0.8f;
+        target_tw->scroll_accumulator += wheel_y * 1.2f;
     } else if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
         if (event->button.windowID == SDL_GetWindowID(target_tw->window)) {
+            target_tw->scroll_velocity = 0.0f;
             if (event->button.button == SDL_BUTTON_LEFT) {
                 float mx = event->button.x;
                 float my = event->button.y;
@@ -558,11 +567,15 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             for (auto* tw : state->windows) {
                 tw->terminal.clear_selection();
                 tw->terminal.reset_scroll();
+                tw->scroll_velocity = 0.0f;
+                tw->scroll_accumulator = 0.0f;
                 tw->pty.write_to_pty(event->text.text, std::strlen(event->text.text));
             }
         } else {
             target_tw->terminal.clear_selection();
             target_tw->terminal.reset_scroll();
+            target_tw->scroll_velocity = 0.0f;
+            target_tw->scroll_accumulator = 0.0f;
             target_tw->pty.write_to_pty(event->text.text, std::strlen(event->text.text));
         }
     } else if (event->type == SDL_EVENT_KEY_DOWN) {
@@ -604,6 +617,8 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 tw->terminal.clear_selection();
             }
             tw->terminal.reset_scroll();
+            tw->scroll_velocity = 0.0f;
+            tw->scroll_accumulator = 0.0f;
 
             if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) {
                 const char c = '\r';
@@ -902,6 +917,44 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
     // Iterate all active windows
     for (auto* tw : state->windows) {
         tw->terminal.update_timers(dt);
+        
+        // Process inertial scrolling physics
+        if (std::abs(tw->scroll_velocity) > 0.01f) {
+            tw->scroll_accumulator += tw->scroll_velocity * dt;
+            float friction = 6.0f;
+            tw->scroll_velocity *= std::exp(-friction * dt);
+            if (std::abs(tw->scroll_velocity) < 0.2f) {
+                tw->scroll_velocity = 0.0f;
+            }
+        }
+        
+        if (std::abs(tw->scroll_accumulator) >= 1.0f) {
+            int lines = 0;
+            if (tw->scroll_accumulator >= 1.0f) {
+                lines = static_cast<int>(std::floor(tw->scroll_accumulator));
+                tw->scroll_accumulator -= static_cast<float>(lines);
+            } else if (tw->scroll_accumulator <= -1.0f) {
+                lines = static_cast<int>(std::ceil(tw->scroll_accumulator));
+                tw->scroll_accumulator -= static_cast<float>(lines);
+            }
+            
+            if (lines != 0) {
+                int current_offset = tw->terminal.get_scroll_offset();
+                int max_offset = static_cast<int>(tw->terminal.get_scrollback_size());
+                
+                if ((lines > 0 && current_offset >= max_offset) || (lines < 0 && current_offset <= 0)) {
+                    tw->scroll_velocity = 0.0f;
+                    tw->scroll_accumulator = 0.0f;
+                } else {
+                    tw->terminal.scroll_view(lines);
+                    int new_offset = tw->terminal.get_scroll_offset();
+                    if (new_offset == 0 || new_offset == max_offset) {
+                        tw->scroll_velocity = 0.0f;
+                        tw->scroll_accumulator = 0.0f;
+                    }
+                }
+            }
+        }
         if (tw->has_video) {
             if (tw->fade_state == TerminalWindow::FADE_HOLD_BLACK) {
                 if (tw->video_engine.has_rendered_first_frame()) {
