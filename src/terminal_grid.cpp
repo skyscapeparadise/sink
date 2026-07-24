@@ -221,6 +221,7 @@ void TerminalGrid::resize(int cols, int rows) {
 
     cursor_col_ = std::clamp(cursor_col_, 0, cols_ - 1);
     cursor_row_ = std::clamp(cursor_row_, 0, rows_ - 1);
+    wrap_pending_ = false;
 }
 
 void TerminalGrid::set_cell(int col, int row, char32_t codepoint, const SDL_FColor& fg, const SDL_FColor& bg) {
@@ -230,9 +231,9 @@ void TerminalGrid::set_cell(int col, int row, char32_t codepoint, const SDL_FCol
 }
 
 void TerminalGrid::write_character(char32_t codepoint) {
-    // Wrap to the next line immediately if the column limit is reached
-    if (cursor_col_ >= cols_) {
-        cursor_col_ = 0;
+    // Deferred auto-wrap (xenl): if wrap is pending from a previous char hitting the rightmost column, wrap now
+    if (wrap_pending_) {
+        wrap_pending_ = false;
         if (cursor_row_ < static_cast<int>(row_wrapped_.size())) {
             row_wrapped_[cursor_row_] = true;
         }
@@ -241,10 +242,16 @@ void TerminalGrid::write_character(char32_t codepoint) {
             scroll_up();
             cursor_row_ = rows_ - 1;
         }
+        cursor_col_ = 0;
     }
     
     set_cell(cursor_col_, cursor_row_, codepoint, current_fg_, current_bg_);
-    cursor_col_++;
+    
+    if (cursor_col_ >= cols_ - 1) {
+        wrap_pending_ = true;
+    } else {
+        cursor_col_++;
+    }
 }
 
 void TerminalGrid::scroll_up() {
@@ -291,6 +298,7 @@ void TerminalGrid::clear_screen() {
     std::fill(row_wrapped_.begin(), row_wrapped_.end(), false);
     cursor_col_ = 0;
     cursor_row_ = 0;
+    wrap_pending_ = false;
 }
 
 void TerminalGrid::clear_scrollback() {
@@ -312,20 +320,24 @@ void TerminalGrid::clear_line(int row, int mode) {
     
     Cell empty_cell = { 32, current_fg_, current_bg_ };
     std::fill(cells_.begin() + row * cols_ + start_col, cells_.begin() + row * cols_ + end_col, empty_cell);
+    wrap_pending_ = false;
 }
 
 void TerminalGrid::set_cursor_col(int col) {
     cursor_col_ = std::clamp(col, 0, cols_ - 1);
+    wrap_pending_ = false;
 }
 
 void TerminalGrid::set_cursor_row(int row) {
     cursor_row_ = std::clamp(row, 0, rows_ - 1);
+    wrap_pending_ = false;
 }
 
 void TerminalGrid::delete_character(int count) {
     if (cursor_row_ < 0 || cursor_row_ >= rows_) return;
     if (cursor_col_ < 0 || cursor_col_ >= cols_) return;
     if (count <= 0) return;
+    wrap_pending_ = false;
     
     int row_start = cursor_row_ * cols_;
     int remaining = cols_ - cursor_col_;

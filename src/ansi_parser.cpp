@@ -78,6 +78,7 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                 reset_csi();
             } else if (c == '\n' || c == '\v' || c == '\f') {
                 // Line feed: move cursor down (scrolling if it hits bottom)
+                grid.clear_wrap_pending();
                 int cur_row = grid.get_cursor_row();
                 if (cur_row >= grid.get_rows() - 1) {
                     grid.scroll_up();

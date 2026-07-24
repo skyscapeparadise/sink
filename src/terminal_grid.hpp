@@ -89,11 +89,15 @@ public:
     int get_select_end_col() const { return select_end_col_; }
     int get_select_end_row() const { return select_end_row_; }
 
+    void clear_wrap_pending() { wrap_pending_ = false; }
+    bool is_wrap_pending() const { return wrap_pending_; }
+
 private:
     int cols_ = 0;
     int rows_ = 0;
     std::vector<Cell> cells_;
     std::vector<bool> row_wrapped_;
+    bool wrap_pending_ = false;
     
     // Scrollback history buffers
     std::vector<ScrollbackRow> scrollback_history_;
