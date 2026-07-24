@@ -467,13 +467,13 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         
         float target_v = 0.0f;
         if (delta_sec > 0.001f && delta_sec < 0.2f) {
-            target_v = (wheel_y * 15.0f) / delta_sec;
+            target_v = (wheel_y * 3.75f) / delta_sec;
         } else {
-            target_v = wheel_y * 40.0f;
+            target_v = wheel_y * 10.0f;
         }
         
         target_tw->scroll_velocity = target_tw->scroll_velocity * 0.2f + target_v * 0.8f;
-        target_tw->scroll_accumulator += wheel_y * 1.2f;
+        target_tw->scroll_accumulator += wheel_y * 0.3f;
     } else if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
         if (event->button.windowID == SDL_GetWindowID(target_tw->window)) {
             target_tw->scroll_velocity = 0.0f;
@@ -923,7 +923,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             tw->scroll_accumulator += tw->scroll_velocity * dt;
             float friction = 6.0f;
             tw->scroll_velocity *= std::exp(-friction * dt);
-            if (std::abs(tw->scroll_velocity) < 0.2f) {
+            if (std::abs(tw->scroll_velocity) < 0.05f) {
                 tw->scroll_velocity = 0.0f;
             }
         }
