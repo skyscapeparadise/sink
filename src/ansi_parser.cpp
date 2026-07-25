@@ -127,6 +127,12 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
         case STATE_ESCAPE: {
             if (c == '[') {
                 state_ = STATE_CSI;
+            } else if (c == '7') { // DECSC: Save Cursor
+                grid.save_cursor();
+                state_ = STATE_NORMAL;
+            } else if (c == '8') { // DECRC: Restore Cursor
+                grid.restore_cursor();
+                state_ = STATE_NORMAL;
             } else {
                 state_ = STATE_NORMAL;
             }
@@ -202,6 +208,24 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
                     grid.set_current_fg(ansi_colors[param - 90 + 8]);
                 } else if (param >= 100 && param <= 107) {
                     grid.set_current_bg(ansi_colors[param - 100 + 8]);
+                } else if (param == 38) {
+                    // 38;2;R;G;B (24-bit truecolor foreground)
+                    if (i + 4 < csi_params_.size() && csi_params_[i + 1] == 2) {
+                        float r = std::clamp(csi_params_[i + 2], 0, 255) / 255.0f;
+                        float g = std::clamp(csi_params_[i + 3], 0, 255) / 255.0f;
+                        float b = std::clamp(csi_params_[i + 4], 0, 255) / 255.0f;
+                        grid.set_current_fg({r, g, b, 1.0f});
+                        i += 4;
+                    }
+                } else if (param == 48) {
+                    // 48;2;R;G;B (24-bit truecolor background)
+                    if (i + 4 < csi_params_.size() && csi_params_[i + 1] == 2) {
+                        float r = std::clamp(csi_params_[i + 2], 0, 255) / 255.0f;
+                        float g = std::clamp(csi_params_[i + 3], 0, 255) / 255.0f;
+                        float b = std::clamp(csi_params_[i + 4], 0, 255) / 255.0f;
+                        grid.set_current_bg({r, g, b, 1.0f});
+                        i += 4;
+                    }
                 } else if (param == 39) {
                     // Default foreground color
                     grid.set_current_fg({0.9f, 0.9f, 0.9f, 1.0f});
@@ -271,6 +295,14 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
             } else if (is_private_mode_ && get_param(0, 0) == 2004) {
                 grid.set_bracketed_paste(true);
             }
+            break;
+        }
+        case 's': { // Save Cursor (ANSI.SYS)
+            grid.save_cursor();
+            break;
+        }
+        case 'u': { // Restore Cursor (ANSI.SYS)
+            grid.restore_cursor();
             break;
         }
         case 'l': { // Reset Mode (RM / DECRST)

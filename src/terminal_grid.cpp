@@ -328,6 +328,17 @@ void TerminalGrid::set_cursor_col(int col) {
     wrap_pending_ = false;
 }
 
+void TerminalGrid::save_cursor() {
+    saved_cursor_col_ = cursor_col_;
+    saved_cursor_row_ = cursor_row_;
+}
+
+void TerminalGrid::restore_cursor() {
+    cursor_col_ = std::clamp(saved_cursor_col_, 0, cols_ - 1);
+    cursor_row_ = std::clamp(saved_cursor_row_, 0, rows_ - 1);
+    wrap_pending_ = false;
+}
+
 void TerminalGrid::set_cursor_row(int row) {
     cursor_row_ = std::clamp(row, 0, rows_ - 1);
     wrap_pending_ = false;
