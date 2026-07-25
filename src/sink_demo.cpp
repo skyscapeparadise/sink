@@ -40,10 +40,42 @@ struct AppState {
     std::string video_path;
 };
 
+#include <filesystem>
+#include <mach-o/dyld.h>
+
 namespace SinkDemo {
 
 static std::atomic<bool> g_demo_running{false};
 static std::atomic<bool> g_skip_requested{false};
+
+static std::string get_executable_dir() {
+    char path[1024];
+    uint32_t size = sizeof(path);
+    if (_NSGetExecutablePath(path, &size) == 0) {
+        std::filesystem::path p(path);
+        return p.parent_path().string();
+    }
+    return ".";
+}
+
+static std::string resolve_splash_path() {
+    std::string exe_dir = get_executable_dir();
+    std::vector<std::string> candidates = {
+        "demo/splash.mp4",
+        exe_dir + "/demo/splash.mp4",
+        exe_dir + "/../demo/splash.mp4",
+        exe_dir + "/../../demo/splash.mp4",
+        exe_dir + "/../Resources/demo/splash.mp4",
+        "/Users/kady/Code/sinkdemo/splash.mp4"
+    };
+
+    for (const auto& p : candidates) {
+        if (std::filesystem::exists(p)) {
+            return p;
+        }
+    }
+    return "demo/splash.mp4";
+}
 
 bool is_demo_running() {
     return g_demo_running.load();
@@ -536,8 +568,8 @@ void run_demo(TerminalWindow* tw, AppState* state) {
 
     sleep_interruptible(2000); // 2s pause
 
-    // Resolve splash.mp4 path
-    std::string splash_path = "/Users/kady/Code/sinkdemo/splash.mp4";
+    // Resolve splash.mp4 path dynamically
+    std::string splash_path = resolve_splash_path();
     play_cpp_video_as_text(tw, splash_path);
 
     // Reset demo state flags

@@ -1,0 +1,33 @@
+#!/usr/bin/env python3
+import sys
+import os
+import time
+
+LYRICS_DIR = "/Users/kady/Code/sinkdemo/lyrics"
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: sing <song_name>")
+        sys.exit(1)
+
+    song_name = sys.argv[1].lower().replace(".txt", "")
+    filepath = os.path.join(LYRICS_DIR, f"{song_name}.txt")
+
+    if not os.path.exists(filepath):
+        print(f"Song '{song_name}' not found in {LYRICS_DIR}")
+        sys.exit(1)
+
+    with open(filepath, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    if not lines:
+        sys.exit(0)
+
+    line_delay = 3.0 / len(lines)
+    for line in lines:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+        time.sleep(line_delay)
+
+if __name__ == "__main__":
+    main()
