@@ -17,6 +17,7 @@
 #include "ansi_parser.hpp"
 #include "video_engine.hpp"
 #include "settings_ui.hpp"
+#include "sink_demo.hpp"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -621,8 +622,27 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             tw->scroll_accumulator = 0.0f;
 
             if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) {
-                const char c = '\r';
-                tw->pty.write_to_pty(&c, 1);
+                std::string typed_line = tw->terminal.get_current_line_text();
+                
+                if (SinkDemo::is_demo_command(typed_line)) {
+                    std::thread([tw, state]() {
+                        SinkDemo::run_demo(tw, state);
+                    }).detach();
+                } else if (SinkDemo::is_sing_command(typed_line)) {
+                    std::string song_name = typed_line;
+                    size_t sp = song_name.find(' ');
+                    if (sp != std::string::npos) {
+                        song_name = song_name.substr(sp + 1);
+                    } else {
+                        song_name = "";
+                    }
+                    std::thread([tw, song_name]() {
+                        SinkDemo::run_sing(tw, song_name);
+                    }).detach();
+                } else {
+                    const char c = '\r';
+                    tw->pty.write_to_pty(&c, 1);
+                }
             } else if (sym == SDLK_BACKSPACE || sym == SDLK_DELETE) {
                 bool handled = false;
                 if (!tw->terminal.is_alt_screen_active() && tw->terminal.has_selection()) {

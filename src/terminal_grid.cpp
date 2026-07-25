@@ -290,6 +290,10 @@ void TerminalGrid::scroll_up() {
     // Fill the new last row with spaces using current style
     Cell empty_cell = { 32, current_fg_, current_bg_ };
     std::fill(cells_.begin() + (rows_ - 1) * cols_, cells_.end(), empty_cell);
+
+    if (saved_cursor_row_ > 0) {
+        saved_cursor_row_--;
+    }
 }
 
 void TerminalGrid::clear_screen() {
@@ -299,6 +303,8 @@ void TerminalGrid::clear_screen() {
     cursor_col_ = 0;
     cursor_row_ = 0;
     wrap_pending_ = false;
+    saved_cursor_col_ = 0;
+    saved_cursor_row_ = 0;
 }
 
 void TerminalGrid::clear_scrollback() {
@@ -1056,14 +1062,29 @@ std::string TerminalGrid::get_all_text() const {
                 }
             }
             
-            for (int c = 0; c <= limit_col; ++c) {
-                text += utf32_to_utf8(row_cells[c].codepoint);
-            }
-            
             if (!is_wrapped && r < total_rows - 1) {
                 text += "\n";
             }
         }
     }
     return text;
+}
+
+std::string TerminalGrid::get_current_line_text() const {
+    if (cells_.empty() || cursor_row_ < 0 || cursor_row_ >= rows_) return "";
+    std::string line;
+    int start_col = prompt_boundary_col_ >= 0 ? prompt_boundary_col_ : 0;
+    for (int c = start_col; c < cols_; ++c) {
+        char32_t cp = cells_[cursor_row_ * cols_ + c].codepoint;
+        if (cp >= 32 && cp <= 126) {
+            line += static_cast<char>(cp);
+        } else if (cp > 126) {
+            line += utf32_to_utf8(cp);
+        }
+    }
+    size_t last = line.find_last_not_of(" \t\r\n");
+    if (last != std::string::npos) {
+        return line.substr(0, last + 1);
+    }
+    return line;
 }

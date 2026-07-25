@@ -82,6 +82,7 @@ public:
     void select_word_at(int col, int row);
     void select_line_at(int row);
     std::string get_all_text() const;
+    std::string get_current_line_text() const;
 
     size_t get_scrollback_size() const { return scrollback_history_.size(); }
     int get_select_start_col() const { return select_start_col_; }

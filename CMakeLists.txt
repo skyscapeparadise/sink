@@ -25,6 +25,7 @@ set(SOURCES
     src/ansi_parser.cpp
     src/video_engine.cpp
     src/settings_ui.cpp
+    src/sink_demo.cpp
 )
 
 # macOS Cocoa Menu Integration

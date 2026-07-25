@@ -7,6 +7,7 @@
 #include <signal.h>
 #include <poll.h>
 #include <chrono>
+#include <sys/stat.h>
 
 #if defined(__APPLE__)
 #include <util.h>
@@ -56,6 +57,18 @@ bool PTYBridge::spawn(int cols, int rows) {
                 }
             }
         }
+
+        // Create stub PATH entries for built-in sink commands (sinkdemo and sinksing)
+        mkdir("/tmp/.sink_bin", 0755);
+        FILE* f1 = fopen("/tmp/.sink_bin/sinkdemo", "w");
+        if (f1) { fprintf(f1, "#!/bin/sh\nexit 0\n"); fclose(f1); chmod("/tmp/.sink_bin/sinkdemo", 0755); }
+        FILE* f2 = fopen("/tmp/.sink_bin/sinksing", "w");
+        if (f2) { fprintf(f2, "#!/bin/sh\nexit 0\n"); fclose(f2); chmod("/tmp/.sink_bin/sinksing", 0755); }
+
+        const char* old_path = getenv("PATH");
+        std::string new_path = "/tmp/.sink_bin";
+        if (old_path) new_path += ":" + std::string(old_path);
+        setenv("PATH", new_path.c_str(), 1);
 
         // Ensure child shell runs with UTF-8 locale support and xterm capabilities
         setenv("LANG", "en_US.UTF-8", 1);
