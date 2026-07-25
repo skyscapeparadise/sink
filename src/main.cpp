@@ -1003,9 +1003,9 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             tw->fade_opacity = 0.0f;
         }
 
-        // Process incoming shell data
+        // Process incoming shell data (suppressed while sinkdemo is running)
         std::vector<char> output = tw->pty.read_pending();
-        if (!output.empty()) {
+        if (!output.empty() && !SinkDemo::is_demo_running()) {
             std::lock_guard<std::mutex> lock(tw->grid_mutex);
             if (tw->animated_typing) {
                 if (output.size() > 5) {
