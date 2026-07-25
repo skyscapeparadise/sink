@@ -73,6 +73,7 @@ struct TerminalWindow {
     PTYBridge pty;
     ANSIParser parser;
     VideoEngine video_engine;
+    std::mutex grid_mutex;
     
     bool has_video = false;
     float exposure = 0.7f;
@@ -603,6 +604,12 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             return SDL_APP_CONTINUE;
         }
 
+        // Tab key demo skip trigger
+        if (sym == SDLK_TAB && SinkDemo::is_demo_running()) {
+            SinkDemo::request_skip();
+            return SDL_APP_CONTINUE;
+        }
+
         std::vector<TerminalWindow*> target_windows;
         if (state->input_broadcasting) {
             target_windows = state->windows;
@@ -995,6 +1002,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         // Process incoming shell data
         std::vector<char> output = tw->pty.read_pending();
         if (!output.empty()) {
+            std::lock_guard<std::mutex> lock(tw->grid_mutex);
             if (tw->animated_typing) {
                 if (output.size() > 5) {
                     // Large chunk / burst output (command output): bypass typing effect to maintain performance
@@ -1015,6 +1023,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
 
         // Process retro animated typing ticks
         if (tw->animated_typing && !tw->animation_buffer.empty()) {
+            std::lock_guard<std::mutex> lock(tw->grid_mutex);
             size_t total_pending = tw->animation_buffer.size();
             size_t chars_to_process = 0;
             
@@ -1053,7 +1062,10 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         }
 
         // B. Render grid cells
-        tw->terminal.render(tw->renderer, tw->font_manager, state->padding, state->padding, state->display_scale, dt, tw->animated_typing);
+        {
+            std::lock_guard<std::mutex> lock(tw->grid_mutex);
+            tw->terminal.render(tw->renderer, tw->font_manager, state->padding, state->padding, state->display_scale, dt, tw->animated_typing);
+        }
 
         // C. Draw black dissolve overlay mask
         if (tw->fade_opacity > 0.0f) {

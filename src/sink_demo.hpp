@@ -1,0 +1,32 @@
+#pragma once
+
+#include <string>
+#include <vector>
+
+struct TerminalWindow;
+struct AppState;
+
+namespace SinkDemo {
+    // Embedded song lyrics
+    extern const char* SONG_COELACANTH;
+    extern const char* SONG_SNAKE;
+    extern const char* SONG_SINK;
+    extern const char* SONG_YOU;
+
+    // Get song lyrics by name
+    std::string get_song_lyrics(const std::string& song_name);
+
+    // Command check helpers
+    bool is_demo_command(const std::string& cmd);
+    bool is_sing_command(const std::string& cmd);
+
+    // Demo state and skip control
+    bool is_demo_running();
+    void request_skip();
+
+    // Execute built-in demo sequence
+    void run_demo(TerminalWindow* tw, AppState* state);
+
+    // Execute built-in sinksing command
+    void run_sing(TerminalWindow* tw, const std::string& song_name);
+}
