@@ -3,7 +3,8 @@ import sys
 import os
 import time
 
-LYRICS_DIR = "/Users/kady/Code/sinkdemo/lyrics"
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+LYRICS_DIR = os.path.join(SCRIPT_DIR, "lyrics")
 
 def main():
     if len(sys.argv) < 2:

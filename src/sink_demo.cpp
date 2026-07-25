@@ -65,8 +65,7 @@ static std::string resolve_splash_path() {
         exe_dir + "/demo/splash.mp4",
         exe_dir + "/../demo/splash.mp4",
         exe_dir + "/../../demo/splash.mp4",
-        exe_dir + "/../Resources/demo/splash.mp4",
-        "/Users/kady/Code/sinkdemo/splash.mp4"
+        exe_dir + "/../Resources/demo/splash.mp4"
     };
 
     for (const auto& p : candidates) {

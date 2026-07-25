@@ -1,3 +1,4 @@
 #!/bin/bash
 # Launcher script for sink demo
-python3 /Users/kady/Code/sinkdemo/demo.py
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+python3 "$DIR/demo.py"

@@ -17,9 +17,9 @@ import time
 import random
 import subprocess
 
-PROMPT = "moon@Thunderstorm ~ % "
-LYRICS_DIR = "/Users/kady/Code/sinkdemo/lyrics"
-SPLASH_VIDEO = "/Users/kady/Code/sinkdemo/splash.mp4"
+SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
+LYRICS_DIR = os.path.join(SCRIPT_DIR, "lyrics")
+SPLASH_VIDEO = os.path.join(SCRIPT_DIR, "splash.mp4")
 
 # Character ramp for video area
 CHARS = ".:;+=xX$#@█"
