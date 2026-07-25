@@ -632,10 +632,14 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 std::string typed_line = tw->terminal.get_current_line_text();
                 
                 if (SinkDemo::is_demo_command(typed_line)) {
+                    const char cancel_cmd[] = "\x15\x03";
+                    tw->pty.write_to_pty(cancel_cmd, 2);
                     std::thread([tw, state]() {
                         SinkDemo::run_demo(tw, state);
                     }).detach();
                 } else if (SinkDemo::is_sing_command(typed_line)) {
+                    const char cancel_cmd[] = "\x15\x03";
+                    tw->pty.write_to_pty(cancel_cmd, 2);
                     std::string song_name = typed_line;
                     size_t sp = song_name.find(' ');
                     if (sp != std::string::npos) {
