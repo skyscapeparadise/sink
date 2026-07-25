@@ -736,6 +736,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 tw->pty.write_to_pty("\x1b[C", 3);
             } else if (sym == SDLK_LEFT) {
                 tw->pty.write_to_pty("\x1b[D", 3);
+            } else if (mod & SDL_KMOD_CTRL) {
+                if (sym >= SDLK_A && sym <= SDLK_Z) {
+                    char control_char = static_cast<char>(sym - SDLK_A + 1);
+                    tw->pty.write_to_pty(&control_char, 1);
+                }
             }
         }
     } else if (event->type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {
