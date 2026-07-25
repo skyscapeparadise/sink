@@ -5,6 +5,7 @@
 #include "video_engine.hpp"
 
 #include <iostream>
+#include <fstream>
 #include <sstream>
 #include <thread>
 #include <chrono>
@@ -13,6 +14,8 @@
 #include <cstring>
 #include <vector>
 #include <atomic>
+#include <filesystem>
+#include <mach-o/dyld.h>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -40,13 +43,48 @@ struct AppState {
     std::string video_path;
 };
 
-#include <filesystem>
-#include <mach-o/dyld.h>
-
 namespace SinkDemo {
 
 static std::atomic<bool> g_demo_running{false};
 static std::atomic<bool> g_skip_requested{false};
+
+struct BufferData {
+    const uint8_t* ptr = nullptr;
+    size_t size = 0;
+    size_t pos = 0;
+};
+
+static int read_packet_cb(void* opaque, uint8_t* buf, int buf_size) {
+    BufferData* bd = static_cast<BufferData*>(opaque);
+    if (!bd || bd->pos >= bd->size) {
+        return AVERROR_EOF;
+    }
+    int len = std::min(static_cast<size_t>(buf_size), bd->size - bd->pos);
+    std::memcpy(buf, bd->ptr + bd->pos, len);
+    bd->pos += len;
+    return len;
+}
+
+static int64_t seek_cb(void* opaque, int64_t offset, int whence) {
+    BufferData* bd = static_cast<BufferData*>(opaque);
+    if (!bd) return -1;
+    if (whence == AVSEEK_SIZE) {
+        return static_cast<int64_t>(bd->size);
+    }
+    int64_t new_pos = bd->pos;
+    if (whence == SEEK_SET) {
+        new_pos = offset;
+    } else if (whence == SEEK_CUR) {
+        new_pos += offset;
+    } else if (whence == SEEK_END) {
+        new_pos = static_cast<int64_t>(bd->size) + offset;
+    }
+    if (new_pos < 0 || new_pos > static_cast<int64_t>(bd->size)) {
+        return -1;
+    }
+    bd->pos = static_cast<size_t>(new_pos);
+    return bd->pos;
+}
 
 static std::string get_executable_dir() {
     char path[1024];
@@ -61,11 +99,11 @@ static std::string get_executable_dir() {
 static std::string resolve_splash_path() {
     std::string exe_dir = get_executable_dir();
     std::vector<std::string> candidates = {
-        "demo/splash.mp4",
-        exe_dir + "/demo/splash.mp4",
-        exe_dir + "/../demo/splash.mp4",
-        exe_dir + "/../../demo/splash.mp4",
-        exe_dir + "/../Resources/demo/splash.mp4"
+        "demo/splash.dat",
+        exe_dir + "/demo/splash.dat",
+        exe_dir + "/../demo/splash.dat",
+        exe_dir + "/../../demo/splash.dat",
+        exe_dir + "/../Resources/demo/splash.dat"
     };
 
     for (const auto& p : candidates) {
@@ -73,7 +111,7 @@ static std::string resolve_splash_path() {
             return p;
         }
     }
-    return "demo/splash.mp4";
+    return "demo/splash.dat";
 }
 
 bool is_demo_running() {
@@ -339,13 +377,69 @@ static void type_simulated_text(TerminalWindow* tw, const std::string& text) {
     }
 }
 
-static void play_cpp_video_as_text(TerminalWindow* tw, const std::string& video_path) {
-    AVFormatContext* fmt_ctx = nullptr;
-    if (avformat_open_input(&fmt_ctx, video_path.c_str(), nullptr, nullptr) != 0) {
+static void play_cpp_video_as_text(TerminalWindow* tw, const std::string& dat_path) {
+    std::ifstream file(dat_path, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) return;
+
+    std::streamsize size = file.tellg();
+    if (size <= 16) return;
+
+    file.seekg(0, std::ios::beg);
+    std::vector<uint8_t> raw_data(size);
+    if (!file.read(reinterpret_cast<char*>(raw_data.data()), size)) {
         return;
     }
+    file.close();
+
+    // Verify magic header "SINKDEMO_ARCHIVE"
+    const char magic[16] = {'S','I','N','K','D','E','M','O','_','A','R','C','H','I','V','E'};
+    if (std::memcmp(raw_data.data(), magic, 16) != 0) {
+        return;
+    }
+
+    // Unmask obfuscated payload bytes
+    static const uint8_t KEY[4] = { 0x53, 0x49, 0x4E, 0x4B };
+    size_t payload_size = raw_data.size() - 16;
+    std::vector<uint8_t> video_bytes(payload_size);
+    for (size_t i = 0; i < payload_size; ++i) {
+        video_bytes[i] = raw_data[16 + i] ^ KEY[i % 4];
+    }
+
+    BufferData bd = { video_bytes.data(), video_bytes.size(), 0 };
+
+    size_t avio_ctx_buffer_size = 32768;
+    uint8_t* avio_ctx_buffer = (uint8_t*)av_malloc(avio_ctx_buffer_size);
+    if (!avio_ctx_buffer) return;
+
+    AVIOContext* avio_ctx = avio_alloc_context(
+        avio_ctx_buffer, static_cast<int>(avio_ctx_buffer_size),
+        0, &bd, &read_packet_cb, nullptr, &seek_cb
+    );
+
+    if (!avio_ctx) {
+        av_free(avio_ctx_buffer);
+        return;
+    }
+
+    AVFormatContext* fmt_ctx = avformat_alloc_context();
+    if (!fmt_ctx) {
+        av_freep(&avio_ctx->buffer);
+        avio_context_free(&avio_ctx);
+        return;
+    }
+
+    fmt_ctx->pb = avio_ctx;
+    if (avformat_open_input(&fmt_ctx, nullptr, nullptr, nullptr) != 0) {
+        av_freep(&avio_ctx->buffer);
+        avio_context_free(&avio_ctx);
+        avformat_free_context(fmt_ctx);
+        return;
+    }
+
     if (avformat_find_stream_info(fmt_ctx, nullptr) < 0) {
         avformat_close_input(&fmt_ctx);
+        av_freep(&avio_ctx->buffer);
+        avio_context_free(&avio_ctx);
         return;
     }
 
@@ -359,6 +453,8 @@ static void play_cpp_video_as_text(TerminalWindow* tw, const std::string& video_
 
     if (video_stream_idx == -1) {
         avformat_close_input(&fmt_ctx);
+        av_freep(&avio_ctx->buffer);
+        avio_context_free(&avio_ctx);
         return;
     }
 
@@ -366,6 +462,8 @@ static void play_cpp_video_as_text(TerminalWindow* tw, const std::string& video_
     const AVCodec* codec = avcodec_find_decoder(codec_params->codec_id);
     if (!codec) {
         avformat_close_input(&fmt_ctx);
+        av_freep(&avio_ctx->buffer);
+        avio_context_free(&avio_ctx);
         return;
     }
 
@@ -374,6 +472,8 @@ static void play_cpp_video_as_text(TerminalWindow* tw, const std::string& video_
     if (avcodec_open2(codec_ctx, codec, nullptr) < 0) {
         avcodec_free_context(&codec_ctx);
         avformat_close_input(&fmt_ctx);
+        av_freep(&avio_ctx->buffer);
+        avio_context_free(&avio_ctx);
         return;
     }
 
@@ -508,6 +608,8 @@ static void play_cpp_video_as_text(TerminalWindow* tw, const std::string& video_
     if (sws_ctx) sws_freeContext(sws_ctx);
     avcodec_free_context(&codec_ctx);
     avformat_close_input(&fmt_ctx);
+    av_freep(&avio_ctx->buffer);
+    avio_context_free(&avio_ctx);
 }
 
 void run_demo(TerminalWindow* tw, AppState* state) {
@@ -567,7 +669,7 @@ void run_demo(TerminalWindow* tw, AppState* state) {
 
     sleep_interruptible(2000); // 2s pause
 
-    // Resolve splash.mp4 path dynamically
+    // Resolve splash.dat path dynamically
     std::string splash_path = resolve_splash_path();
     play_cpp_video_as_text(tw, splash_path);
 
