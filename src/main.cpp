@@ -74,6 +74,8 @@ struct TerminalWindow {
     ANSIParser parser;
     VideoEngine video_engine;
     std::mutex grid_mutex;
+    std::atomic<bool> demo_running{false};
+    std::atomic<bool> demo_skip_requested{false};
     
     bool has_video = false;
     float exposure = 0.7f;
@@ -605,8 +607,8 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         }
 
         // Tab key demo skip trigger
-        if (sym == SDLK_TAB && SinkDemo::is_demo_running()) {
-            SinkDemo::request_skip();
+        if (sym == SDLK_TAB && SinkDemo::is_demo_running(target_tw)) {
+            SinkDemo::request_skip(target_tw);
             return SDL_APP_CONTINUE;
         }
 
@@ -1003,9 +1005,9 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             tw->fade_opacity = 0.0f;
         }
 
-        // Process incoming shell data (suppressed while sinkdemo is running)
+        // Process incoming shell data (suppressed while sinkdemo is running for this window)
         std::vector<char> output = tw->pty.read_pending();
-        if (!output.empty() && !SinkDemo::is_demo_running()) {
+        if (!output.empty() && !SinkDemo::is_demo_running(tw)) {
             std::lock_guard<std::mutex> lock(tw->grid_mutex);
             if (tw->animated_typing) {
                 if (output.size() > 5) {

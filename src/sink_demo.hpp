@@ -20,9 +20,9 @@ namespace SinkDemo {
     bool is_demo_command(const std::string& cmd);
     bool is_sing_command(const std::string& cmd);
 
-    // Demo state and skip control
-    bool is_demo_running();
-    void request_skip();
+    // Demo state and skip control per window
+    bool is_demo_running(TerminalWindow* tw);
+    void request_skip(TerminalWindow* tw);
 
     // Execute built-in demo sequence
     void run_demo(TerminalWindow* tw, AppState* state);

@@ -35,6 +35,8 @@ struct TerminalWindow {
     ANSIParser parser;
     VideoEngine video_engine;
     std::mutex grid_mutex;
+    std::atomic<bool> demo_running{false};
+    std::atomic<bool> demo_skip_requested{false};
 };
 
 struct AppState {
@@ -44,9 +46,6 @@ struct AppState {
 };
 
 namespace SinkDemo {
-
-static std::atomic<bool> g_demo_running{false};
-static std::atomic<bool> g_skip_requested{false};
 
 struct BufferData {
     const uint8_t* ptr = nullptr;
@@ -114,25 +113,31 @@ static std::string resolve_splash_path() {
     return "demo/splash.dat";
 }
 
-bool is_demo_running() {
-    return g_demo_running.load();
+bool is_demo_running(TerminalWindow* tw) {
+    return tw ? tw->demo_running.load() : false;
 }
 
-void request_skip() {
-    g_skip_requested.store(true);
+void request_skip(TerminalWindow* tw) {
+    if (tw) {
+        tw->demo_skip_requested.store(true);
+    }
 }
 
-static bool sleep_interruptible(int ms) {
+static bool sleep_interruptible(TerminalWindow* tw, int ms) {
+    if (!tw) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(ms));
+        return false;
+    }
     int ticks = ms / 10;
     if (ticks <= 0) ticks = 1;
     for (int t = 0; t < ticks; ++t) {
-        if (g_skip_requested.load()) {
-            g_skip_requested.store(false);
+        if (tw->demo_skip_requested.load()) {
+            tw->demo_skip_requested.store(false);
             return true;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    return g_skip_requested.exchange(false);
+    return tw->demo_skip_requested.exchange(false);
 }
 
 const char* SONG_COELACANTH = R"(i can’t begin
@@ -351,7 +356,7 @@ void run_sing(TerminalWindow* tw, const std::string& song_name) {
     double delay_per_line_ms = 3000.0 / lines.size();
     for (const auto& l : lines) {
         feed_to_terminal(tw, l + "\r\n");
-        if (sleep_interruptible(static_cast<int>(delay_per_line_ms))) {
+        if (sleep_interruptible(tw, static_cast<int>(delay_per_line_ms))) {
             break;
         }
     }
@@ -368,7 +373,7 @@ static void type_simulated_text(TerminalWindow* tw, const std::string& text) {
     for (size_t i = 0; i < text.length(); ++i) {
         std::string s(1, text[i]);
         feed_to_terminal(tw, s);
-        if (sleep_interruptible(dist(rng))) {
+        if (sleep_interruptible(tw, dist(rng))) {
             if (i + 1 < text.length()) {
                 feed_to_terminal(tw, text.substr(i + 1));
             }
@@ -575,8 +580,8 @@ static void play_cpp_video_as_text(TerminalWindow* tw, const std::string& dat_pa
     };
 
     while (av_read_frame(fmt_ctx, &packet) >= 0) {
-        if (g_skip_requested.load()) {
-            g_skip_requested.store(false);
+        if (tw->demo_skip_requested.load()) {
+            tw->demo_skip_requested.store(false);
             av_packet_unref(&packet);
             break;
         }
@@ -585,15 +590,15 @@ static void play_cpp_video_as_text(TerminalWindow* tw, const std::string& dat_pa
             while (ret == AVERROR(EAGAIN)) {
                 while (avcodec_receive_frame(codec_ctx, frame) == 0) {
                     render_frame_lambda();
-                    if (g_skip_requested.load()) break;
+                    if (tw->demo_skip_requested.load()) break;
                 }
-                if (g_skip_requested.load()) break;
+                if (tw->demo_skip_requested.load()) break;
                 ret = avcodec_send_packet(codec_ctx, &packet);
             }
             if (ret >= 0) {
                 while (avcodec_receive_frame(codec_ctx, frame) == 0) {
                     render_frame_lambda();
-                    if (g_skip_requested.load()) break;
+                    if (tw->demo_skip_requested.load()) break;
                 }
             }
         }
@@ -613,8 +618,9 @@ static void play_cpp_video_as_text(TerminalWindow* tw, const std::string& dat_pa
 }
 
 void run_demo(TerminalWindow* tw, AppState* state) {
-    g_demo_running.store(true);
-    g_skip_requested.store(false);
+    if (!tw) return;
+    tw->demo_running.store(true);
+    tw->demo_skip_requested.store(false);
 
     std::string prompt = "moon@Thunderstorm ~ % ";
     
@@ -625,7 +631,7 @@ void run_demo(TerminalWindow* tw, AppState* state) {
         feed_to_terminal(tw, prompt);
         std::string cmd = "sinksing " + song_name;
         type_simulated_text(tw, cmd);
-        sleep_interruptible(200); // 0.2s hesitation
+        sleep_interruptible(tw, 200); // 0.2s hesitation
         feed_to_terminal(tw, "\r\n\r\n");
 
         // Print song lyrics line by line
@@ -641,17 +647,17 @@ void run_demo(TerminalWindow* tw, AppState* state) {
             double delay_per_line_ms = 3000.0 / lines.size();
             for (const auto& l : lines) {
                 feed_to_terminal(tw, l + "\r\n");
-                if (sleep_interruptible(static_cast<int>(delay_per_line_ms))) {
+                if (sleep_interruptible(tw, static_cast<int>(delay_per_line_ms))) {
                     break; // TAB pressed: skip rest of song immediately!
                 }
             }
         }
 
-        sleep_interruptible(200);
+        sleep_interruptible(tw, 200);
         feed_to_terminal(tw, prompt);
-        sleep_interruptible(200); // 0.2s delay
+        sleep_interruptible(tw, 200); // 0.2s delay
         type_simulated_text(tw, "clear");
-        sleep_interruptible(200); // 0.2s hesitation
+        sleep_interruptible(tw, 200); // 0.2s hesitation
         feed_to_terminal(tw, "\r\n\033[2J\033[H"); // Clear screen
     };
 
@@ -662,20 +668,20 @@ void run_demo(TerminalWindow* tw, AppState* state) {
 
     // Finale sequence
     feed_to_terminal(tw, prompt);
-    sleep_interruptible(1000); // 1s pause
+    sleep_interruptible(tw, 1000); // 1s pause
     type_simulated_text(tw, "swim with me");
-    sleep_interruptible(200); // 0.2s hesitation
+    sleep_interruptible(tw, 200); // 0.2s hesitation
     feed_to_terminal(tw, "\r\n");
 
-    sleep_interruptible(2000); // 2s pause
+    sleep_interruptible(tw, 2000); // 2s pause
 
     // Resolve splash.dat path dynamically
     std::string splash_path = resolve_splash_path();
     play_cpp_video_as_text(tw, splash_path);
 
-    // Reset demo state flags
-    g_demo_running.store(false);
-    g_skip_requested.store(false);
+    // Reset demo state flags for this window
+    tw->demo_running.store(false);
+    tw->demo_skip_requested.store(false);
 
     // Return to the user's interactive shell prompt at row 0 (top of window)
     const char c = '\x0c'; // Ctrl+L clears terminal and redraws prompt at row 0
