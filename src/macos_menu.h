@@ -16,6 +16,9 @@ void add_window_as_tab(SDL_Window* parent_sdl_win, SDL_Window* child_sdl_win);
 void set_settings_requested(bool requested);
 bool get_settings_requested();
 
+void set_cut_requested(bool requested);
+bool get_cut_requested();
+
 void set_copy_requested(bool requested);
 bool get_copy_requested();
 

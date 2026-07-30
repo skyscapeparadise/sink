@@ -383,6 +383,77 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
     return SDL_APP_CONTINUE;
 }
 
+static bool delete_selection_in_prompt(TerminalWindow* tw) {
+    if (!tw || tw->terminal.is_alt_screen_active() || !tw->terminal.has_selection()) {
+        return false;
+    }
+    int r0 = tw->terminal.get_select_start_row();
+    int r1 = tw->terminal.get_select_end_row();
+    int total_history = static_cast<int>(tw->terminal.get_scrollback_size());
+    int cursor_row_grid = tw->terminal.get_cursor_row() + total_history;
+    int prompt_boundary = tw->terminal.get_prompt_boundary();
+    int c0 = tw->terminal.get_select_start_col();
+    int c1 = tw->terminal.get_select_end_col();
+    int start_col = std::min(c0, c1);
+    int end_col = std::max(c0, c1);
+    
+    if (r0 == r1 && r0 == cursor_row_grid) {
+        if (prompt_boundary != -1 && start_col >= prompt_boundary) {
+            int cursor_col = tw->terminal.get_cursor_col();
+            int len = end_col - start_col + 1;
+
+            // 1. Move cursor to start_col
+            std::string payload;
+            int target_pos = start_col;
+            if (cursor_col < target_pos) {
+                for (int i = 0; i < (target_pos - cursor_col); ++i) {
+                    payload += "\x1b[C"; // Standard Right Arrow
+                }
+            } else if (cursor_col > target_pos) {
+                for (int i = 0; i < (cursor_col - target_pos); ++i) {
+                    payload += "\x1b[D"; // Standard Left Arrow
+                }
+            }
+            
+            // 2. Send Delete keys to delete the selection forward
+            for (int i = 0; i < len; ++i) {
+                payload += "\x1b[3~"; // vt100 delete key sequence
+            }
+            
+            // 3. Move cursor back to its target position
+            if (cursor_col > start_col) {
+                if (cursor_col >= start_col + len) {
+                    int final_target = cursor_col - len;
+                    for (int i = 0; i < (final_target - start_col); ++i) {
+                        payload += "\x1b[C"; // Standard Right Arrow
+                    }
+                }
+            } else if (cursor_col < start_col) {
+                for (int i = 0; i < (start_col - cursor_col); ++i) {
+                    payload += "\x1b[D"; // Standard Left Arrow
+                }
+            }
+            
+            tw->pty.write_to_pty(payload.data(), payload.size());
+            tw->terminal.clear_selection();
+            return true;
+        }
+    }
+    return false;
+}
+
+static void perform_cut_action(TerminalWindow* tw) {
+    if (!tw || !tw->terminal.has_selection()) return;
+    std::string selected_text = tw->terminal.get_selected_text();
+    if (!selected_text.empty()) {
+        SDL_SetClipboardText(selected_text.c_str());
+    }
+    bool handled = delete_selection_in_prompt(tw);
+    if (!handled) {
+        tw->terminal.clear_selection();
+    }
+}
+
 // SDL3 Application event processor entry point
 SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
     AppState* state = static_cast<AppState*>(appstate);
@@ -623,6 +694,10 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             if (tw->terminal.get_prompt_boundary() == -1) {
                 tw->terminal.set_prompt_boundary(tw->terminal.get_cursor_col());
             }
+            if ((mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) && sym == SDLK_X) {
+                perform_cut_action(tw);
+                return SDL_APP_CONTINUE;
+            }
             if (!(mod & SDL_KMOD_GUI) && sym != SDLK_BACKSPACE && sym != SDLK_DELETE) {
                 tw->terminal.clear_selection();
             }
@@ -657,63 +732,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                     tw->pty.write_to_pty(&c, 1);
                 }
             } else if (sym == SDLK_BACKSPACE || sym == SDLK_DELETE) {
-                bool handled = false;
-                if (!tw->terminal.is_alt_screen_active() && tw->terminal.has_selection()) {
-                    int r0 = tw->terminal.get_select_start_row();
-                    int r1 = tw->terminal.get_select_end_row();
-                    int total_history = static_cast<int>(tw->terminal.get_scrollback_size());
-                    int cursor_row_grid = tw->terminal.get_cursor_row() + total_history;
-                    int prompt_boundary = tw->terminal.get_prompt_boundary();
-                    int c0 = tw->terminal.get_select_start_col();
-                    int c1 = tw->terminal.get_select_end_col();
-                    int start_col = std::min(c0, c1);
-                    int end_col = std::max(c0, c1);
-                    
-                    if (r0 == r1 && r0 == cursor_row_grid) {
-                        if (prompt_boundary != -1 && start_col >= prompt_boundary) {
-                            int cursor_col = tw->terminal.get_cursor_col();
-                            int len = end_col - start_col + 1;
-
-                            // 1. Move cursor to start_col
-                            std::string payload;
-                            int target_pos = start_col;
-                            if (cursor_col < target_pos) {
-                                for (int i = 0; i < (target_pos - cursor_col); ++i) {
-                                    payload += "\x1b[C"; // Standard Right Arrow
-                                }
-                            } else if (cursor_col > target_pos) {
-                                for (int i = 0; i < (cursor_col - target_pos); ++i) {
-                                    payload += "\x1b[D"; // Standard Left Arrow
-                                }
-                            }
-                            
-                            // 2. Send Delete keys to delete the selection forward
-                            for (int i = 0; i < len; ++i) {
-                                payload += "\x1b[3~"; // vt100 delete key sequence
-                            }
-                            
-                            // 3. Move cursor back to its target position
-                            if (cursor_col > start_col) {
-                                if (cursor_col >= start_col + len) {
-                                    int final_target = cursor_col - len;
-                                    for (int i = 0; i < (final_target - start_col); ++i) {
-                                        payload += "\x1b[C"; // Standard Right Arrow
-                                    }
-                                }
-                            } else if (cursor_col < start_col) {
-                                for (int i = 0; i < (start_col - cursor_col); ++i) {
-                                    payload += "\x1b[D"; // Standard Left Arrow
-                                }
-                            }
-                            
-                            tw->pty.write_to_pty(payload.data(), payload.size());
-                            
-                            tw->terminal.clear_selection();
-                            handled = true;
-                        }
-                    }
-                }
-                
+                bool handled = delete_selection_in_prompt(tw);
                 if (!handled) {
                     if (sym == SDLK_DELETE) {
                         tw->pty.write_to_pty("\x1b[3~", 4); // Standard vt100 delete key sequence
@@ -865,6 +884,9 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
     // Process native macOS menu clipboard actions
     if (state->active_window) {
         TerminalWindow* tw = state->active_window;
+        if (get_cut_requested()) {
+            perform_cut_action(tw);
+        }
         if (get_copy_requested()) {
             std::string selected_text = tw->terminal.get_selected_text();
             if (!selected_text.empty()) {

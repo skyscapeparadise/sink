@@ -3,6 +3,7 @@
 #include <atomic>
 
 static std::atomic<bool> g_settings_requested{false};
+static std::atomic<bool> g_cut_requested{false};
 static std::atomic<bool> g_copy_requested{false};
 static std::atomic<bool> g_paste_requested{false};
 static std::atomic<bool> g_select_all_requested{false};
@@ -17,6 +18,14 @@ void set_settings_requested(bool requested) {
 
 bool get_settings_requested() {
     return g_settings_requested.exchange(false);
+}
+
+void set_cut_requested(bool req) {
+    g_cut_requested = req;
+}
+
+bool get_cut_requested() {
+    return g_cut_requested.exchange(false);
 }
 
 void set_copy_requested(bool req) {
@@ -99,7 +108,7 @@ extern "C" void trigger_menu_render_tick();
 }
 
 - (void)cut:(id)sender {
-    set_copy_requested(true);
+    set_cut_requested(true);
 }
 
 - (void)copy:(id)sender {
