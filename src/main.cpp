@@ -340,7 +340,7 @@ static void destroy_terminal_window(TerminalWindow* tw) {
 
 // SDL3 Application initialization entry point
 SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
-    SDL_SetAppMetadata("sink", "0.5.0", "com.rainmultimedia.sink");
+    SDL_SetAppMetadata("sink", "0.6.0", "com.rainmultimedia.sink");
     SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_CREATOR_STRING, "rain multimedia");
     SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_COPYRIGHT_STRING, "copyright © 2026 rain multimedia. all rights reserved.");
 
