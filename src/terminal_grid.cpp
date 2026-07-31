@@ -1072,14 +1072,27 @@ std::string TerminalGrid::get_all_text() const {
 
 std::string TerminalGrid::get_current_line_text() const {
     if (cells_.empty() || cursor_row_ < 0 || cursor_row_ >= rows_) return "";
+    
+    int p_start_row = cursor_row_;
+    while (p_start_row > 0 && (p_start_row - 1) < static_cast<int>(row_wrapped_.size()) && row_wrapped_[p_start_row - 1]) {
+        p_start_row--;
+    }
+    
+    int p_end_row = cursor_row_;
+    while (p_end_row < rows_ - 1 && p_end_row < static_cast<int>(row_wrapped_.size()) && row_wrapped_[p_end_row]) {
+        p_end_row++;
+    }
+
     std::string line;
-    int start_col = prompt_boundary_col_ >= 0 ? prompt_boundary_col_ : 0;
-    for (int c = start_col; c < cols_; ++c) {
-        char32_t cp = cells_[cursor_row_ * cols_ + c].codepoint;
-        if (cp >= 32 && cp <= 126) {
-            line += static_cast<char>(cp);
-        } else if (cp > 126) {
-            line += utf32_to_utf8(cp);
+    for (int r = p_start_row; r <= p_end_row; ++r) {
+        int start_col = (r == p_start_row && prompt_boundary_col_ >= 0) ? prompt_boundary_col_ : 0;
+        for (int c = start_col; c < cols_; ++c) {
+            char32_t cp = cells_[r * cols_ + c].codepoint;
+            if (cp >= 32 && cp <= 126) {
+                line += static_cast<char>(cp);
+            } else if (cp > 126) {
+                line += utf32_to_utf8(cp);
+            }
         }
     }
     size_t last = line.find_last_not_of(" \t\r\n");

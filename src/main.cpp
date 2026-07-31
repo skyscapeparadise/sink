@@ -387,57 +387,89 @@ static bool delete_selection_in_prompt(TerminalWindow* tw) {
     if (!tw || tw->terminal.is_alt_screen_active() || !tw->terminal.has_selection()) {
         return false;
     }
+    int cols = tw->terminal.get_cols();
     int r0 = tw->terminal.get_select_start_row();
     int r1 = tw->terminal.get_select_end_row();
-    int total_history = static_cast<int>(tw->terminal.get_scrollback_size());
-    int cursor_row_grid = tw->terminal.get_cursor_row() + total_history;
-    int prompt_boundary = tw->terminal.get_prompt_boundary();
     int c0 = tw->terminal.get_select_start_col();
     int c1 = tw->terminal.get_select_end_col();
-    int start_col = std::min(c0, c1);
-    int end_col = std::max(c0, c1);
-    
-    if (r0 == r1 && r0 == cursor_row_grid) {
-        if (prompt_boundary != -1 && start_col >= prompt_boundary) {
-            int cursor_col = tw->terminal.get_cursor_col();
-            int len = end_col - start_col + 1;
 
-            // 1. Move cursor to start_col
-            std::string payload;
-            int target_pos = start_col;
-            if (cursor_col < target_pos) {
-                for (int i = 0; i < (target_pos - cursor_col); ++i) {
-                    payload += "\x1b[C"; // Standard Right Arrow
-                }
-            } else if (cursor_col > target_pos) {
-                for (int i = 0; i < (cursor_col - target_pos); ++i) {
-                    payload += "\x1b[D"; // Standard Left Arrow
-                }
-            }
-            
-            // 2. Send Delete keys to delete the selection forward
-            for (int i = 0; i < len; ++i) {
-                payload += "\x1b[3~"; // vt100 delete key sequence
-            }
-            
-            // 3. Move cursor back to its target position
-            if (cursor_col > start_col) {
-                if (cursor_col >= start_col + len) {
-                    int final_target = cursor_col - len;
-                    for (int i = 0; i < (final_target - start_col); ++i) {
-                        payload += "\x1b[C"; // Standard Right Arrow
-                    }
-                }
-            } else if (cursor_col < start_col) {
-                for (int i = 0; i < (start_col - cursor_col); ++i) {
-                    payload += "\x1b[D"; // Standard Left Arrow
-                }
-            }
-            
-            tw->pty.write_to_pty(payload.data(), payload.size());
-            tw->terminal.clear_selection();
-            return true;
+    int start_r, start_c, end_r, end_c;
+    if ((r0 < r1) || (r0 == r1 && c0 <= c1)) {
+        start_r = r0; start_c = c0;
+        end_r = r1; end_c = c1;
+    } else {
+        start_r = r1; start_c = c1;
+        end_r = r0; end_c = c0;
+    }
+
+    int total_history = static_cast<int>(tw->terminal.get_scrollback_size());
+    int cursor_row_active = tw->terminal.get_cursor_row();
+    int cursor_row_grid = cursor_row_active + total_history;
+    int cursor_col = tw->terminal.get_cursor_col();
+    int prompt_boundary = tw->terminal.get_prompt_boundary();
+    const auto& row_wrapped = tw->terminal.get_row_wrapped();
+
+    // Trace prompt start row in grid coordinates
+    int p_start_row_active = cursor_row_active;
+    while (p_start_row_active > 0 && (p_start_row_active - 1) < static_cast<int>(row_wrapped.size()) && row_wrapped[p_start_row_active - 1]) {
+        p_start_row_active--;
+    }
+    int p_start_row_grid = p_start_row_active + total_history;
+
+    // Trace prompt end row in grid coordinates
+    int p_end_row_active = cursor_row_active;
+    while (p_end_row_active < tw->terminal.get_rows() - 1 && p_end_row_active < static_cast<int>(row_wrapped.size()) && row_wrapped[p_end_row_active]) {
+        p_end_row_active++;
+    }
+    int p_end_row_grid = p_end_row_active + total_history;
+
+    // Check if selection is within the prompt rows
+    if (start_r >= p_start_row_grid && end_r <= p_end_row_grid) {
+        if (start_r == p_start_row_grid && prompt_boundary != -1 && start_c < prompt_boundary) {
+            return false;
         }
+
+        int start_idx = (start_r - p_start_row_grid) * cols + start_c;
+        int end_idx = (end_r - p_start_row_grid) * cols + end_c;
+        int len = end_idx - start_idx + 1;
+        int cursor_idx = (cursor_row_grid - p_start_row_grid) * cols + cursor_col;
+
+        std::string payload;
+
+        // 1. Move cursor to start_idx
+        int move_offset = start_idx - cursor_idx;
+        if (move_offset > 0) {
+            for (int i = 0; i < move_offset; ++i) {
+                payload += "\x1b[C"; // Standard Right Arrow
+            }
+        } else if (move_offset < 0) {
+            for (int i = 0; i < -move_offset; ++i) {
+                payload += "\x1b[D"; // Standard Left Arrow
+            }
+        }
+
+        // 2. Send Delete keys forward
+        for (int i = 0; i < len; ++i) {
+            payload += "\x1b[3~"; // vt100 delete key sequence
+        }
+
+        // 3. Move cursor back to target position
+        if (cursor_idx > start_idx) {
+            int final_target = (cursor_idx >= start_idx + len) ? (cursor_idx - len) : start_idx;
+            int return_offset = final_target - start_idx;
+            for (int i = 0; i < return_offset; ++i) {
+                payload += "\x1b[C"; // Standard Right Arrow
+            }
+        } else if (cursor_idx < start_idx) {
+            int return_offset = start_idx - cursor_idx;
+            for (int i = 0; i < return_offset; ++i) {
+                payload += "\x1b[D"; // Standard Left Arrow
+            }
+        }
+
+        tw->pty.write_to_pty(payload.data(), payload.size());
+        tw->terminal.clear_selection();
+        return true;
     }
     return false;
 }
@@ -605,29 +637,48 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 int clicks = event->button.clicks;
                 if (clicks == 1 && col == target_tw->mouse_down_col && row == target_tw->mouse_down_row) {
                     // Snapping cursor on mouse release
-                    if (!target_tw->terminal.is_alt_screen_active() && row == target_tw->terminal.get_cursor_row()) {
-                        if (target_tw->terminal.get_prompt_boundary() == -1) {
-                            target_tw->terminal.set_prompt_boundary(target_tw->terminal.get_cursor_col());
+                    if (!target_tw->terminal.is_alt_screen_active()) {
+                        int cols = target_tw->terminal.get_cols();
+                        int cursor_row = target_tw->terminal.get_cursor_row();
+                        int cursor_col = target_tw->terminal.get_cursor_col();
+                        const auto& row_wrapped = target_tw->terminal.get_row_wrapped();
+
+                        int p_start_row = cursor_row;
+                        while (p_start_row > 0 && (p_start_row - 1) < static_cast<int>(row_wrapped.size()) && row_wrapped[p_start_row - 1]) {
+                            p_start_row--;
                         }
-                        
-                        if (col >= target_tw->terminal.get_prompt_boundary()) {
-                            int current_col = target_tw->terminal.get_cursor_col();
-                            int offset = col - current_col;
-                            
-                            std::string move_payload;
-                            if (offset > 0) {
-                                for (int o = 0; o < offset; ++o) {
-                                    move_payload += "\x1b[C"; // Standard Right Arrow
+
+                        int p_end_row = cursor_row;
+                        while (p_end_row < target_tw->terminal.get_rows() - 1 && p_end_row < static_cast<int>(row_wrapped.size()) && row_wrapped[p_end_row]) {
+                            p_end_row++;
+                        }
+
+                        if (target_tw->terminal.get_prompt_boundary() == -1) {
+                            target_tw->terminal.set_prompt_boundary(cursor_col);
+                        }
+
+                        if (row >= p_start_row && row <= p_end_row) {
+                            int prompt_boundary = target_tw->terminal.get_prompt_boundary();
+                            if (!(row == p_start_row && prompt_boundary != -1 && col < prompt_boundary)) {
+                                int cursor_idx = (cursor_row - p_start_row) * cols + cursor_col;
+                                int click_idx = (row - p_start_row) * cols + col;
+                                int offset = click_idx - cursor_idx;
+
+                                std::string move_payload;
+                                if (offset > 0) {
+                                    for (int o = 0; o < offset; ++o) {
+                                        move_payload += "\x1b[C"; // Standard Right Arrow
+                                    }
+                                } else if (offset < 0) {
+                                    for (int o = 0; o < -offset; ++o) {
+                                        move_payload += "\x1b[D"; // Standard Left Arrow
+                                    }
                                 }
-                            } else if (offset < 0) {
-                                for (int o = 0; o < -offset; ++o) {
-                                    move_payload += "\x1b[D"; // Standard Left Arrow
+                                if (!move_payload.empty()) {
+                                    target_tw->pty.write_to_pty(move_payload.data(), move_payload.size());
                                 }
+                                target_tw->terminal.clear_selection();
                             }
-                            if (!move_payload.empty()) {
-                                target_tw->pty.write_to_pty(move_payload.data(), move_payload.size());
-                            }
-                            target_tw->terminal.clear_selection();
                         }
                     }
                 }

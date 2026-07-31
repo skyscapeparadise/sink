@@ -95,6 +95,7 @@ public:
 
     void clear_wrap_pending() { wrap_pending_ = false; }
     bool is_wrap_pending() const { return wrap_pending_; }
+    const std::vector<bool>& get_row_wrapped() const { return row_wrapped_; }
 
 private:
     int cols_ = 0;
