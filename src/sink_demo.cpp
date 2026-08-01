@@ -328,9 +328,15 @@ bool is_sing_command(const std::string& cmd) {
 }
 
 void run_sing(TerminalWindow* tw, const std::string& song_name) {
+    if (!tw) return;
+    tw->demo_running.store(true);
+    tw->demo_skip_requested.store(false);
+
     std::string lyrics = get_song_lyrics(song_name);
     if (lyrics.empty()) {
         feed_to_terminal(tw, "\r\nUsage: sinksing <coelacanth | snake | sink | you>\r\n");
+        tw->demo_running.store(false);
+        tw->demo_skip_requested.store(false);
         const char c = '\r';
         tw->pty.write_to_pty(&c, 1);
         return;
@@ -343,7 +349,11 @@ void run_sing(TerminalWindow* tw, const std::string& song_name) {
         lines.push_back(line);
     }
 
-    if (lines.empty()) return;
+    if (lines.empty()) {
+        tw->demo_running.store(false);
+        tw->demo_skip_requested.store(false);
+        return;
+    }
 
     // Create a new line before starting lyrics
     feed_to_terminal(tw, "\r\n");
@@ -358,6 +368,10 @@ void run_sing(TerminalWindow* tw, const std::string& song_name) {
 
     // Ensure finished lyrics return cleanly to the shell prompt
     feed_to_terminal(tw, "\r\n");
+
+    tw->demo_running.store(false);
+    tw->demo_skip_requested.store(false);
+
     const char c = '\r';
     tw->pty.write_to_pty(&c, 1);
 }
