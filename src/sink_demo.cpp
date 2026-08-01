@@ -320,23 +320,18 @@ std::string get_song_lyrics(const std::string& song_name) {
 }
 
 bool is_demo_command(const std::string& cmd) {
-    std::string trimmed = cmd;
-    trimmed.erase(0, trimmed.find_first_not_of(" \t\r\n"));
-    trimmed.erase(trimmed.find_last_not_of(" \t\r\n") + 1);
-    return (trimmed == "sinkdemo" || trimmed == "./sinkdemo");
+    return (cmd.find("sinkdemo") != std::string::npos);
 }
 
 bool is_sing_command(const std::string& cmd) {
-    std::string trimmed = cmd;
-    trimmed.erase(0, trimmed.find_first_not_of(" \t\r\n"));
-    return (trimmed.rfind("sinksing", 0) == 0 || trimmed.rfind("./sinksing", 0) == 0);
+    return (cmd.find("sinksing") != std::string::npos);
 }
 
 void run_sing(TerminalWindow* tw, const std::string& song_name) {
     std::string lyrics = get_song_lyrics(song_name);
     if (lyrics.empty()) {
         feed_to_terminal(tw, "\r\nUsage: sinksing <coelacanth | snake | sink | you>\r\n");
-        const char c = '\x0c';
+        const char c = '\r';
         tw->pty.write_to_pty(&c, 1);
         return;
     }

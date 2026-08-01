@@ -768,12 +768,17 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 } else if (SinkDemo::is_sing_command(typed_line)) {
                     const char cancel_cmd[] = "\x15\x03";
                     tw->pty.write_to_pty(cancel_cmd, 2);
-                    std::string song_name = typed_line;
-                    size_t sp = song_name.find(' ');
-                    if (sp != std::string::npos) {
-                        song_name = song_name.substr(sp + 1);
-                    } else {
-                        song_name = "";
+                    std::string song_name;
+                    size_t pos = typed_line.find("sinksing");
+                    if (pos != std::string::npos) {
+                        song_name = typed_line.substr(pos + 8);
+                        size_t first = song_name.find_first_not_of(" \t\r\n");
+                        if (first != std::string::npos) {
+                            size_t last = song_name.find_last_not_of(" \t\r\n");
+                            song_name = song_name.substr(first, (last - first + 1));
+                        } else {
+                            song_name = "";
+                        }
                     }
                     std::thread([tw, song_name]() {
                         SinkDemo::run_sing(tw, song_name);
