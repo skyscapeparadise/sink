@@ -8,6 +8,8 @@ an hdr video terminal for underwater programming
 
 **sink** is free software released under the [GNU Lesser General Public License v2.1](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.en.html) or later.
 
+you can run a demo of *sink* by entering the "sinkdemo" command.
+
 ## Roadmap
 
 ○ Graphics Presets
