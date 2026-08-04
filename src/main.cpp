@@ -1386,6 +1386,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         // B. Render grid cells
         {
             std::lock_guard<std::mutex> lock(tw->grid_mutex);
+            tw->terminal.set_enable_ligatures(state->ligatures_enabled);
             float top_pts = tw->vibrancy_enabled ? 32.0f : 34.0f;
             float start_y = (state->padding + top_pts) * state->display_scale;
             float start_x = state->padding * state->display_scale;

@@ -608,7 +608,7 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
             if (!skip_text && render_cp != 32 && render_cp != 0) {
                 const GlyphInfo* glyph = font_manager.get_glyph(renderer, render_cp);
                 if (glyph && glyph->src_rect.w > 0.0f && glyph->src_rect.h > 0.0f) {
-                    bool is_dynamic = (cell.codepoint < 32 || cell.codepoint > 126);
+                    bool is_dynamic = (render_cp < 32 || render_cp > 126);
                     float tex_w = is_dynamic ? dyn_atlas_w : atlas_w;
                     float tex_h = is_dynamic ? dyn_atlas_h : atlas_h;
 
@@ -620,15 +620,17 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
 
                         float glyph_w = glyph->src_rect.w;
                         float glyph_h = glyph->src_rect.h;
+                        bool is_ligature = (render_cp != cell.codepoint && render_cp >= 0x2000);
 
-                        if (glyph->is_color) {
-                            float target_w = cell_w;
+                        if (glyph->is_color || is_ligature) {
+                            float target_w = is_ligature ? (cell_w * 2.0f) : cell_w;
                             float scale_factor = target_w / glyph_w;
                             glyph_w = target_w;
                             glyph_h *= scale_factor;
                         }
 
-                        float gx0 = x0 + (cell_w - glyph_w) / 2.0f;
+                        float span_w = is_ligature ? (cell_w * 2.0f) : cell_w;
+                        float gx0 = x0 + (span_w - glyph_w) / 2.0f;
                         float gy0 = y0 + (cell_h - glyph_h) / 2.0f;
                         float gx1 = gx0 + glyph_w;
                         float gy1 = gy0 + glyph_h;
