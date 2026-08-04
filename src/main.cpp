@@ -90,6 +90,12 @@ struct TerminalWindow {
     FadeState fade_state = FADE_HOLD_BLACK;
     float fade_opacity = 1.0f;
 
+    // Feature states
+    bool search_drawer_open = false;
+    std::string search_input_text;
+    bool crt_mode_enabled = false;
+    bool vibrancy_enabled = true;
+
     float cell_w = 0.0f;
     float cell_h = 0.0f;
     int mouse_down_col = -1;
@@ -112,6 +118,9 @@ struct AppState {
     bool input_broadcasting = false;
     float exposure = 0.7f;
     bool animated_typing = true;
+    bool vibrancy_enabled = true;
+    bool crt_mode_enabled = false;
+    bool ligatures_enabled = true;
 };
 
 static std::string resolve_default_video_path() {
@@ -185,6 +194,9 @@ static void save_config(AppState* state) {
         f << "font_path=" << f_path << "\n";
         f << "exposure=" << state->exposure << "\n";
         f << "animated_typing=" << (state->animated_typing ? "true" : "false") << "\n";
+        f << "vibrancy_enabled=" << (state->vibrancy_enabled ? "true" : "false") << "\n";
+        f << "crt_mode_enabled=" << (state->crt_mode_enabled ? "true" : "false") << "\n";
+        f << "ligatures_enabled=" << (state->ligatures_enabled ? "true" : "false") << "\n";
         f.close();
     }
 }
@@ -219,6 +231,12 @@ static void load_config(AppState* state) {
                 } catch (...) {}
             } else if (key == "animated_typing") {
                 state->animated_typing = (val == "true");
+            } else if (key == "vibrancy_enabled") {
+                state->vibrancy_enabled = (val == "true");
+            } else if (key == "crt_mode_enabled") {
+                state->crt_mode_enabled = (val == "true");
+            } else if (key == "ligatures_enabled") {
+                state->ligatures_enabled = (val == "true");
             }
         }
         f.close();
@@ -227,6 +245,9 @@ static void load_config(AppState* state) {
         for (auto* tw : state->windows) {
             tw->exposure = state->exposure;
             tw->animated_typing = state->animated_typing;
+            tw->vibrancy_enabled = state->vibrancy_enabled;
+            tw->crt_mode_enabled = state->crt_mode_enabled;
+            tw->terminal.set_enable_ligatures(state->ligatures_enabled);
         }
     }
 }
@@ -247,6 +268,10 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
         return nullptr;
     }
 
+    tw->vibrancy_enabled = state->vibrancy_enabled;
+    tw->crt_mode_enabled = state->crt_mode_enabled;
+    tw->terminal.set_enable_ligatures(state->ligatures_enabled);
+
     // Create Renderer. Linear colorspace if background video is HDR.
     if (state->video_is_hdr) {
         SDL_PropertiesID props = SDL_CreateProperties();
@@ -264,6 +289,12 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
         delete tw;
         return nullptr;
     }
+
+    SDL_SetRenderVSync(tw->renderer, 1);
+
+#if defined(__APPLE__)
+    enable_macos_window_vibrancy(tw->window, tw->vibrancy_enabled);
+#endif
 
     float scale = SDL_GetWindowDisplayScale(tw->window);
     if (scale <= 0.0f) scale = 1.0f;
@@ -286,8 +317,9 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     // Settle initial grid scale dimensions
     int win_w = 0, win_h = 0;
     SDL_GetWindowSize(tw->window, &win_w, &win_h);
+    float top_offset_pts = tw->vibrancy_enabled ? 28.0f : 34.0f;
     int cols = std::max(40, static_cast<int>((win_w - 2 * state->padding) / tw->cell_w));
-    int rows = std::max(10, static_cast<int>((win_h - 2 * state->padding) / tw->cell_h));
+    int rows = std::max(10, static_cast<int>((win_h - 2 * state->padding - top_offset_pts) / tw->cell_h));
 
     tw->terminal.resize(cols, rows);
     tw->terminal.clear_screen();
@@ -689,6 +721,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         if (state->settings_ui.is_open() && SDL_GetKeyboardFocus() == state->settings_ui.get_window()) {
             return SDL_APP_CONTINUE;
         }
+        if (target_tw && target_tw->search_drawer_open) {
+            target_tw->search_input_text += event->text.text;
+            target_tw->terminal.set_search_query(target_tw->search_input_text);
+            return SDL_APP_CONTINUE;
+        }
         if (state->input_broadcasting) {
             for (auto* tw : state->windows) {
                 tw->terminal.clear_selection();
@@ -708,6 +745,44 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         SDL_Keycode sym = event->key.key;
         SDL_Keymod mod = event->key.mod;
 
+        // Cmd+F search bar toggle shortcut
+        if ((mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) && sym == SDLK_F) {
+            target_tw->search_drawer_open = !target_tw->search_drawer_open;
+            target_tw->terminal.set_search_active(target_tw->search_drawer_open);
+            if (target_tw->search_drawer_open) {
+                target_tw->terminal.set_search_query(target_tw->search_input_text);
+            }
+            return SDL_APP_CONTINUE;
+        }
+
+        // Handle Search Drawer active keyboard inputs
+        if (target_tw && target_tw->search_drawer_open) {
+            if (sym == SDLK_ESCAPE) {
+                target_tw->search_drawer_open = false;
+                target_tw->terminal.set_search_active(false);
+                return SDL_APP_CONTINUE;
+            } else if (sym == SDLK_BACKSPACE || sym == SDLK_DELETE) {
+                if (!target_tw->search_input_text.empty()) {
+                    target_tw->search_input_text.pop_back();
+                    target_tw->terminal.set_search_query(target_tw->search_input_text);
+                }
+                return SDL_APP_CONTINUE;
+            } else if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) {
+                if (mod & SDL_KMOD_SHIFT) {
+                    target_tw->terminal.search_prev();
+                } else {
+                    target_tw->terminal.search_next();
+                }
+                return SDL_APP_CONTINUE;
+            } else if (sym == SDLK_UP) {
+                target_tw->terminal.search_prev();
+                return SDL_APP_CONTINUE;
+            } else if (sym == SDLK_DOWN) {
+                target_tw->terminal.search_next();
+                return SDL_APP_CONTINUE;
+            }
+        }
+
         // Cmd+Comma settings window trigger
         if ((mod & SDL_KMOD_GUI) && sym == SDLK_COMMA) {
             if (!state->settings_ui.is_open()) {
@@ -716,6 +791,8 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                     state->settings_ui.set_animated_typing(target_tw->animated_typing);
                     state->settings_ui.set_exposure(target_tw->exposure);
                     state->settings_ui.set_broadcasting(state->input_broadcasting);
+                    state->settings_ui.set_vibrancy_enabled(target_tw->vibrancy_enabled);
+                    state->settings_ui.set_crt_effect_enabled(target_tw->crt_mode_enabled);
                 }
             } else {
                 state->settings_ui.close();
@@ -835,8 +912,9 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             int w = event->window.data1;
             int h = event->window.data2;
             if (w > 0 && h > 0) {
+                float top_offset_pts = target_tw->vibrancy_enabled ? 28.0f : 34.0f;
                 int new_cols = std::max(40, static_cast<int>((w - 2 * state->padding) / target_tw->cell_w));
-                int new_rows = std::max(10, static_cast<int>((h - 2 * state->padding) / target_tw->cell_h));
+                int new_rows = std::max(10, static_cast<int>((h - 2 * state->padding - top_offset_pts) / target_tw->cell_h));
                 
                 target_tw->terminal.resize(new_cols, new_rows);
                 target_tw->pty.resize_pty(new_cols, new_rows);
@@ -933,6 +1011,133 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
     return SDL_APP_CONTINUE;
 }
 
+static void render_crt_effects(SDL_Renderer* renderer, int width, int height) {
+    static SDL_Texture* aperture_tex = nullptr;
+    static SDL_Texture* scanline_tex = nullptr;
+
+    if (!aperture_tex) {
+        // Create 6x1 EasyMode RGB Aperture Grille sub-pixel triad texture (RGBA8888)
+        // Format: [R, G, B, A] per byte
+        Uint8 pixels[6 * 4] = {
+            255,   0,   0,  18, // R
+              0, 255,   0,  18, // G
+              0,   0, 255,  18, // B
+            255,   0,   0,  18, // R
+              0, 255,   0,  18, // G
+              0,   0, 255,  18  // B
+        };
+        SDL_Surface* surf = SDL_CreateSurfaceFrom(6, 1, SDL_PIXELFORMAT_RGBA8888, pixels, 6 * 4);
+        if (surf) {
+            aperture_tex = SDL_CreateTextureFromSurface(renderer, surf);
+            if (aperture_tex) {
+                SDL_SetTextureScaleMode(aperture_tex, SDL_SCALEMODE_NEAREST);
+            }
+            SDL_DestroySurface(surf);
+        }
+    }
+
+    if (!scanline_tex) {
+        // Create 1x4 EasyMode flat scanline beam profile texture (RGBA8888)
+        Uint8 scan_pixels[4 * 4] = {
+              0,   0,   0,  55, // Dark scanline notch
+              0,   0,   0,  20, // Beam edge
+            255, 255, 255,  12, // Beam center glow
+              0,   0,   0,  20  // Beam edge
+        };
+        SDL_Surface* surf = SDL_CreateSurfaceFrom(1, 4, SDL_PIXELFORMAT_RGBA8888, scan_pixels, 1 * 4);
+        if (surf) {
+            scanline_tex = SDL_CreateTextureFromSurface(renderer, surf);
+            if (scanline_tex) {
+                SDL_SetTextureScaleMode(scanline_tex, SDL_SCALEMODE_NEAREST);
+            }
+            SDL_DestroySurface(surf);
+        }
+    }
+
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+
+    // 1. EasyMode Flat Scanline Pattern (no animated sweep line)
+    if (scanline_tex) {
+        SDL_FRect dst = { 0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height) };
+        SDL_RenderTextureTiled(renderer, scanline_tex, nullptr, 1.0f, &dst);
+    }
+
+    // 2. EasyMode Aperture Grille Sub-Pixel Mask Pattern (no bezel borders)
+    if (aperture_tex) {
+        SDL_FRect dst = { 0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height) };
+        SDL_RenderTextureTiled(renderer, aperture_tex, nullptr, 1.0f, &dst);
+    }
+
+    // 3. EasyMode Brightness & Phosphor Glow Fill
+    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 6);
+    SDL_FRect screen_rect = { 0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height) };
+    SDL_RenderFillRect(renderer, &screen_rect);
+}
+
+static void render_search_drawer(TerminalWindow* tw, int width, int height) {
+    if (!tw->search_drawer_open) return;
+
+    SDL_Renderer* r = tw->renderer;
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+
+    float panel_w = std::min(450.0f, width - 40.0f);
+    float panel_h = 38.0f;
+    float panel_x = width - panel_w - 20.0f;
+    float panel_y = 12.0f;
+
+    // Background Card
+    SDL_FRect bg_rect = { panel_x, panel_y, panel_w, panel_h };
+    SDL_SetRenderDrawColor(r, 12, 16, 24, 235);
+    SDL_RenderFillRect(r, &bg_rect);
+
+    // Cyan Border
+    SDL_SetRenderDrawColor(r, 0, 200, 255, 180);
+    SDL_RenderRect(r, &bg_rect);
+
+    // Label & Input text
+    std::string text = "Find: " + tw->search_input_text + "_";
+    int count = tw->terminal.get_search_match_count();
+    int idx = tw->terminal.get_current_search_index();
+
+    std::string match_info;
+    if (tw->search_input_text.empty()) {
+        match_info = "";
+    } else if (count == 0) {
+        match_info = "[0 matches]";
+    } else {
+        match_info = "[" + std::to_string(idx + 1) + "/" + std::to_string(count) + "]";
+    }
+
+    float cell_w = tw->font_manager.get_cell_width();
+    float text_x = panel_x + 12.0f;
+    float text_y = panel_y + 10.0f;
+
+    for (char ch : text) {
+        const GlyphInfo* g = tw->font_manager.get_glyph(r, static_cast<char32_t>(ch));
+        if (g) {
+            SDL_FRect src = g->src_rect;
+            SDL_FRect dst = { text_x, text_y, g->src_rect.w, g->src_rect.h };
+            SDL_SetTextureColorMod(tw->font_manager.get_atlas_texture(), 255, 255, 255);
+            SDL_RenderTexture(r, tw->font_manager.get_atlas_texture(), &src, &dst);
+        }
+        text_x += cell_w;
+    }
+
+    if (!match_info.empty()) {
+        float info_x = panel_x + panel_w - (match_info.length() * cell_w) - 14.0f;
+        for (char ch : match_info) {
+            const GlyphInfo* g = tw->font_manager.get_glyph(r, static_cast<char32_t>(ch));
+            if (g) {
+                SDL_FRect src = g->src_rect;
+                SDL_FRect dst = { info_x, text_y, g->src_rect.w, g->src_rect.h };
+                SDL_SetTextureColorMod(tw->font_manager.get_atlas_texture(), 0, 230, 255);
+                SDL_RenderTexture(r, tw->font_manager.get_atlas_texture(), &src, &dst);
+            }
+            info_x += cell_w;
+        }
+    }
+}
+
 SDL_AppResult SDL_AppIterate(void* appstate) {
     AppState* state = static_cast<AppState*>(appstate);
     if (!state) return SDL_APP_FAILURE;
@@ -976,6 +1181,16 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             }
             trigger_print_dialog(print_text.c_str());
         }
+        if (get_find_requested()) {
+            tw->search_drawer_open = !tw->search_drawer_open;
+            tw->terminal.set_search_active(tw->search_drawer_open);
+            if (tw->search_drawer_open) {
+                tw->terminal.set_search_query(tw->search_input_text);
+            }
+        }
+        if (get_crt_mode_requested()) {
+            tw->crt_mode_enabled = !tw->crt_mode_enabled;
+        }
     }
 
     // Process Window spawning menu actions
@@ -1009,22 +1224,54 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         }
     }
 
-    // Delta time calculation
+    // Delta time calculation and CPU thread throttling
     Uint64 current_tick = SDL_GetTicks();
     Uint64 elapsed = current_tick - state->last_tick;
-    if (elapsed < 10) { // Throttle duplicate updates if called too quickly by Cocoa's common modes timer
-        return SDL_APP_CONTINUE;
+    if (elapsed < 16) {
+        SDL_Delay(16 - elapsed);
+        current_tick = SDL_GetTicks();
+        elapsed = current_tick - state->last_tick;
     }
     float dt = elapsed / 1000.0f;
     state->last_tick = current_tick;
 
-    // Sync exposure setting from UI in real-time
+    // Sync settings from UI in real-time
     if (state->settings_ui.is_open()) {
         float exp = state->settings_ui.get_exposure();
         if (state->exposure != exp) {
             state->exposure = exp;
             for (auto* tw : state->windows) {
                 tw->exposure = exp;
+            }
+            save_config(state);
+        }
+
+        bool vib = state->settings_ui.get_vibrancy_enabled();
+        if (state->vibrancy_enabled != vib) {
+            state->vibrancy_enabled = vib;
+            for (auto* tw : state->windows) {
+                tw->vibrancy_enabled = vib;
+#if defined(__APPLE__)
+                enable_macos_window_vibrancy(tw->window, vib);
+#endif
+            }
+            save_config(state);
+        }
+
+        bool crt = state->settings_ui.get_crt_effect_enabled();
+        if (state->crt_mode_enabled != crt) {
+            state->crt_mode_enabled = crt;
+            for (auto* tw : state->windows) {
+                tw->crt_mode_enabled = crt;
+            }
+            save_config(state);
+        }
+
+        bool lig = state->settings_ui.get_ligatures_enabled();
+        if (state->ligatures_enabled != lig) {
+            state->ligatures_enabled = lig;
+            for (auto* tw : state->windows) {
+                tw->terminal.set_enable_ligatures(lig);
             }
             save_config(state);
         }
@@ -1132,12 +1379,19 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             }
         }
 
-        // Render Active Window Context
-        SDL_SetRenderDrawColor(tw->renderer, 0, 0, 0, 255);
-        SDL_RenderClear(tw->renderer);
-
         int draw_w = 0, draw_h = 0;
         SDL_GetRenderOutputSize(tw->renderer, &draw_w, &draw_h);
+
+        // Ensure full window render viewport
+        SDL_SetRenderViewport(tw->renderer, nullptr);
+
+        // Render Active Window Context
+        if (tw->vibrancy_enabled && !tw->has_video) {
+            SDL_SetRenderDrawColor(tw->renderer, 0, 0, 0, 80);
+        } else {
+            SDL_SetRenderDrawColor(tw->renderer, 0, 0, 0, 255);
+        }
+        SDL_RenderClear(tw->renderer);
 
         // A. Render video background YUV frame if active
         if (tw->has_video) {
@@ -1153,10 +1407,23 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         // B. Render grid cells
         {
             std::lock_guard<std::mutex> lock(tw->grid_mutex);
-            tw->terminal.render(tw->renderer, tw->font_manager, state->padding, state->padding, state->display_scale, dt, tw->animated_typing);
+            float top_pts = tw->vibrancy_enabled ? 28.0f : 34.0f;
+            float start_y = (state->padding + top_pts) * state->display_scale;
+            float start_x = state->padding * state->display_scale;
+            tw->terminal.render(tw->renderer, tw->font_manager, start_x, start_y, state->display_scale, dt, tw->animated_typing);
         }
 
-        // C. Draw black dissolve overlay mask
+        // C. Draw CRT retro shader effect if enabled
+        if (tw->crt_mode_enabled) {
+            render_crt_effects(tw->renderer, draw_w, draw_h);
+        }
+
+        // D. Draw Search Bar Drawer UI if open
+        if (tw->search_drawer_open) {
+            render_search_drawer(tw, draw_w, draw_h);
+        }
+
+        // E. Draw black dissolve overlay mask
         if (tw->fade_opacity > 0.0f) {
             SDL_FRect full_rect = { 0.0f, 0.0f, static_cast<float>(draw_w), static_cast<float>(draw_h) };
             SDL_SetRenderDrawBlendMode(tw->renderer, SDL_BLENDMODE_BLEND);

@@ -36,6 +36,10 @@ private:
     std::unordered_map<char32_t, GlyphInfo> glyph_cache_;
     mutable std::unordered_map<char32_t, GlyphInfo> dynamic_glyph_cache_;
     
+    // Fast O(1) ASCII glyph cache
+    GlyphInfo ascii_cache_[128];
+    bool has_ascii_cache_[128] = {false};
+    
     float cell_width_ = 0.0f;
     float cell_height_ = 0.0f;
     bool is_ttf_initialized_ = false;

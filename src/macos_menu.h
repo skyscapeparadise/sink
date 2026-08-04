@@ -41,6 +41,15 @@ void set_print_requested(bool requested);
 bool get_print_requested();
 void trigger_print_dialog(const char* text_utf8);
 
+void set_find_requested(bool requested);
+bool get_find_requested();
+
+void set_crt_mode_requested(bool requested);
+bool get_crt_mode_requested();
+
+// Enable or disable macOS native translucent window vibrancy / acrylic blur
+void enable_macos_window_vibrancy(SDL_Window* sdl_win, bool enable);
+
 #ifdef __cplusplus
 }
 #endif

@@ -97,6 +97,27 @@ public:
     bool is_wrap_pending() const { return wrap_pending_; }
     const std::vector<bool>& get_row_wrapped() const { return row_wrapped_; }
 
+    // Scrollback Search API
+    struct SearchResult {
+        int absolute_row; // Row index relative to history + active grid
+        int col;
+        int len;
+    };
+
+    void set_search_query(const std::string& query);
+    void set_search_active(bool active);
+    bool is_search_active() const { return search_active_; }
+    void search_next();
+    void search_prev();
+    int get_search_match_count() const { return static_cast<int>(search_matches_.size()); }
+    int get_current_search_index() const { return current_match_index_; }
+    const std::string& get_search_query() const { return search_query_; }
+    bool is_cell_search_matched(int col, int row) const;
+
+    // Ligature support setting
+    void set_enable_ligatures(bool enable) { enable_ligatures_ = enable; }
+    bool get_enable_ligatures() const { return enable_ligatures_; }
+
 private:
     int cols_ = 0;
     int rows_ = 0;
@@ -109,7 +130,15 @@ private:
     // Scrollback history buffers
     std::vector<ScrollbackRow> scrollback_history_;
     int scroll_offset_ = 0;
+    float display_scroll_offset_ = 0.0f; // Smooth sub-pixel interpolated scroll offset
     const size_t max_scrollback_size_ = 2000; // Store up to 2000 lines of scrollback history
+    
+    // Search state
+    std::string search_query_;
+    std::vector<SearchResult> search_matches_;
+    int current_match_index_ = -1;
+    bool search_active_ = false;
+    bool enable_ligatures_ = true;
     
     // Selection state variables
     bool has_selection_ = false;

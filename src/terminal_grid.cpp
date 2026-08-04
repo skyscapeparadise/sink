@@ -521,7 +521,20 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
     text_indices_.clear();
     dyn_text_vertices_.clear();
     dyn_text_indices_.clear();
+
+    size_t total_cells = static_cast<size_t>(rows_ * cols_);
+    bg_vertices_.reserve(total_cells * 4 + 32);
+    bg_indices_.reserve(total_cells * 6 + 48);
+    text_vertices_.reserve(total_cells * 4);
+    text_indices_.reserve(total_cells * 6);
+    dyn_text_vertices_.reserve(total_cells * 4);
+    dyn_text_indices_.reserve(total_cells * 6);
     
+
+    // Smooth scrolling interpolation (sub-pixel lerp towards target scroll_offset_)
+    float target_scroll = static_cast<float>(scroll_offset_);
+    display_scroll_offset_ += (target_scroll - display_scroll_offset_) * std::min(1.0f, dt * 22.0f);
+    float scroll_diff_y = (target_scroll - display_scroll_offset_) * cell_h;
 
     // 1. Draw Grid Cells
     for (int r = 0; r < rows_; ++r) {
@@ -529,15 +542,19 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
             Cell cell = get_cell_at(c, r);
 
             float x0 = start_x + c * cell_w;
-            float y0 = start_y + r * cell_h;
+            float y0 = start_y + r * cell_h + scroll_diff_y;
             float x1 = x0 + cell_w;
             float y1 = y0 + cell_h;
 
             // Populate Background Geometry
             SDL_FColor bg_color = cell.bg;
             bool selected = is_cell_selected(c, r);
+            bool search_matched = is_cell_search_matched(c, r);
+
             if (selected) {
                 bg_color = { 1.00f, 0.60f, 0.00f, 0.35f }; // Premium Translucent Amber Gold Selection
+            } else if (search_matched) {
+                bg_color = { 0.00f, 0.90f, 1.00f, 0.45f }; // Translucent Electric Cyan Search Highlight
             }
 
             if (bg_color.a > 0.0f) {
@@ -556,9 +573,40 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
                 bg_indices_.push_back(base_idx + 3);
             }
 
+            // Ligature detection & Codepoint substitution
+            char32_t render_cp = cell.codepoint;
+            bool skip_text = false;
+
+            if (enable_ligatures_ && c < cols_ - 1) {
+                Cell next_cell = get_cell_at(c + 1, r);
+                char32_t c1 = cell.codepoint;
+                char32_t c2 = next_cell.codepoint;
+                if (c1 == '-' && c2 == '>') render_cp = 0x2192; // →
+                else if (c1 == '=' && c2 == '>') render_cp = 0x21D2; // ⇒
+                else if (c1 == '!' && c2 == '=') render_cp = 0x2260; // ≠
+                else if (c1 == '<' && c2 == '=') render_cp = 0x2264; // ≤
+                else if (c1 == '>' && c2 == '=') render_cp = 0x2265; // ≥
+                else if (c1 == '=' && c2 == '=') render_cp = 0x2261; // ≡
+                else if (c1 == ':' && c2 == ':') render_cp = 0x2237; // ∷
+                else if (c1 == '<' && c2 == '<') render_cp = 0x226A; // ≪
+                else if (c1 == '>' && c2 == '>') render_cp = 0x226B; // ≫
+            }
+            if (enable_ligatures_ && c > 0) {
+                Cell prev_cell = get_cell_at(c - 1, r);
+                char32_t p1 = prev_cell.codepoint;
+                char32_t p2 = cell.codepoint;
+                if ((p1 == '-' && p2 == '>') || (p1 == '=' && p2 == '>') ||
+                    (p1 == '!' && p2 == '=') || (p1 == '<' && p2 == '=') ||
+                    (p1 == '>' && p2 == '=') || (p1 == '=' && p2 == '=') ||
+                    (p1 == ':' && p2 == ':') || (p1 == '<' && p2 == '<') ||
+                    (p1 == '>' && p2 == '>')) {
+                    skip_text = true;
+                }
+            }
+
             // Populate Text Geometry
-            if (cell.codepoint != 32 && cell.codepoint != 0) {
-                const GlyphInfo* glyph = font_manager.get_glyph(renderer, cell.codepoint);
+            if (!skip_text && render_cp != 32 && render_cp != 0) {
+                const GlyphInfo* glyph = font_manager.get_glyph(renderer, render_cp);
                 if (glyph && glyph->src_rect.w > 0.0f && glyph->src_rect.h > 0.0f) {
                     bool is_dynamic = (cell.codepoint < 32 || cell.codepoint > 126);
                     float tex_w = is_dynamic ? dyn_atlas_w : atlas_w;
@@ -1100,4 +1148,116 @@ std::string TerminalGrid::get_current_line_text() const {
         return line.substr(0, last + 1);
     }
     return line;
+}
+
+void TerminalGrid::set_search_active(bool active) {
+    search_active_ = active;
+    if (!active) {
+        search_query_.clear();
+        search_matches_.clear();
+        current_match_index_ = -1;
+    }
+}
+
+void TerminalGrid::set_search_query(const std::string& query) {
+    search_query_ = query;
+    search_matches_.clear();
+    current_match_index_ = -1;
+
+    if (query.empty()) return;
+
+    std::string lower_query = query;
+    std::transform(lower_query.begin(), lower_query.end(), lower_query.begin(), ::tolower);
+
+    int total_history = static_cast<int>(scrollback_history_.size());
+    int total_rows = total_history + rows_;
+
+    for (int abs_r = 0; abs_r < total_rows; ++abs_r) {
+        std::string line_str;
+        if (abs_r < total_history) {
+            const auto& row_cells = scrollback_history_[abs_r].cells;
+            for (const auto& cell : row_cells) {
+                if (cell.codepoint >= 32 && cell.codepoint <= 126) {
+                    line_str += static_cast<char>(cell.codepoint);
+                } else if (cell.codepoint > 126) {
+                    line_str += utf32_to_utf8(cell.codepoint);
+                } else {
+                    line_str += ' ';
+                }
+            }
+        } else {
+            int r = abs_r - total_history;
+            for (int c = 0; c < cols_; ++c) {
+                char32_t cp = cells_[r * cols_ + c].codepoint;
+                if (cp >= 32 && cp <= 126) {
+                    line_str += static_cast<char>(cp);
+                } else if (cp > 126) {
+                    line_str += utf32_to_utf8(cp);
+                } else {
+                    line_str += ' ';
+                }
+            }
+        }
+
+        std::string lower_line = line_str;
+        std::transform(lower_line.begin(), lower_line.end(), lower_line.begin(), ::tolower);
+
+        size_t pos = 0;
+        while ((pos = lower_line.find(lower_query, pos)) != std::string::npos) {
+            SearchResult res;
+            res.absolute_row = abs_r;
+            res.col = static_cast<int>(pos);
+            res.len = static_cast<int>(query.length());
+            search_matches_.push_back(res);
+            pos += std::max<size_t>(1, query.length());
+        }
+    }
+
+    if (!search_matches_.empty()) {
+        current_match_index_ = 0;
+        int match_abs_r = search_matches_[0].absolute_row;
+        int target_scroll = total_history - (match_abs_r - rows_ / 2);
+        if (target_scroll < 0) target_scroll = 0;
+        if (target_scroll > total_history) target_scroll = total_history;
+        scroll_offset_ = target_scroll;
+    }
+}
+
+void TerminalGrid::search_next() {
+    if (search_matches_.empty()) return;
+    current_match_index_ = (current_match_index_ + 1) % search_matches_.size();
+    
+    int total_history = static_cast<int>(scrollback_history_.size());
+    int match_abs_r = search_matches_[current_match_index_].absolute_row;
+    int target_scroll = total_history - (match_abs_r - rows_ / 2);
+    if (target_scroll < 0) target_scroll = 0;
+    if (target_scroll > total_history) target_scroll = total_history;
+    scroll_offset_ = target_scroll;
+}
+
+void TerminalGrid::search_prev() {
+    if (search_matches_.empty()) return;
+    current_match_index_ = (current_match_index_ - 1 + static_cast<int>(search_matches_.size())) % static_cast<int>(search_matches_.size());
+    
+    int total_history = static_cast<int>(scrollback_history_.size());
+    int match_abs_r = search_matches_[current_match_index_].absolute_row;
+    int target_scroll = total_history - (match_abs_r - rows_ / 2);
+    if (target_scroll < 0) target_scroll = 0;
+    if (target_scroll > total_history) target_scroll = total_history;
+    scroll_offset_ = target_scroll;
+}
+
+bool TerminalGrid::is_cell_search_matched(int col, int row) const {
+    if (!search_active_ || search_matches_.empty()) return false;
+    int total_history = static_cast<int>(scrollback_history_.size());
+    int abs_row = row + (total_history - scroll_offset_);
+
+    for (const auto& match : search_matches_) {
+        if (match.absolute_row == abs_row) {
+            if (col >= match.col && col < (match.col + match.len)) {
+                return true;
+            }
+        }
+    }
+    return false;
 }

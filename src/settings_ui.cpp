@@ -162,6 +162,36 @@ void SettingsUI::set_exposure(float exposure) {
     }
 }
 
+void SettingsUI::set_vibrancy_enabled(bool enabled) {
+    vibrancy_enabled_ = enabled;
+    for (auto& btn : buttons_) {
+        if (btn.id == 7) {
+            btn.label = std::string("title bar: ") + (vibrancy_enabled_ ? "on" : "off");
+            break;
+        }
+    }
+}
+
+void SettingsUI::set_crt_effect_enabled(bool enabled) {
+    crt_effect_enabled_ = enabled;
+    for (auto& btn : buttons_) {
+        if (btn.id == 8) {
+            btn.label = std::string("crt shader: ") + (crt_effect_enabled_ ? "on" : "off");
+            break;
+        }
+    }
+}
+
+void SettingsUI::set_ligatures_enabled(bool enabled) {
+    ligatures_enabled_ = enabled;
+    for (auto& btn : buttons_) {
+        if (btn.id == 9) {
+            btn.label = std::string("ligatures: ") + (ligatures_enabled_ ? "on" : "off");
+            break;
+        }
+    }
+}
+
 void SettingsUI::init_layout() {
     buttons_.clear();
     sliders_.clear();
@@ -171,15 +201,22 @@ void SettingsUI::init_layout() {
     UIButton btn_bg_clear = { 2, "clear", {164.0f, 94.0f, 80.0f, 28.0f}, colors_.btn_danger, colors_.btn_danger_hover };
     UIButton btn_font_select = { 3, "select font...", {24.0f, 232.0f, 130.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
     
-    UIButton btn_anim_toggle = { 5, std::string("typing: ") + (animated_typing_ ? "on" : "off"), {24.0f, 305.0f, 140.0f, 32.0f}, colors_.btn_idle, colors_.btn_hover };
-    UIButton btn_broadcast_toggle = { 6, std::string("broadcast: ") + (broadcasting_ ? "on" : "off"), {180.0f, 305.0f, 140.0f, 32.0f}, colors_.btn_idle, colors_.btn_hover };
-    UIButton btn_done = { 4, "done", {366.0f, 305.0f, 90.0f, 32.0f}, colors_.btn_idle, colors_.btn_hover };
+    UIButton btn_anim_toggle = { 5, std::string("typing: ") + (animated_typing_ ? "on" : "off"), {24.0f, 268.0f, 130.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    UIButton btn_crt_toggle = { 8, std::string("crt shader: ") + (crt_effect_enabled_ ? "on" : "off"), {168.0f, 268.0f, 130.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    UIButton btn_vibrancy_toggle = { 7, std::string("title bar: ") + (vibrancy_enabled_ ? "on" : "off"), {312.0f, 268.0f, 144.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+
+    UIButton btn_broadcast_toggle = { 6, std::string("broadcast: ") + (broadcasting_ ? "on" : "off"), {24.0f, 308.0f, 130.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    UIButton btn_ligatures_toggle = { 9, std::string("ligatures: ") + (ligatures_enabled_ ? "on" : "off"), {168.0f, 308.0f, 130.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    UIButton btn_done = { 4, "done", {366.0f, 308.0f, 90.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
 
     buttons_.push_back(btn_bg_select);
     buttons_.push_back(btn_bg_clear);
     buttons_.push_back(btn_font_select);
     buttons_.push_back(btn_anim_toggle);
+    buttons_.push_back(btn_crt_toggle);
+    buttons_.push_back(btn_vibrancy_toggle);
     buttons_.push_back(btn_broadcast_toggle);
+    buttons_.push_back(btn_ligatures_toggle);
     buttons_.push_back(btn_done);
 
     // 2. UI Sliders
@@ -282,6 +319,12 @@ void SettingsUI::process_event(const SDL_Event& event) {
                         ev.user.code = 5; // Toggle input broadcasting
                         ev.user.data1 = (void*)(intptr_t)broadcasting_;
                         SDL_PushEvent(&ev);
+                    } else if (btn.id == 7) { // Toggle Vibrancy
+                        set_vibrancy_enabled(!vibrancy_enabled_);
+                    } else if (btn.id == 8) { // Toggle CRT Mode
+                        set_crt_effect_enabled(!crt_effect_enabled_);
+                    } else if (btn.id == 9) { // Toggle Ligatures
+                        set_ligatures_enabled(!ligatures_enabled_);
                     }
                     break;
                 }

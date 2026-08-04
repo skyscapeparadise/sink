@@ -42,6 +42,7 @@ void FontManager::cleanup() {
     }
     glyph_cache_.clear();
     dynamic_glyph_cache_.clear();
+    std::fill_n(has_ascii_cache_, 128, false);
     dynamic_x_ = 0;
     dynamic_y_ = 0;
     dynamic_row_h_ = 0;
@@ -203,6 +204,10 @@ bool FontManager::build_atlas(SDL_Renderer* renderer) {
             };
             info.advance = actual_advance;
             glyph_cache_[codepoint] = info;
+            if (codepoint < 128) {
+                ascii_cache_[codepoint] = info;
+                has_ascii_cache_[codepoint] = true;
+            }
 
             SDL_DestroySurface(glyph_surf);
         } else {
@@ -211,6 +216,10 @@ bool FontManager::build_atlas(SDL_Renderer* renderer) {
             info.src_rect = { x, y, 0.0f, 0.0f };
             info.advance = cell_width_;
             glyph_cache_[codepoint] = info;
+            if (codepoint < 128) {
+                ascii_cache_[codepoint] = info;
+                has_ascii_cache_[codepoint] = true;
+            }
         }
     }
 
@@ -240,10 +249,9 @@ static bool is_emoji_codepoint(char32_t cp) {
 }
 
 const GlyphInfo* FontManager::get_glyph(SDL_Renderer* renderer, char32_t codepoint) const {
-    // 1. Static Cache Lookup (ASCII 32-126)
-    auto it = glyph_cache_.find(codepoint);
-    if (it != glyph_cache_.end()) {
-        return &it->second;
+    // 1. Fast O(1) ASCII Cache Lookup
+    if (codepoint < 128 && has_ascii_cache_[codepoint]) {
+        return &ascii_cache_[codepoint];
     }
 
     // 2. Dynamic Cache Lookup
@@ -255,18 +263,16 @@ const GlyphInfo* FontManager::get_glyph(SDL_Renderer* renderer, char32_t codepoi
     // 3. Fallback/Ignored checks
     if (codepoint == 0 || codepoint == 32) {
         // Return space fallback
-        it = glyph_cache_.find(32);
-        if (it != glyph_cache_.end()) {
-            return &it->second;
+        if (has_ascii_cache_[32]) {
+            return &ascii_cache_[32];
         }
         return nullptr;
     }
 
     if (!renderer || !dynamic_atlas_texture_) {
         // Return space fallback
-        it = glyph_cache_.find(32);
-        if (it != glyph_cache_.end()) {
-            return &it->second;
+        if (has_ascii_cache_[32]) {
+            return &ascii_cache_[32];
         }
         return nullptr;
     }
@@ -292,9 +298,8 @@ const GlyphInfo* FontManager::get_glyph(SDL_Renderer* renderer, char32_t codepoi
 
     if (!glyph_surf) {
         // Return space fallback
-        it = glyph_cache_.find(32);
-        if (it != glyph_cache_.end()) {
-            return &it->second;
+        if (has_ascii_cache_[32]) {
+            return &ascii_cache_[32];
         }
         return nullptr;
     }

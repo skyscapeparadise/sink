@@ -11,6 +11,8 @@ static std::atomic<bool> g_new_window_requested{false};
 static std::atomic<bool> g_new_tab_requested{false};
 static std::atomic<bool> g_close_window_requested{false};
 static std::atomic<bool> g_print_requested{false};
+static std::atomic<bool> g_find_requested{false};
+static std::atomic<bool> g_crt_mode_requested{false};
 
 void set_settings_requested(bool requested) {
     g_settings_requested = requested;
@@ -84,6 +86,22 @@ bool get_print_requested() {
     return g_print_requested.exchange(false);
 }
 
+void set_find_requested(bool req) {
+    g_find_requested = req;
+}
+
+bool get_find_requested() {
+    return g_find_requested.exchange(false);
+}
+
+void set_crt_mode_requested(bool req) {
+    g_crt_mode_requested = req;
+}
+
+bool get_crt_mode_requested() {
+    return g_crt_mode_requested.exchange(false);
+}
+
 // C-linkage trigger to invoke the iteration loop frame update
 extern "C" void trigger_menu_render_tick();
 
@@ -94,6 +112,7 @@ extern "C" void trigger_menu_render_tick();
 - (void)copy:(id)sender;
 - (void)paste:(id)sender;
 - (void)selectAll:(id)sender;
+- (void)find:(id)sender;
 - (void)newWindow:(id)sender;
 - (void)newTab:(id)sender;
 - (void)closeWindow:(id)sender;
@@ -121,6 +140,10 @@ extern "C" void trigger_menu_render_tick();
 
 - (void)selectAll:(id)sender {
     set_select_all_requested(true);
+}
+
+- (void)find:(id)sender {
+    set_find_requested(true);
 }
 
 - (void)newWindow:(id)sender {
@@ -285,6 +308,7 @@ void setup_macos_menu() {
         NSMenuItem* copyItem = [[NSMenuItem alloc] initWithTitle:@"Copy" action:@selector(copy:) keyEquivalent:@"c"];
         NSMenuItem* pasteItem = [[NSMenuItem alloc] initWithTitle:@"Paste" action:@selector(paste:) keyEquivalent:@"v"];
         NSMenuItem* selectAllItem = [[NSMenuItem alloc] initWithTitle:@"Select All" action:@selector(selectAll:) keyEquivalent:@"a"];
+        NSMenuItem* findItem = [[NSMenuItem alloc] initWithTitle:@"Find…" action:@selector(find:) keyEquivalent:@"f"];
         
         [cutItem setTarget:g_menu_handler];
         [cutItem setEnabled:YES];
@@ -298,11 +322,89 @@ void setup_macos_menu() {
         [selectAllItem setTarget:g_menu_handler];
         [selectAllItem setEnabled:YES];
         
+        [findItem setTarget:g_menu_handler];
+        [findItem setEnabled:YES];
+        
         [editMenu addItem:cutItem];
         [editMenu addItem:copyItem];
         [editMenu addItem:pasteItem];
         [editMenu addItem:[NSMenuItem separatorItem]];
         [editMenu addItem:selectAllItem];
+        [editMenu addItem:[NSMenuItem separatorItem]];
+        [editMenu addItem:findItem];
+    }
+}
+
+void enable_macos_window_vibrancy(SDL_Window* sdl_win, bool enable) {
+    @autoreleasepool {
+        if (!sdl_win) return;
+        SDL_PropertiesID props = SDL_GetWindowProperties(sdl_win);
+        NSWindow* nswin = (__bridge NSWindow*)SDL_GetPointerProperty(props, "SDL.window.cocoa.window", NULL);
+        if (!nswin) return;
+        
+        NSView* contentView = [nswin contentView];
+        if (!contentView) return;
+
+        NSMutableArray* queue = [NSMutableArray arrayWithObject:contentView];
+        while ([queue count] > 0) {
+            NSView* v = [queue firstObject];
+            [queue removeObjectAtIndex:0];
+            [v setWantsLayer:YES];
+            if ([v layer]) {
+                [[v layer] setOpaque:NO];
+                [[v layer] setBackgroundColor:[NSColor clearColor].CGColor];
+            }
+            [queue addObjectsFromArray:[v subviews]];
+        }
+
+        NSVisualEffectView* fullEffectView = nil;
+        NSVisualEffectView* titlebarEffectView = nil;
+
+        for (NSView* subview in [contentView subviews]) {
+            if ([subview isKindOfClass:[NSVisualEffectView class]]) {
+                if (subview.frame.size.height <= 60.0) {
+                    titlebarEffectView = (NSVisualEffectView*)subview;
+                } else {
+                    fullEffectView = (NSVisualEffectView*)subview;
+                }
+            }
+        }
+
+        if (!fullEffectView) {
+            fullEffectView = [[NSVisualEffectView alloc] initWithFrame:[contentView bounds]];
+            [fullEffectView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+            [fullEffectView setBlendingMode:NSVisualEffectBlendingModeBehindWindow];
+            [fullEffectView setMaterial:NSVisualEffectMaterialHUDWindow];
+            [fullEffectView setState:NSVisualEffectStateActive];
+            [contentView addSubview:fullEffectView positioned:NSWindowBelow relativeTo:nil];
+        }
+
+        float titlebar_h = 28.0f; // Native standard titlebar height
+        if (!titlebarEffectView) {
+            NSRect b = [contentView bounds];
+            titlebarEffectView = [[NSVisualEffectView alloc] initWithFrame:NSMakeRect(0, b.size.height - titlebar_h, b.size.width, titlebar_h)];
+            [titlebarEffectView setAutoresizingMask:NSViewWidthSizable | NSViewMinYMargin];
+            [titlebarEffectView setBlendingMode:NSVisualEffectBlendingModeBehindWindow];
+            [titlebarEffectView setMaterial:NSVisualEffectMaterialHUDWindow];
+            [titlebarEffectView setState:NSVisualEffectStateActive];
+            [contentView addSubview:titlebarEffectView positioned:NSWindowAbove relativeTo:nil];
+        }
+
+        [nswin setOpaque:NO];
+        [nswin setBackgroundColor:[NSColor clearColor]];
+        [nswin setTitlebarAppearsTransparent:YES];
+        [nswin setStyleMask:([nswin styleMask] | NSWindowStyleMaskFullSizeContentView)];
+
+        if (enable) { // title bar: ON (Native Liquid Glass Title Bar over Desktop, Native "sink" Title)
+            NSRect b = [contentView bounds];
+            [titlebarEffectView setFrame:NSMakeRect(0, b.size.height - titlebar_h, b.size.width, titlebar_h)];
+            [titlebarEffectView setMaterial:NSVisualEffectMaterialHUDWindow];
+            [titlebarEffectView setHidden:NO];
+            [nswin setTitleVisibility:NSWindowTitleVisible];
+        } else { // title bar: OFF (Full Bleed Floating Buttons, NO Title)
+            [titlebarEffectView setHidden:YES];
+            [nswin setTitleVisibility:NSWindowTitleHidden];
+        }
     }
 }
 

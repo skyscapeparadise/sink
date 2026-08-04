@@ -60,6 +60,15 @@ public:
     void set_exposure(float exposure);
     float get_exposure() const { return exposure_; }
 
+    void set_vibrancy_enabled(bool enabled);
+    bool get_vibrancy_enabled() const { return vibrancy_enabled_; }
+
+    void set_crt_effect_enabled(bool enabled);
+    bool get_crt_effect_enabled() const { return crt_effect_enabled_; }
+
+    void set_ligatures_enabled(bool enabled);
+    bool get_ligatures_enabled() const { return ligatures_enabled_; }
+
 private:
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
@@ -74,6 +83,9 @@ private:
     bool animated_typing_ = true;
     bool broadcasting_ = false;
     float exposure_ = 1.0f;
+    bool vibrancy_enabled_ = true;
+    bool crt_effect_enabled_ = false;
+    bool ligatures_enabled_ = true;
 
     bool dragging_ = false;
     int active_slider_id_ = 0;
