@@ -201,22 +201,20 @@ void SettingsUI::init_layout() {
     UIButton btn_bg_clear = { 2, "clear", {159.0f, 92.0f, 75.0f, 28.0f}, colors_.btn_danger, colors_.btn_danger_hover };
     UIButton btn_font_select = { 3, "select font...", {24.0f, 226.0f, 125.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
     
-    UIButton btn_anim_toggle = { 5, std::string("typing: ") + (animated_typing_ ? "on" : "off"), {24.0f, 268.0f, 135.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
-    UIButton btn_crt_toggle = { 8, std::string("crt shader: ") + (crt_effect_enabled_ ? "on" : "off"), {169.0f, 268.0f, 140.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
-    UIButton btn_vibrancy_toggle = { 7, std::string("title bar: ") + (vibrancy_enabled_ ? "on" : "off"), {319.0f, 268.0f, 145.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    UIButton btn_crt_toggle = { 8, std::string("crt shader: ") + (crt_effect_enabled_ ? "on" : "off"), {24.0f, 268.0f, 135.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    UIButton btn_vibrancy_toggle = { 7, std::string("title bar: ") + (vibrancy_enabled_ ? "on" : "off"), {169.0f, 268.0f, 140.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    UIButton btn_ligatures_toggle = { 9, std::string("ligatures: ") + (ligatures_enabled_ ? "on" : "off"), {319.0f, 268.0f, 145.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
 
     UIButton btn_broadcast_toggle = { 6, std::string("broadcast: ") + (broadcasting_ ? "on" : "off"), {24.0f, 310.0f, 135.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
-    UIButton btn_ligatures_toggle = { 9, std::string("ligatures: ") + (ligatures_enabled_ ? "on" : "off"), {168.0f, 310.0f, 140.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
     UIButton btn_done = { 4, "done", {364.0f, 382.0f, 100.0f, 32.0f}, colors_.btn_idle, colors_.btn_hover };
 
     buttons_.push_back(btn_bg_select);
     buttons_.push_back(btn_bg_clear);
     buttons_.push_back(btn_font_select);
-    buttons_.push_back(btn_anim_toggle);
     buttons_.push_back(btn_crt_toggle);
     buttons_.push_back(btn_vibrancy_toggle);
-    buttons_.push_back(btn_broadcast_toggle);
     buttons_.push_back(btn_ligatures_toggle);
+    buttons_.push_back(btn_broadcast_toggle);
     buttons_.push_back(btn_done);
 
     // 2. UI Sliders
@@ -411,7 +409,7 @@ void SettingsUI::render() {
             bg_disp = "..." + bg_disp.substr(bg_disp.length() - 15);
         }
     }
-    draw_text(bg_disp, 260.0f * scale, 68.0f * scale, colors_.text_primary);
+    draw_text(bg_disp, 244.0f * scale, 99.0f * scale, colors_.text_primary);
 
     draw_text("terminal typeface font", 24.0f * scale, 201.0f * scale, colors_.text_secondary);
     std::string font_disp = font_path_;
