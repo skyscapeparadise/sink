@@ -317,7 +317,7 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     // Settle initial grid scale dimensions
     int win_w = 0, win_h = 0;
     SDL_GetWindowSize(tw->window, &win_w, &win_h);
-    float top_offset_pts = tw->vibrancy_enabled ? 28.0f : 34.0f;
+    float top_offset_pts = tw->vibrancy_enabled ? 38.0f : 34.0f;
     int cols = std::max(40, static_cast<int>((win_w - 2 * state->padding) / tw->cell_w));
     int rows = std::max(10, static_cast<int>((win_h - 2 * state->padding - top_offset_pts) / tw->cell_h));
 
@@ -619,7 +619,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             if (event->button.button == SDL_BUTTON_LEFT) {
                 float mx = event->button.x;
                 float my = event->button.y;
-                float top_offset_pts = target_tw->vibrancy_enabled ? 28.0f : 34.0f;
+                float top_offset_pts = target_tw->vibrancy_enabled ? 38.0f : 34.0f;
                 
                 int col = static_cast<int>((mx - state->padding) / target_tw->cell_w);
                 int row = static_cast<int>((my - (state->padding + top_offset_pts)) / target_tw->cell_h);
@@ -650,7 +650,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         if (event->motion.windowID == SDL_GetWindowID(target_tw->window)) {
             float mx = event->motion.x;
             float my = event->motion.y;
-            float top_offset_pts = target_tw->vibrancy_enabled ? 28.0f : 34.0f;
+            float top_offset_pts = target_tw->vibrancy_enabled ? 38.0f : 34.0f;
             
             int col = static_cast<int>((mx - state->padding) / target_tw->cell_w);
             int row = static_cast<int>((my - (state->padding + top_offset_pts)) / target_tw->cell_h);
@@ -664,7 +664,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             if (event->button.button == SDL_BUTTON_LEFT) {
                 float mx = event->button.x;
                 float my = event->button.y;
-                float top_offset_pts = target_tw->vibrancy_enabled ? 28.0f : 34.0f;
+                float top_offset_pts = target_tw->vibrancy_enabled ? 38.0f : 34.0f;
                 
                 int col = static_cast<int>((mx - state->padding) / target_tw->cell_w);
                 int row = static_cast<int>((my - (state->padding + top_offset_pts)) / target_tw->cell_h);
@@ -915,7 +915,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             int w = event->window.data1;
             int h = event->window.data2;
             if (w > 0 && h > 0) {
-                float top_offset_pts = target_tw->vibrancy_enabled ? 28.0f : 34.0f;
+                float top_offset_pts = target_tw->vibrancy_enabled ? 38.0f : 34.0f;
                 int new_cols = std::max(40, static_cast<int>((w - 2 * state->padding) / target_tw->cell_w));
                 int new_rows = std::max(10, static_cast<int>((h - 2 * state->padding - top_offset_pts) / target_tw->cell_h));
                 
@@ -1386,7 +1386,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         // B. Render grid cells
         {
             std::lock_guard<std::mutex> lock(tw->grid_mutex);
-            float top_pts = tw->vibrancy_enabled ? 28.0f : 34.0f;
+            float top_pts = tw->vibrancy_enabled ? 38.0f : 34.0f;
             float start_y = (state->padding + top_pts) * state->display_scale;
             float start_x = state->padding * state->display_scale;
             tw->terminal.render(tw->renderer, tw->font_manager, start_x, start_y, state->display_scale, dt, tw->animated_typing);
