@@ -1014,65 +1014,41 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
     return SDL_APP_CONTINUE;
 }
 
-static void render_crt_effects(SDL_Renderer* renderer, int width, int height) {
-    static SDL_Texture* aperture_tex = nullptr;
-    static SDL_Texture* scanline_tex = nullptr;
-
-    if (!aperture_tex) {
-        // Create 6x1 EasyMode RGB Aperture Grille sub-pixel triad texture (RGBA8888)
-        // Format: [R, G, B, A] per byte
-        Uint8 pixels[6 * 4] = {
-            255,   0,   0,  18, // R
-              0, 255,   0,  18, // G
-              0,   0, 255,  18, // B
-            255,   0,   0,  18, // R
-              0, 255,   0,  18, // G
-              0,   0, 255,  18  // B
-        };
-        SDL_Surface* surf = SDL_CreateSurfaceFrom(6, 1, SDL_PIXELFORMAT_RGBA8888, pixels, 6 * 4);
-        if (surf) {
-            aperture_tex = SDL_CreateTextureFromSurface(renderer, surf);
-            if (aperture_tex) {
-                SDL_SetTextureScaleMode(aperture_tex, SDL_SCALEMODE_NEAREST);
-            }
-            SDL_DestroySurface(surf);
-        }
-    }
-
-    if (!scanline_tex) {
-        // Create 1x4 EasyMode flat scanline beam profile texture (RGBA8888)
-        Uint8 scan_pixels[4 * 4] = {
-              0,   0,   0,  55, // Dark scanline notch
-              0,   0,   0,  20, // Beam edge
-            255, 255, 255,  12, // Beam center glow
-              0,   0,   0,  20  // Beam edge
-        };
-        SDL_Surface* surf = SDL_CreateSurfaceFrom(1, 4, SDL_PIXELFORMAT_RGBA8888, scan_pixels, 1 * 4);
-        if (surf) {
-            scanline_tex = SDL_CreateTextureFromSurface(renderer, surf);
-            if (scanline_tex) {
-                SDL_SetTextureScaleMode(scanline_tex, SDL_SCALEMODE_NEAREST);
-            }
-            SDL_DestroySurface(surf);
-        }
-    }
-
+static void render_crt_effects(SDL_Renderer* renderer, int width, int height, float scale) {
+    if (scale <= 0.0f) scale = 1.0f;
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
-    // 1. EasyMode Flat Scanline Pattern (no animated sweep line)
-    if (scanline_tex) {
-        SDL_FRect dst = { 0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height) };
-        SDL_RenderTextureTiled(renderer, scanline_tex, nullptr, 1.0f, &dst);
+    // 1. EasyMode Authentic Retro Scanlines (240 TV line density)
+    float scanline_pitch = 6.0f * scale; // 6pt pitch = ~240 scanlines across screen
+    float scanline_h = 2.2f * scale;     // 2.2pt dark scanline width
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 75); // 30% dark scanline opacity
+    for (float y = 0.0f; y < height; y += scanline_pitch) {
+        SDL_FRect line_rect = { 0.0f, y, static_cast<float>(width), scanline_h };
+        SDL_RenderFillRect(renderer, &line_rect);
     }
 
-    // 2. EasyMode Aperture Grille Sub-Pixel Mask Pattern (no bezel borders)
-    if (aperture_tex) {
-        SDL_FRect dst = { 0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height) };
-        SDL_RenderTextureTiled(renderer, aperture_tex, nullptr, 1.0f, &dst);
+    // 2. EasyMode RGB Aperture Grille Triads (7.5pt triad width)
+    float stripe_w = 2.5f * scale;
+    float triad_w = stripe_w * 3.0f;
+    for (float x = 0.0f; x < width; x += triad_w) {
+        // Red subpixel column
+        SDL_SetRenderDrawColor(renderer, 255, 60, 60, 10);
+        SDL_FRect r_rect = { x, 0.0f, stripe_w, static_cast<float>(height) };
+        SDL_RenderFillRect(renderer, &r_rect);
+
+        // Green subpixel column
+        SDL_SetRenderDrawColor(renderer, 60, 255, 60, 10);
+        SDL_FRect g_rect = { x + stripe_w, 0.0f, stripe_w, static_cast<float>(height) };
+        SDL_RenderFillRect(renderer, &g_rect);
+
+        // Blue subpixel column
+        SDL_SetRenderDrawColor(renderer, 60, 120, 255, 10);
+        SDL_FRect b_rect = { x + stripe_w * 2.0f, 0.0f, stripe_w, static_cast<float>(height) };
+        SDL_RenderFillRect(renderer, &b_rect);
     }
 
-    // 3. EasyMode Brightness & Phosphor Glow Fill
-    SDL_SetRenderDrawColor(renderer, 255, 255, 255, 6);
+    // 3. EasyMode Phosphor Luminescence & Gamma Warmth
+    SDL_SetRenderDrawColor(renderer, 255, 240, 210, 8); // Soft warm phosphor glow
     SDL_FRect screen_rect = { 0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height) };
     SDL_RenderFillRect(renderer, &screen_rect);
 }
@@ -1418,7 +1394,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
 
         // C. Draw CRT retro shader effect if enabled
         if (tw->crt_mode_enabled) {
-            render_crt_effects(tw->renderer, draw_w, draw_h);
+            render_crt_effects(tw->renderer, draw_w, draw_h, state->display_scale);
         }
 
         // D. Draw Search Bar Drawer UI if open
