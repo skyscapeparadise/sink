@@ -385,7 +385,7 @@ void setup_macos_menu() {
     for (NSView* subview in [contentView subviews]) {
         if ([subview isKindOfClass:[NSVisualEffectView class]]) {
             if (subview.frame.size.height <= 36.0) {
-                [subview setFrame:NSMakeRect(0, b.size.height - 28, b.size.width, 28)];
+                [subview setFrame:NSMakeRect(0, b.size.height - 32, b.size.width, 32)];
                 if ([win titleVisibility] == NSWindowTitleVisible) {
                     [subview setHidden:NO];
                 }
@@ -443,7 +443,7 @@ void enable_macos_window_vibrancy(SDL_Window* sdl_win, bool enable) {
             [contentView addSubview:fullEffectView positioned:NSWindowBelow relativeTo:nil];
         }
 
-        float titlebar_h = 28.0f; // Native standard Cocoa titlebar height
+        float titlebar_h = 32.0f; // Pixel-matched titlebar height (between 28pt and 38pt)
         if (!titlebarEffectView) {
             NSRect b = [contentView bounds];
             titlebarEffectView = [[NSVisualEffectView alloc] initWithFrame:NSMakeRect(0, b.size.height - titlebar_h, b.size.width, titlebar_h)];
