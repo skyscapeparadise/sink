@@ -619,9 +619,10 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             if (event->button.button == SDL_BUTTON_LEFT) {
                 float mx = event->button.x;
                 float my = event->button.y;
+                float top_offset_pts = target_tw->vibrancy_enabled ? 28.0f : 34.0f;
                 
                 int col = static_cast<int>((mx - state->padding) / target_tw->cell_w);
-                int row = static_cast<int>((my - state->padding) / target_tw->cell_h);
+                int row = static_cast<int>((my - (state->padding + top_offset_pts)) / target_tw->cell_h);
                 
                 int clicks = event->button.clicks;
                 if (clicks == 1) {
@@ -649,9 +650,10 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         if (event->motion.windowID == SDL_GetWindowID(target_tw->window)) {
             float mx = event->motion.x;
             float my = event->motion.y;
+            float top_offset_pts = target_tw->vibrancy_enabled ? 28.0f : 34.0f;
             
             int col = static_cast<int>((mx - state->padding) / target_tw->cell_w);
-            int row = static_cast<int>((my - state->padding) / target_tw->cell_h);
+            int row = static_cast<int>((my - (state->padding + top_offset_pts)) / target_tw->cell_h);
             
             if (target_tw->terminal.is_selecting()) {
                 target_tw->terminal.update_selection(col, row);
@@ -662,9 +664,10 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             if (event->button.button == SDL_BUTTON_LEFT) {
                 float mx = event->button.x;
                 float my = event->button.y;
+                float top_offset_pts = target_tw->vibrancy_enabled ? 28.0f : 34.0f;
                 
                 int col = static_cast<int>((mx - state->padding) / target_tw->cell_w);
-                int row = static_cast<int>((my - state->padding) / target_tw->cell_h);
+                int row = static_cast<int>((my - (state->padding + top_offset_pts)) / target_tw->cell_h);
                 
                 int clicks = event->button.clicks;
                 if (clicks == 1 && col == target_tw->mouse_down_col && row == target_tw->mouse_down_row) {
