@@ -335,6 +335,68 @@ void setup_macos_menu() {
     }
 }
 
+@interface SinkWindowObserver : NSObject
+@end
+
+@implementation SinkWindowObserver
++ (void)attachToWindow:(NSWindow*)nswin {
+    static SinkWindowObserver* observer = nil;
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        observer = [[SinkWindowObserver alloc] init];
+    });
+
+    NSNotificationCenter* nc = [NSNotificationCenter defaultCenter];
+    [nc removeObserver:observer name:NSWindowDidResizeNotification object:nswin];
+    [nc removeObserver:observer name:NSWindowDidExitFullScreenNotification object:nswin];
+    [nc removeObserver:observer name:NSWindowDidEnterFullScreenNotification object:nswin];
+
+    [nc addObserver:observer selector:@selector(windowDidResize:) name:NSWindowDidResizeNotification object:nswin];
+    [nc addObserver:observer selector:@selector(windowDidExitFullScreen:) name:NSWindowDidExitFullScreenNotification object:nswin];
+    [nc addObserver:observer selector:@selector(windowDidEnterFullScreen:) name:NSWindowDidEnterFullScreenNotification object:nswin];
+}
+
+- (void)windowDidResize:(NSNotification*)note {
+    NSWindow* win = [note object];
+    [self updateLayoutForWindow:win];
+}
+
+- (void)windowDidExitFullScreen:(NSNotification*)note {
+    NSWindow* win = [note object];
+    [win setStyleMask:([win styleMask] | NSWindowStyleMaskFullSizeContentView)];
+    [win setTitlebarAppearsTransparent:YES];
+    [self updateLayoutForWindow:win];
+}
+
+- (void)windowDidEnterFullScreen:(NSNotification*)note {
+    NSWindow* win = [note object];
+    NSView* contentView = [win contentView];
+    for (NSView* subview in [contentView subviews]) {
+        if ([subview isKindOfClass:[NSVisualEffectView class]] && subview.frame.size.height <= 36.0) {
+            [subview setHidden:YES];
+        }
+    }
+}
+
+- (void)updateLayoutForWindow:(NSWindow*)win {
+    NSView* contentView = [win contentView];
+    if (!contentView) return;
+    NSRect b = [contentView bounds];
+    for (NSView* subview in [contentView subviews]) {
+        if ([subview isKindOfClass:[NSVisualEffectView class]]) {
+            if (subview.frame.size.height <= 36.0) {
+                [subview setFrame:NSMakeRect(0, b.size.height - 28, b.size.width, 28)];
+                if ([win titleVisibility] == NSWindowTitleVisible) {
+                    [subview setHidden:NO];
+                }
+            } else {
+                [subview setFrame:b];
+            }
+        }
+    }
+}
+@end
+
 void enable_macos_window_vibrancy(SDL_Window* sdl_win, bool enable) {
     @autoreleasepool {
         if (!sdl_win) return;
@@ -342,6 +404,8 @@ void enable_macos_window_vibrancy(SDL_Window* sdl_win, bool enable) {
         NSWindow* nswin = (__bridge NSWindow*)SDL_GetPointerProperty(props, "SDL.window.cocoa.window", NULL);
         if (!nswin) return;
         
+        [SinkWindowObserver attachToWindow:nswin];
+
         NSView* contentView = [nswin contentView];
         if (!contentView) return;
 
