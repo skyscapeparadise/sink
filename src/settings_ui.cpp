@@ -42,10 +42,10 @@ bool SettingsUI::open(SDL_Window* parent_window) {
 
     parent_ = parent_window;
     
-    // Create settings window (compact dimensions 480x360, High-DPI enabled)
+    // Create settings window (spacious dimensions 500x440, High-DPI enabled)
     window_ = SDL_CreateWindow(
         "sink settings",
-        480, 360,
+        500, 440,
         SDL_WINDOW_HIGH_PIXEL_DENSITY
     );
 
@@ -197,17 +197,17 @@ void SettingsUI::init_layout() {
     sliders_.clear();
 
     // 1. UI Buttons
-    UIButton btn_bg_select = { 1, "select file...", {24.0f, 94.0f, 130.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
-    UIButton btn_bg_clear = { 2, "clear", {164.0f, 94.0f, 80.0f, 28.0f}, colors_.btn_danger, colors_.btn_danger_hover };
-    UIButton btn_font_select = { 3, "select font...", {24.0f, 232.0f, 130.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    UIButton btn_bg_select = { 1, "select file...", {24.0f, 92.0f, 125.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    UIButton btn_bg_clear = { 2, "clear", {159.0f, 92.0f, 75.0f, 28.0f}, colors_.btn_danger, colors_.btn_danger_hover };
+    UIButton btn_font_select = { 3, "select font...", {24.0f, 226.0f, 125.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
     
-    UIButton btn_anim_toggle = { 5, std::string("typing: ") + (animated_typing_ ? "on" : "off"), {24.0f, 268.0f, 130.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
-    UIButton btn_crt_toggle = { 8, std::string("crt shader: ") + (crt_effect_enabled_ ? "on" : "off"), {168.0f, 268.0f, 130.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
-    UIButton btn_vibrancy_toggle = { 7, std::string("title bar: ") + (vibrancy_enabled_ ? "on" : "off"), {312.0f, 268.0f, 144.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    UIButton btn_anim_toggle = { 5, std::string("typing: ") + (animated_typing_ ? "on" : "off"), {24.0f, 268.0f, 135.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    UIButton btn_crt_toggle = { 8, std::string("crt shader: ") + (crt_effect_enabled_ ? "on" : "off"), {169.0f, 268.0f, 140.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    UIButton btn_vibrancy_toggle = { 7, std::string("title bar: ") + (vibrancy_enabled_ ? "on" : "off"), {319.0f, 268.0f, 145.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
 
-    UIButton btn_broadcast_toggle = { 6, std::string("broadcast: ") + (broadcasting_ ? "on" : "off"), {24.0f, 308.0f, 130.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
-    UIButton btn_ligatures_toggle = { 9, std::string("ligatures: ") + (ligatures_enabled_ ? "on" : "off"), {168.0f, 308.0f, 130.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
-    UIButton btn_done = { 4, "done", {366.0f, 308.0f, 90.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    UIButton btn_broadcast_toggle = { 6, std::string("broadcast: ") + (broadcasting_ ? "on" : "off"), {24.0f, 310.0f, 135.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    UIButton btn_ligatures_toggle = { 9, std::string("ligatures: ") + (ligatures_enabled_ ? "on" : "off"), {168.0f, 310.0f, 140.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    UIButton btn_done = { 4, "done", {364.0f, 382.0f, 100.0f, 32.0f}, colors_.btn_idle, colors_.btn_hover };
 
     buttons_.push_back(btn_bg_select);
     buttons_.push_back(btn_bg_clear);
@@ -222,7 +222,7 @@ void SettingsUI::init_layout() {
     // 2. UI Sliders
     char exposure_buf[32];
     std::snprintf(exposure_buf, sizeof(exposure_buf), "exposure: %.2f", exposure_);
-    UISlider s_exposure = { 1, exposure_buf, {24.0f, 154.0f, 432.0f, 8.0f}, std::clamp(exposure_ / 2.0f, 0.0f, 1.0f), 0.0f, 2.0f };
+    UISlider s_exposure = { 1, exposure_buf, {24.0f, 150.0f, 440.0f, 8.0f}, std::clamp(exposure_ / 2.0f, 0.0f, 1.0f), 0.0f, 2.0f };
     sliders_.push_back(s_exposure);
 }
 
@@ -357,20 +357,20 @@ void SettingsUI::render() {
         SDL_FColor c_bottom = {0.0f, 0.0f, 0.0f, 0.0f};      // Fades to transparent
 
         vertices[0] = { {0.0f, 0.0f}, c_top_left, {0.0f, 0.0f} };
-        vertices[1] = { {static_cast<float>(480.0f * scale), 0.0f}, c_top_right, {0.0f, 0.0f} };
+        vertices[1] = { {static_cast<float>(500.0f * scale), 0.0f}, c_top_right, {0.0f, 0.0f} };
         vertices[2] = { {0.0f, 160.0f * scale}, c_bottom, {0.0f, 0.0f} };
-        vertices[3] = { {static_cast<float>(480.0f * scale), 160.0f * scale}, c_bottom, {0.0f, 0.0f} };
+        vertices[3] = { {static_cast<float>(500.0f * scale), 160.0f * scale}, c_bottom, {0.0f, 0.0f} };
 
         int indices[6] = { 0, 1, 2, 2, 1, 3 };
         SDL_RenderGeometry(renderer_, nullptr, vertices, 4, indices, 6);
     }
 
     // 2. Draw section cards
-    SDL_FRect bg_card = { 16.0f * scale, 60.0f * scale, 448.0f * scale, 120.0f * scale };
+    SDL_FRect bg_card = { 16.0f * scale, 60.0f * scale, 468.0f * scale, 115.0f * scale };
     draw_rect_filled(bg_card, colors_.card, 10.0f * scale);
     draw_rect_outline(bg_card, colors_.border, 10.0f * scale);
 
-    SDL_FRect font_card = { 16.0f * scale, 195.0f * scale, 448.0f * scale, 80.0f * scale };
+    SDL_FRect font_card = { 16.0f * scale, 192.0f * scale, 468.0f * scale, 165.0f * scale };
     draw_rect_filled(font_card, colors_.card, 10.0f * scale);
     draw_rect_outline(font_card, colors_.border, 10.0f * scale);
 
@@ -393,15 +393,15 @@ void SettingsUI::render() {
         float aspect = (h > 0.0f) ? (w / h) : 1.0f;
         float draw_h = 36.0f * scale;
         float draw_w = draw_h * aspect;
-        float draw_x = (480.0f * scale) - draw_w - 16.0f * scale;
+        float draw_x = (500.0f * scale) - draw_w - 16.0f * scale;
         float draw_y = 12.0f * scale;
         SDL_FRect rain_dst = { draw_x, draw_y, draw_w, draw_h };
         SDL_RenderTexture(renderer_, rain_logo_, nullptr, &rain_dst);
     } else {
-        draw_text("rain", (480.0f * scale) - 60.0f * scale, 20.0f * scale, colors_.text_secondary);
+        draw_text("rain", (500.0f * scale) - 60.0f * scale, 20.0f * scale, colors_.text_secondary);
     }
     
-    draw_text("background media", 24.0f * scale, 70.0f * scale, colors_.text_secondary);
+    draw_text("background media", 24.0f * scale, 68.0f * scale, colors_.text_secondary);
     std::string bg_disp = bg_path_;
     std::transform(bg_disp.begin(), bg_disp.end(), bg_disp.begin(), ::tolower);
     if (bg_disp.find("sinkpool.mp4") != std::string::npos || bg_disp.empty() || bg_disp == "default") {
@@ -411,9 +411,9 @@ void SettingsUI::render() {
             bg_disp = "..." + bg_disp.substr(bg_disp.length() - 15);
         }
     }
-    draw_text(bg_disp, 260.0f * scale, 70.0f * scale, colors_.text_primary);
+    draw_text(bg_disp, 260.0f * scale, 68.0f * scale, colors_.text_primary);
 
-    draw_text("terminal typeface font", 24.0f * scale, 205.0f * scale, colors_.text_secondary);
+    draw_text("terminal typeface font", 24.0f * scale, 201.0f * scale, colors_.text_secondary);
     std::string font_disp = font_path_;
     std::transform(font_disp.begin(), font_disp.end(), font_disp.begin(), ::tolower);
     if (font_disp.find("monaspaceneon-regular.otf") != std::string::npos || font_disp == "default") {
@@ -423,7 +423,7 @@ void SettingsUI::render() {
             font_disp = "..." + font_disp.substr(font_disp.length() - 25);
         }
     }
-    draw_text(font_disp, 164.0f * scale, 239.0f * scale, colors_.text_primary);
+    draw_text(font_disp, 159.0f * scale, 233.0f * scale, colors_.text_primary);
 
     // 4. Draw Buttons (ghost buttons with thin outline borders)
     for (const auto& btn : buttons_) {
