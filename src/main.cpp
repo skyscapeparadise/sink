@@ -76,7 +76,9 @@ struct TerminalWindow {
     std::mutex grid_mutex;
     std::atomic<bool> demo_running{false};
     std::atomic<bool> demo_skip_requested{false};
-    
+    std::atomic<bool> demo_abort{false};
+    std::thread demo_thread;
+
     bool has_video = false;
     float exposure = 0.7f;
     bool animated_typing = true;
@@ -358,6 +360,14 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
 // Safely terminate and destroy a terminal window context
 static void destroy_terminal_window(TerminalWindow* tw) {
     if (!tw) return;
+    // Any running sinkdemo/sinksing thread still holds tw and touches
+    // tw->terminal/tw->pty/tw->grid_mutex on its own schedule. Signal it to
+    // unwind and join before freeing tw, otherwise it dereferences freed
+    // memory on its next iteration.
+    SinkDemo::request_abort(tw);
+    if (tw->demo_thread.joinable()) {
+        tw->demo_thread.join();
+    }
     tw->pty.shutdown();
     tw->video_engine.stop();
     tw->video_engine.close_video();
@@ -839,13 +849,14 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) {
                 std::string typed_line = tw->terminal.get_current_line_text();
                 
-                if (SinkDemo::is_demo_command(typed_line)) {
+                if (SinkDemo::is_demo_command(typed_line) && !SinkDemo::is_demo_running(tw)) {
                     const char cancel_cmd[] = "\x15\x03";
                     tw->pty.write_to_pty(cancel_cmd, 2);
-                    std::thread([tw, state]() {
+                    if (tw->demo_thread.joinable()) tw->demo_thread.join();
+                    tw->demo_thread = std::thread([tw, state]() {
                         SinkDemo::run_demo(tw, state);
-                    }).detach();
-                } else if (SinkDemo::is_sing_command(typed_line)) {
+                    });
+                } else if (SinkDemo::is_sing_command(typed_line) && !SinkDemo::is_demo_running(tw)) {
                     const char cancel_cmd[] = "\x15\x03";
                     tw->pty.write_to_pty(cancel_cmd, 2);
                     std::string song_name;
@@ -860,10 +871,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                             song_name = "";
                         }
                     }
-                    std::thread([tw, song_name]() {
+                    if (tw->demo_thread.joinable()) tw->demo_thread.join();
+                    tw->demo_thread = std::thread([tw, song_name]() {
                         SinkDemo::run_sing(tw, song_name);
-                    }).detach();
-                } else {
+                    });
+                } else if (!SinkDemo::is_demo_command(typed_line) && !SinkDemo::is_sing_command(typed_line)) {
                     const char c = '\r';
                     tw->pty.write_to_pty(&c, 1);
                 }

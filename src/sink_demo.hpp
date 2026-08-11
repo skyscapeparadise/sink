@@ -24,6 +24,11 @@ namespace SinkDemo {
     bool is_demo_running(TerminalWindow* tw);
     void request_skip(TerminalWindow* tw);
 
+    // Signal a running demo/sing thread to abort entirely (e.g. window is closing).
+    // Sticky for the lifetime of tw; caller must join the thread that ran
+    // run_demo/run_sing before deleting tw.
+    void request_abort(TerminalWindow* tw);
+
     // Execute built-in demo sequence
     void run_demo(TerminalWindow* tw, AppState* state);
 

@@ -37,6 +37,7 @@ struct TerminalWindow {
     std::mutex grid_mutex;
     std::atomic<bool> demo_running{false};
     std::atomic<bool> demo_skip_requested{false};
+    std::atomic<bool> demo_abort{false};
 };
 
 struct AppState {
@@ -123,6 +124,16 @@ void request_skip(TerminalWindow* tw) {
     }
 }
 
+void request_abort(TerminalWindow* tw) {
+    if (tw) {
+        // Sticky: unlike skip, this is never cleared. It tells every wait
+        // point in run_demo/run_sing to unwind instead of continuing on to
+        // the next step, so the thread finishes quickly and tw can be freed.
+        tw->demo_abort.store(true);
+        tw->demo_skip_requested.store(true);
+    }
+}
+
 static bool sleep_interruptible(TerminalWindow* tw, int ms) {
     if (!tw) {
         std::this_thread::sleep_for(std::chrono::milliseconds(ms));
@@ -131,13 +142,13 @@ static bool sleep_interruptible(TerminalWindow* tw, int ms) {
     int ticks = ms / 10;
     if (ticks <= 0) ticks = 1;
     for (int t = 0; t < ticks; ++t) {
-        if (tw->demo_skip_requested.load()) {
+        if (tw->demo_skip_requested.load() || tw->demo_abort.load()) {
             tw->demo_skip_requested.store(false);
             return true;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    return tw->demo_skip_requested.exchange(false);
+    return tw->demo_skip_requested.exchange(false) || tw->demo_abort.load();
 }
 
 const char* SONG_COELACANTH = R"(i can’t begin
@@ -372,6 +383,8 @@ void run_sing(TerminalWindow* tw, const std::string& song_name) {
     tw->demo_running.store(false);
     tw->demo_skip_requested.store(false);
 
+    if (tw->demo_abort.load()) return;
+
     const char c = '\r';
     tw->pty.write_to_pty(&c, 1);
 }
@@ -588,8 +601,12 @@ static void play_cpp_video_as_text(TerminalWindow* tw, const std::string& dat_pa
         frame_count++;
     };
 
+    auto should_stop = [&]() {
+        return tw->demo_skip_requested.load() || tw->demo_abort.load();
+    };
+
     while (av_read_frame(fmt_ctx, &packet) >= 0) {
-        if (tw->demo_skip_requested.load()) {
+        if (should_stop()) {
             tw->demo_skip_requested.store(false);
             av_packet_unref(&packet);
             break;
@@ -599,15 +616,15 @@ static void play_cpp_video_as_text(TerminalWindow* tw, const std::string& dat_pa
             while (ret == AVERROR(EAGAIN)) {
                 while (avcodec_receive_frame(codec_ctx, frame) == 0) {
                     render_frame_lambda();
-                    if (tw->demo_skip_requested.load()) break;
+                    if (should_stop()) break;
                 }
-                if (tw->demo_skip_requested.load()) break;
+                if (should_stop()) break;
                 ret = avcodec_send_packet(codec_ctx, &packet);
             }
             if (ret >= 0) {
                 while (avcodec_receive_frame(codec_ctx, frame) == 0) {
                     render_frame_lambda();
-                    if (tw->demo_skip_requested.load()) break;
+                    if (should_stop()) break;
                 }
             }
         }
@@ -670,10 +687,18 @@ void run_demo(TerminalWindow* tw, AppState* state) {
         feed_to_terminal(tw, "\r\n\033[2J\033[H"); // Clear screen
     };
 
+    // The window may be closing (demo_abort set): unwind between steps
+    // instead of running the rest of the multi-second sequence, so the
+    // thread finishes quickly and the caller can safely delete tw.
+    if (tw->demo_abort.load()) { tw->demo_running.store(false); return; }
     do_song_step("coelacanth");
+    if (tw->demo_abort.load()) { tw->demo_running.store(false); return; }
     do_song_step("snake");
+    if (tw->demo_abort.load()) { tw->demo_running.store(false); return; }
     do_song_step("sink");
+    if (tw->demo_abort.load()) { tw->demo_running.store(false); return; }
     do_song_step("you");
+    if (tw->demo_abort.load()) { tw->demo_running.store(false); return; }
 
     // Finale sequence
     feed_to_terminal(tw, prompt);
@@ -684,6 +709,8 @@ void run_demo(TerminalWindow* tw, AppState* state) {
 
     sleep_interruptible(tw, 2000); // 2s pause
 
+    if (tw->demo_abort.load()) { tw->demo_running.store(false); return; }
+
     // Resolve splash.dat path dynamically
     std::string splash_path = resolve_splash_path();
     play_cpp_video_as_text(tw, splash_path);
@@ -691,6 +718,8 @@ void run_demo(TerminalWindow* tw, AppState* state) {
     // Reset demo state flags for this window
     tw->demo_running.store(false);
     tw->demo_skip_requested.store(false);
+
+    if (tw->demo_abort.load()) return;
 
     // Return to the user's interactive shell prompt at row 0 (top of window)
     const char c = '\x0c'; // Ctrl+L clears terminal and redraws prompt at row 0
