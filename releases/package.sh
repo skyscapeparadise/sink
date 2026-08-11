@@ -46,6 +46,11 @@ if [ -f "fonts/MonaspaceNeon-Regular.otf" ]; then
     cp fonts/MonaspaceNeon-Regular.otf "${RESOURCES_DIR}/MonaspaceNeon-Regular.otf"
 fi
 
+echo "  copying mona sans font (settings UI)..."
+if [ -f "fonts/MonaSans-VariableFont.ttf" ]; then
+    cp "fonts/MonaSans-VariableFont.ttf" "${RESOURCES_DIR}/MonaSans-VariableFont.ttf"
+fi
+
 echo "  copying logo assets..."
 if [ -f "logos/sinklogo.svg" ]; then
     cp logos/sinklogo.svg "${RESOURCES_DIR}/sinklogo.svg"

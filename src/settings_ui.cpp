@@ -62,17 +62,24 @@ bool SettingsUI::open(SDL_Window* parent_window) {
         return false;
     }
 
-    // Load local font context for text rendering. Use the same bundled font
-    // as the main terminal so the settings UI renders consistently for every
-    // user, falling back to a system font if it isn't available.
+    // Load local font context for text rendering. Mona Sans (bundled under
+    // fonts/, SIL OFL licensed -- see fonts/MonaSans-OFL.txt) is the intended
+    // settings UI font; fall back to the main terminal's bundled font, then a
+    // system font, so this still renders for every user even if it's missing.
     float scale = SDL_GetWindowDisplayScale(window_);
     if (scale <= 0.0f) scale = 1.0f;
-    std::string font_path = get_bundle_resource_path("MonaspaceNeon-Regular.otf");
+    std::string font_path = get_bundle_resource_path("MonaSans-VariableFont.ttf");
     if (!font_manager_.load_font(renderer_, font_path, 13.0f * scale)) {
-        font_path = "fonts/MonaspaceNeon-Regular.otf";
+        font_path = "fonts/MonaSans-VariableFont.ttf";
         if (!font_manager_.load_font(renderer_, font_path, 13.0f * scale)) {
-            font_path = "/System/Library/Fonts/SFNSMono.ttf";
-            font_manager_.load_font(renderer_, font_path, 13.0f * scale);
+            font_path = get_bundle_resource_path("MonaspaceNeon-Regular.otf");
+            if (!font_manager_.load_font(renderer_, font_path, 13.0f * scale)) {
+                font_path = "fonts/MonaspaceNeon-Regular.otf";
+                if (!font_manager_.load_font(renderer_, font_path, 13.0f * scale)) {
+                    font_path = "/System/Library/Fonts/SFNSMono.ttf";
+                    font_manager_.load_font(renderer_, font_path, 13.0f * scale);
+                }
+            }
         }
     }
 
