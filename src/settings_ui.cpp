@@ -62,13 +62,18 @@ bool SettingsUI::open(SDL_Window* parent_window) {
         return false;
     }
 
-    // Load local font context for text rendering
+    // Load local font context for text rendering. Use the same bundled font
+    // as the main terminal so the settings UI renders consistently for every
+    // user, falling back to a system font if it isn't available.
     float scale = SDL_GetWindowDisplayScale(window_);
     if (scale <= 0.0f) scale = 1.0f;
-    std::string font_path = "/Users/kady/Library/Fonts/MonaSans-VariableFont_wdth,wght.ttf";
+    std::string font_path = get_bundle_resource_path("MonaspaceNeon-Regular.otf");
     if (!font_manager_.load_font(renderer_, font_path, 13.0f * scale)) {
-        font_path = "/System/Library/Fonts/SFNSMono.ttf";
-        font_manager_.load_font(renderer_, font_path, 13.0f * scale);
+        font_path = "fonts/MonaspaceNeon-Regular.otf";
+        if (!font_manager_.load_font(renderer_, font_path, 13.0f * scale)) {
+            font_path = "/System/Library/Fonts/SFNSMono.ttf";
+            font_manager_.load_font(renderer_, font_path, 13.0f * scale);
+        }
     }
 
     // Load SVG logo textures

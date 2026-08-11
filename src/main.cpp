@@ -137,8 +137,7 @@ static std::string resolve_default_video_path() {
     // Check fallback locations
     const char* fallbacks[] = {
         "sinkpool.mp4",
-        "../sinkpool.mp4",
-        "/Users/kady/Projects/sink/sinkpool.mp4"
+        "../sinkpool.mp4"
     };
     for (const char* fb : fallbacks) {
         FILE* f_fb = fopen(fb, "r");
@@ -160,7 +159,6 @@ static std::string resolve_default_font_path() {
     const char* fallbacks[] = {
         "fonts/MonaspaceNeon-Regular.otf",
         "../fonts/MonaspaceNeon-Regular.otf",
-        "/Users/kady/Projects/sink/fonts/MonaspaceNeon-Regular.otf",
         "/System/Library/Fonts/SFNSMono.ttf",
         "/System/Library/Fonts/Supplemental/Courier New.ttf"
     };
