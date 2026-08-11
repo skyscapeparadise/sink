@@ -7,7 +7,9 @@
 enum ParserState {
     STATE_NORMAL,
     STATE_ESCAPE,
-    STATE_CSI
+    STATE_CSI,
+    STATE_STR,      // OSC/DCS/APC/PM/SOS payload: consumed and discarded until a terminator
+    STATE_STR_ESC   // saw ESC while inside a string sequence; next byte decides if it's ST ('\')
 };
 
 class ANSIParser {

@@ -127,6 +127,12 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
         case STATE_ESCAPE: {
             if (c == '[') {
                 state_ = STATE_CSI;
+            } else if (c == ']' || c == 'P' || c == '_' || c == '^' || c == 'X') {
+                // OSC / DCS / APC / PM / SOS: a string payload terminated by BEL or
+                // ST (ESC \). We don't act on any of these (e.g. OSC window-title
+                // sets), but must consume the whole sequence so its payload isn't
+                // printed to the screen as literal text.
+                state_ = STATE_STR;
             } else if (c == '7') { // DECSC: Save Cursor
                 grid.save_cursor();
                 state_ = STATE_NORMAL;
@@ -135,6 +141,27 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                 state_ = STATE_NORMAL;
             } else {
                 state_ = STATE_NORMAL;
+            }
+            break;
+        }
+        case STATE_STR: {
+            if (c == 0x07 || c == 0x9C) { // BEL, or single-byte ST (C1)
+                state_ = STATE_NORMAL;
+            } else if (c == 0x1b) { // possible start of two-byte ST (ESC \)
+                state_ = STATE_STR_ESC;
+            }
+            // else: part of the string payload, discard
+            break;
+        }
+        case STATE_STR_ESC: {
+            if (c == '\\') {
+                state_ = STATE_NORMAL; // ST: sequence complete
+            } else {
+                // Not a valid ST -- the string was implicitly aborted by a new
+                // escape sequence starting. Re-dispatch this byte as if we'd
+                // just seen ESC.
+                state_ = STATE_ESCAPE;
+                process_char(grid, c);
             }
             break;
         }
