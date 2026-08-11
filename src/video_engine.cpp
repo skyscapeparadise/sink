@@ -292,14 +292,15 @@ void VideoEngine::decode_loop() {
 
     while (running_) {
         // Cap frame queue size to prevent excessive memory usage
+        bool queue_full;
         {
             std::lock_guard<std::mutex> lock(queue_mutex_);
-            if (frame_queue_.size() >= max_queue_size_) {
-                // Briefly yield lock to avoid spinning
-                lock.~lock_guard();
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                continue;
-            }
+            queue_full = frame_queue_.size() >= max_queue_size_;
+        }
+        if (queue_full) {
+            // Lock already released above; sleep to avoid spinning
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
         }
 
         int ret = av_read_frame(format_ctx_, packet);
