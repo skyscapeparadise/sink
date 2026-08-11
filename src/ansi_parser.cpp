@@ -193,6 +193,15 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
         return default_val;
     };
 
+    // For count/position parameters (cursor motion, CHA/CUP, DCH), xterm/VT100
+    // convention defaults Ps to 1 and also treats an explicitly-sent 0 (e.g.
+    // "CSI 0 A") the same as if it were omitted -- unlike ED/EL/SM mode
+    // parameters, where 0 is itself a meaningful, distinct value.
+    auto get_count_param = [&](size_t index, int default_val) {
+        int v = get_param(index, default_val);
+        return v == 0 ? default_val : v;
+    };
+
     switch (command) {
         case 'm': { // Select Graphic Rendition (SGR)
             if (csi_params_.empty()) {
@@ -264,40 +273,40 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
             break;
         }
         case 'G': { // Cursor Horizontal Absolute (CHA)
-            int col = get_param(0, 1) - 1;
+            int col = get_count_param(0, 1) - 1;
             grid.set_cursor_col(col);
             break;
         }
         case 'H':
         case 'f': { // Cursor Position (CUP)
-            int row = get_param(0, 1) - 1;
-            int col = get_param(1, 1) - 1;
+            int row = get_count_param(0, 1) - 1;
+            int col = get_count_param(1, 1) - 1;
             grid.set_cursor_row(row);
             grid.set_cursor_col(col);
             break;
         }
         case 'A': { // Cursor Up (CUU)
-            int offset = get_param(0, 1);
+            int offset = get_count_param(0, 1);
             grid.set_cursor_row(grid.get_cursor_row() - offset);
             break;
         }
         case 'B': { // Cursor Down (CUD)
-            int offset = get_param(0, 1);
+            int offset = get_count_param(0, 1);
             grid.set_cursor_row(grid.get_cursor_row() + offset);
             break;
         }
         case 'C': { // Cursor Forward (CUF)
-            int offset = get_param(0, 1);
+            int offset = get_count_param(0, 1);
             grid.set_cursor_col(grid.get_cursor_col() + offset);
             break;
         }
         case 'D': { // Cursor Backward (CUB)
-            int offset = get_param(0, 1);
+            int offset = get_count_param(0, 1);
             grid.set_cursor_col(grid.get_cursor_col() - offset);
             break;
         }
         case 'P': { // Delete Character (DCH)
-            int count = get_param(0, 1);
+            int count = get_count_param(0, 1);
             grid.delete_character(count);
             break;
         }
