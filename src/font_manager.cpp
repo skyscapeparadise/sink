@@ -328,9 +328,19 @@ const GlyphInfo* FontManager::get_glyph(SDL_Renderer* renderer, char32_t codepoi
         SDL_UpdateTexture(dynamic_atlas_texture_, nullptr, empty_pixels.data(), 1024 * sizeof(uint32_t));
     }
 
-    // Copy surface pixels to dynamic texture
+    // Copy surface pixels to dynamic texture. TTF_RenderGlyph_Blended does not
+    // guarantee its surface is already in the atlas's RGBA32 layout (it commonly
+    // returns ARGB8888), so a raw byte copy can swap color channels -- most
+    // visible on color emoji glyphs. Convert to match first, as SDL_BlitSurface
+    // already does implicitly for the static ASCII atlas path in build_atlas().
     SDL_Rect dst_rect = { dynamic_x_, dynamic_y_, w, h };
-    SDL_UpdateTexture(dynamic_atlas_texture_, &dst_rect, glyph_surf->pixels, glyph_surf->pitch);
+    SDL_Surface* converted_surf = SDL_ConvertSurface(glyph_surf, SDL_PIXELFORMAT_RGBA32);
+    if (converted_surf) {
+        SDL_UpdateTexture(dynamic_atlas_texture_, &dst_rect, converted_surf->pixels, converted_surf->pitch);
+        SDL_DestroySurface(converted_surf);
+    } else {
+        SDL_UpdateTexture(dynamic_atlas_texture_, &dst_rect, glyph_surf->pixels, glyph_surf->pitch);
+    }
 
     // Get advance metric
     int adv = 0;
