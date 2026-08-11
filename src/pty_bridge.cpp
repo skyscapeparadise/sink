@@ -101,6 +101,16 @@ bool PTYBridge::spawn(int cols, int rows) {
 
 void PTYBridge::shutdown() {
     running_ = false;
+    // Join the read thread before closing master_fd_. read_loop() may be
+    // blocked in poll()/read() on that fd right now; closing it out from
+    // under another thread that's using it is a race (the fd number can be
+    // reused by an unrelated open() elsewhere before the in-flight
+    // poll()/read() call returns, causing it to observe the wrong file).
+    // read_loop() rechecks running_ at least every 100ms (its poll timeout),
+    // so this join returns promptly without needing the fd closed to wake it.
+    if (read_thread_.joinable()) {
+        read_thread_.join();
+    }
     if (master_fd_ != -1) {
         ::close(master_fd_);
         master_fd_ = -1;
@@ -109,16 +119,13 @@ void PTYBridge::shutdown() {
         int status;
         // Send terminate signal to the entire process group (indicated by negative PID)
         kill(-child_pid_, SIGTERM);
-        
+
         // Give processes a moment to shut down gracefully before sending SIGKILL
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         kill(-child_pid_, SIGKILL);
-        
+
         waitpid(child_pid_, &status, 0);
         child_pid_ = -1;
-    }
-    if (read_thread_.joinable()) {
-        read_thread_.join();
     }
 }
 
