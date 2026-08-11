@@ -277,6 +277,11 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
             grid.set_cursor_col(col);
             break;
         }
+        case 'd': { // Vertical Position Absolute (VPA): row only, column unchanged
+            int row = get_count_param(0, 1) - 1;
+            grid.set_cursor_row(row);
+            break;
+        }
         case 'H':
         case 'f': { // Cursor Position (CUP)
             int row = get_count_param(0, 1) - 1;
@@ -308,6 +313,11 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
         case 'P': { // Delete Character (DCH)
             int count = get_count_param(0, 1);
             grid.delete_character(count);
+            break;
+        }
+        case 'X': { // Erase Character (ECH)
+            int count = get_count_param(0, 1);
+            grid.erase_characters(count);
             break;
         }
         case 'J': { // Erase in Display (ED)

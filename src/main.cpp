@@ -83,6 +83,8 @@ struct TerminalWindow {
     float exposure = 0.7f;
     bool animated_typing = true;
     std::vector<char> animation_buffer;
+    Uint64 last_output_chunk_time = 0;
+    int rapid_chunk_streak = 0;
     float scroll_accumulator = 0.0f;
     float scroll_velocity = 0.0f;
     Uint64 last_wheel_time = 0;
@@ -1329,15 +1331,34 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         if (!output.empty() && !SinkDemo::is_demo_running(tw)) {
             std::lock_guard<std::mutex> lock(tw->grid_mutex);
             if (tw->animated_typing) {
-                if (output.size() > 5) {
-                    // Large chunk / burst output (command output): bypass typing effect to maintain performance
+                // A human at the keyboard produces isolated chunks (a keystroke's
+                // echo) tens-to-hundreds of ms apart. A program streaming
+                // continuous screen updates (cacademo, htop, vim, ...) produces
+                // many chunks back-to-back with almost no gap between them, even
+                // when each individual chunk happens to be small -- a single
+                // chunk-size check can't tell those apart. Track the gap between
+                // consecutive chunks and once several land faster than typing
+                // plausibly could, treat the whole burst as program output so
+                // the typewriter pacing doesn't make rendering fall behind it.
+                Uint64 now = SDL_GetTicks();
+                Uint64 gap = now - tw->last_output_chunk_time;
+                tw->last_output_chunk_time = now;
+                if (gap < 40) {
+                    tw->rapid_chunk_streak++;
+                } else {
+                    tw->rapid_chunk_streak = 0;
+                }
+                bool fast_turnover = tw->rapid_chunk_streak >= 3;
+
+                if (output.size() > 5 || fast_turnover) {
+                    // Large chunk / fast turnover (command or program output): bypass typing effect
                     if (!tw->animation_buffer.empty()) {
                         tw->parser.parse(tw->terminal, tw->animation_buffer.data(), tw->animation_buffer.size());
                         tw->animation_buffer.clear();
                     }
                     tw->parser.parse(tw->terminal, output.data(), output.size());
                 } else {
-                    // Small chunk (user typing): queue for animated typing
+                    // Small, unhurried chunk (user typing): queue for animated typing
                     tw->animation_buffer.insert(tw->animation_buffer.end(), output.begin(), output.end());
                 }
             } else {

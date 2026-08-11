@@ -372,6 +372,26 @@ void TerminalGrid::delete_character(int count) {
     }
 }
 
+void TerminalGrid::erase_characters(int count) {
+    // ECH (Erase Character, CSI Ps X): blank `count` cells starting at the
+    // cursor, in place -- unlike delete_character (DCH), nothing shifts and
+    // the cursor doesn't move. ncurses/slang-based apps (cacademo, htop,
+    // etc.) use this heavily to clear stale glyphs before redrawing; without
+    // it those cells are never blanked and old frames visibly bleed through.
+    if (cursor_row_ < 0 || cursor_row_ >= rows_) return;
+    if (cursor_col_ < 0 || cursor_col_ >= cols_) return;
+    if (count <= 0) return;
+
+    int row_start = cursor_row_ * cols_;
+    int remaining = cols_ - cursor_col_;
+    int to_erase = std::min(count, remaining);
+
+    Cell empty_cell = { 32, current_fg_, current_bg_ };
+    for (int i = cursor_col_; i < cursor_col_ + to_erase; ++i) {
+        cells_[row_start + i] = empty_cell;
+    }
+}
+
 void TerminalGrid::scroll_view(int delta) {
     scroll_offset_ += delta;
     int max_offset = static_cast<int>(scrollback_history_.size());
