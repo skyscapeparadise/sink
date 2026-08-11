@@ -103,7 +103,25 @@ bool SettingsUI::open(SDL_Window* parent_window) {
         std::cerr << "Failed to load sink logo: " << SDL_GetError() << std::endl;
     }
 
-    rain_logo_ = IMG_LoadTexture(renderer_, rain_logo_path.c_str());
+    // Rasterize the rain logo near its on-screen height (with 2x headroom
+    // for supersampling) instead of at its native ~1280px viewBox width.
+    // Loading it full-size and then shrinking it ~19x via plain bilinear
+    // filtering (no mipmaps) aliases badly on the logo's thin strokes.
+    {
+        int rain_target_h = static_cast<int>(36.0f * scale * 2.0f);
+        SDL_IOStream* rain_io = SDL_IOFromFile(rain_logo_path.c_str(), "rb");
+        if (rain_io) {
+            SDL_Surface* rain_surf = IMG_LoadSizedSVG_IO(rain_io, 0, rain_target_h);
+            SDL_CloseIO(rain_io);
+            if (rain_surf) {
+                rain_logo_ = SDL_CreateTextureFromSurface(renderer_, rain_surf);
+                SDL_DestroySurface(rain_surf);
+            }
+        }
+    }
+    if (!rain_logo_) {
+        rain_logo_ = IMG_LoadTexture(renderer_, rain_logo_path.c_str());
+    }
     if (rain_logo_) {
         SDL_SetTextureBlendMode(rain_logo_, SDL_BLENDMODE_BLEND);
         SDL_SetTextureScaleMode(rain_logo_, SDL_SCALEMODE_LINEAR);
