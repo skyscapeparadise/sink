@@ -8,6 +8,7 @@
 #include <poll.h>
 #include <chrono>
 #include <sys/stat.h>
+#include <cerrno>
 
 #if defined(__APPLE__)
 #include <util.h>
@@ -133,8 +134,23 @@ void PTYBridge::resize_pty(int cols, int rows) {
 
 bool PTYBridge::write_to_pty(const char* data, size_t size) {
     if (master_fd_ == -1) return false;
-    ssize_t written = ::write(master_fd_, data, size);
-    return written == static_cast<ssize_t>(size);
+    // A single write() call is not guaranteed to consume the whole buffer
+    // (e.g. a large clipboard paste can exceed the pty's internal buffer
+    // space); retry until every byte is written or a real error occurs.
+    size_t total_written = 0;
+    while (total_written < size) {
+        ssize_t written = ::write(master_fd_, data + total_written, size - total_written);
+        if (written < 0) {
+            if (errno == EINTR) continue;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                continue;
+            }
+            return false;
+        }
+        total_written += static_cast<size_t>(written);
+    }
+    return true;
 }
 
 std::vector<char> PTYBridge::read_pending() {
