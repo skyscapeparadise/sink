@@ -123,6 +123,20 @@ void TerminalGrid::resize(int cols, int rows) {
         logical_lines.push_back(std::move(current_line));
     }
 
+    // Trailing blank lines with nothing on them -- and not holding the
+    // cursor -- only exist because the terminal was previously taller than
+    // its actual content (e.g. after growing to a much bigger window).
+    // Left in, step 4 below counts them as real lines when deciding how
+    // many lines to push into scrollback on a shrink, which pushes the
+    // *content* (and the cursor) out of the new viewport entirely -- the
+    // active area ends up all blank, and the shell's next redraw then
+    // reprints the prompt fresh on top of it, leaving the original still
+    // sitting in scrollback: a visible duplicate.
+    while (!logical_lines.empty() && logical_lines.back().empty() &&
+           cursor_line_idx != static_cast<int>(logical_lines.size()) - 1) {
+        logical_lines.pop_back();
+    }
+
     // 3. Re-wrap all logical lines to the new width `cols`
     std::vector<RawRow> wrapped_rows;
     Cell space_cell = { 32, current_fg_, current_bg_ };

@@ -73,6 +73,9 @@ public:
     void set_exposure(float exposure);
     float get_exposure() const { return exposure_; }
 
+    void set_hue_shift(float degrees);
+    float get_hue_shift() const { return hue_shift_; }
+
     void set_vibrancy_enabled(bool enabled);
     bool get_vibrancy_enabled() const { return vibrancy_enabled_; }
 
@@ -81,6 +84,9 @@ public:
 
     void set_ligatures_enabled(bool enabled);
     bool get_ligatures_enabled() const { return ligatures_enabled_; }
+
+    void set_hdr_console_enabled(bool enabled);
+    bool get_hdr_console_enabled() const { return hdr_console_enabled_; }
 
     // Preset list + currently active preset, shown in the preset row.
     // `names` should already be sorted the way it should display ("pool" first).
@@ -101,9 +107,11 @@ private:
     bool animated_typing_ = true;
     bool broadcasting_ = false;
     float exposure_ = 1.0f;
+    float hue_shift_ = 0.0f;
     bool vibrancy_enabled_ = true;
     bool crt_effect_enabled_ = false;
     bool ligatures_enabled_ = true;
+    bool hdr_console_enabled_ = false;
 
     bool dragging_ = false;
     int active_slider_id_ = 0;

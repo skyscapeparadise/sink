@@ -1,6 +1,10 @@
 #import <Cocoa/Cocoa.h>
 #include "macos_menu.h"
+#include "preset_manager.hpp"
 #include <atomic>
+#include <cstring>
+#include <vector>
+#include <string>
 
 static std::atomic<bool> g_settings_requested{false};
 static std::atomic<bool> g_cut_requested{false};
@@ -105,7 +109,7 @@ bool get_crt_mode_requested() {
 // C-linkage trigger to invoke the iteration loop frame update
 extern "C" void trigger_menu_render_tick();
 
-@interface MenuHandler : NSObject
+@interface MenuHandler : NSObject <NSMenuDelegate>
 @property (nonatomic, strong) NSTimer* menuTimer;
 - (void)openSettings:(id)sender;
 - (void)cut:(id)sender;
@@ -113,8 +117,8 @@ extern "C" void trigger_menu_render_tick();
 - (void)paste:(id)sender;
 - (void)selectAll:(id)sender;
 - (void)find:(id)sender;
-- (void)newWindow:(id)sender;
-- (void)newTab:(id)sender;
+- (void)newWindowWithPreset:(id)sender;
+- (void)newTabWithPreset:(id)sender;
 - (void)closeWindow:(id)sender;
 - (void)print:(id)sender;
 - (void)onMenuTimer:(NSTimer*)timer;
@@ -146,12 +150,59 @@ extern "C" void trigger_menu_render_tick();
     set_find_requested(true);
 }
 
-- (void)newWindow:(id)sender {
-    set_new_window_requested(true);
+- (void)newWindowWithPreset:(id)sender {
+    NSString* name = [sender representedObject];
+    if (!name) return;
+    SDL_Event ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.type = SDL_EVENT_USER;
+    ev.user.code = 15; // New window with preset (see main.cpp)
+    ev.user.data1 = strdup([name UTF8String]);
+    SDL_PushEvent(&ev);
 }
 
-- (void)newTab:(id)sender {
-    set_new_tab_requested(true);
+- (void)newTabWithPreset:(id)sender {
+    NSString* name = [sender representedObject];
+    if (!name) return;
+    SDL_Event ev;
+    memset(&ev, 0, sizeof(ev));
+    ev.type = SDL_EVENT_USER;
+    ev.user.code = 16; // New tab with preset (see main.cpp)
+    ev.user.data1 = strdup([name UTF8String]);
+    SDL_PushEvent(&ev);
+}
+
+// Repopulates the "New Window/Tab with Preset" submenus right before they're
+// shown, so they always reflect whatever presets currently exist on disk
+// (created/renamed/deleted via the Settings panel) without needing a
+// restart. `menu.title` (set at construction, not shown to the user) tells
+// the two submenus apart since they share this one delegate.
+- (void)menuNeedsUpdate:(NSMenu*)menu {
+    SEL action;
+    if ([menu.title isEqualToString:@"NewWindowPresetMenu"]) {
+        action = @selector(newWindowWithPreset:);
+    } else if ([menu.title isEqualToString:@"NewTabPresetMenu"]) {
+        action = @selector(newTabWithPreset:);
+    } else {
+        return;
+    }
+
+    [menu removeAllItems];
+    std::vector<std::string> names = presets::list_names();
+    if (names.empty()) {
+        NSMenuItem* empty = [[NSMenuItem alloc] initWithTitle:@"No Presets" action:nil keyEquivalent:@""];
+        [empty setEnabled:NO];
+        [menu addItem:empty];
+        return;
+    }
+    for (const std::string& name : names) {
+        NSString* nsName = [NSString stringWithUTF8String:name.c_str()];
+        NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:nsName action:action keyEquivalent:@""];
+        [item setTarget:self];
+        [item setEnabled:YES];
+        [item setRepresentedObject:nsName];
+        [menu addItem:item];
+    }
 }
 
 - (void)closeWindow:(id)sender {
@@ -260,23 +311,39 @@ void setup_macos_menu() {
         [fileMenu removeAllItems];
         [fileMenu setAutoenablesItems:NO];
         
-        NSMenuItem* newWindowItem = [[NSMenuItem alloc] initWithTitle:@"New Window" action:@selector(newWindow:) keyEquivalent:@"n"];
-        NSMenuItem* newTabItem = [[NSMenuItem alloc] initWithTitle:@"New Tab" action:@selector(newTab:) keyEquivalent:@"t"];
         NSMenuItem* closeWindowItem = [[NSMenuItem alloc] initWithTitle:@"Close Window" action:@selector(closeWindow:) keyEquivalent:@"w"];
         NSMenuItem* printItem = [[NSMenuItem alloc] initWithTitle:@"Print…" action:@selector(print:) keyEquivalent:@"p"];
-        
-        [newWindowItem setTarget:g_menu_handler];
-        [newWindowItem setEnabled:YES];
-        
-        [newTabItem setTarget:g_menu_handler];
-        [newTabItem setEnabled:YES];
-        
+
         [closeWindowItem setTarget:g_menu_handler];
         [closeWindowItem setEnabled:YES];
-        
+
         [printItem setTarget:g_menu_handler];
         [printItem setEnabled:YES];
-        
+
+        // "New Window"/"New Tab" are these preset submenus, not plain
+        // items -- picking a preset from the list opens a window/tab with
+        // that preset applied. The ⌘N/⌘T equivalents are display-only
+        // (AppKit stops treating an item as actionable once it has a
+        // submenu); Cmd+N/Cmd+T are handled directly in main.cpp's SDL key
+        // event loop instead, hitting the same "with whatever preset is
+        // currently active" path. Submenu contents are populated lazily by
+        // -menuNeedsUpdate: right before they're shown (see MenuHandler) so
+        // a preset created/renamed/deleted in Settings shows up without
+        // restarting the app. Each submenu's *own* title (not shown to the
+        // user -- the parent NSMenuItem's title is what's displayed) is how
+        // the shared delegate tells the two apart.
+        NSMenu* newWindowPresetMenu = [[NSMenu alloc] initWithTitle:@"NewWindowPresetMenu"];
+        [newWindowPresetMenu setDelegate:g_menu_handler];
+        [newWindowPresetMenu setAutoenablesItems:NO];
+        NSMenuItem* newWindowItem = [[NSMenuItem alloc] initWithTitle:@"New Window" action:nil keyEquivalent:@"n"];
+        [newWindowItem setSubmenu:newWindowPresetMenu];
+
+        NSMenu* newTabPresetMenu = [[NSMenu alloc] initWithTitle:@"NewTabPresetMenu"];
+        [newTabPresetMenu setDelegate:g_menu_handler];
+        [newTabPresetMenu setAutoenablesItems:NO];
+        NSMenuItem* newTabItem = [[NSMenuItem alloc] initWithTitle:@"New Tab" action:nil keyEquivalent:@"t"];
+        [newTabItem setSubmenu:newTabPresetMenu];
+
         [fileMenu addItem:newWindowItem];
         [fileMenu addItem:newTabItem];
         [fileMenu addItem:[NSMenuItem separatorItem]];
@@ -469,6 +536,22 @@ void enable_macos_window_vibrancy(SDL_Window* sdl_win, bool enable) {
             [titlebarEffectView setHidden:YES];
             [nswin setTitleVisibility:NSWindowTitleHidden];
         }
+    }
+}
+
+void zoom_macos_window(SDL_Window* sdl_win) {
+    @autoreleasepool {
+        if (!sdl_win) return;
+        SDL_PropertiesID props = SDL_GetWindowProperties(sdl_win);
+        NSWindow* nswin = (__bridge NSWindow*)SDL_GetPointerProperty(props, "SDL.window.cocoa.window", NULL);
+        if (!nswin) return;
+        // -performZoom: is what AppKit itself calls when a double-click on a
+        // native title bar is detected: toggles between the window's current
+        // frame and its zoomed frame, with AppKit's own native animation,
+        // and lets AppKit track/restore the "un-zoomed" frame -- avoiding
+        // the frame bookkeeping (and window-tiling edge cases) a manual
+        // setFrame:-based implementation would need to get right itself.
+        [nswin performZoom:nil];
     }
 }
 

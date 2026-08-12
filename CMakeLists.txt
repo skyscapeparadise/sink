@@ -5,7 +5,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Find SDL3, SDL3_ttf, and SDL3_image
-find_package(SDL3 REQUIRED)
+# 3.4.0 minimum: the video background hue-shift effect uses the GPU render
+# backend and SDL_GPURenderState custom-shader API, both added in 3.4.0.
+find_package(SDL3 3.4.0 REQUIRED)
 find_package(SDL3_ttf REQUIRED)
 find_package(SDL3_image REQUIRED)
 
@@ -27,6 +29,8 @@ set(SOURCES
     src/settings_ui.cpp
     src/sink_demo.cpp
     src/preset_manager.cpp
+    src/hue_shift.cpp
+    src/crt_shader.cpp
 )
 
 # macOS Cocoa Menu Integration

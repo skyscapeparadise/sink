@@ -19,11 +19,8 @@
 #include "settings_ui.hpp"
 #include "sink_demo.hpp"
 #include "preset_manager.hpp"
-
-extern "C" {
-#include <libavcodec/avcodec.h>
-#include <libavformat/avformat.h>
-}
+#include "hue_shift.hpp"
+#include "crt_shader.hpp"
 
 #if defined(__APPLE__)
 #include "macos_menu.h"
@@ -35,34 +32,17 @@ SDL_AppResult SDL_AppIterate(void* appstate);
 // Global AppState reference for menu timer callbacks
 static void* g_app_state = nullptr;
 
+// How much brighter than normal (1.0) "hdr console" text renders. Values
+// above 1.0 only actually look brighter than SDR white -- rather than just
+// clamping to white -- because every renderer is created with the
+// linear/extended colorspace (see the renderer-creation comment in
+// create_terminal_window).
+static const float kHdrConsoleTextBoost = 1.6f;
+
 extern "C" void trigger_menu_render_tick() {
     if (g_app_state) {
         SDL_AppIterate(g_app_state);
     }
-}
-
-// Forward declaration of lightweight inspect helper to check if a video file has HDR properties
-static bool inspect_hdr(const std::string& filepath) {
-    bool is_hdr = false;
-    AVFormatContext* temp_fmt_ctx = nullptr;
-
-    if (avformat_open_input(&temp_fmt_ctx, filepath.c_str(), nullptr, nullptr) == 0) {
-        if (avformat_find_stream_info(temp_fmt_ctx, nullptr) >= 0) {
-            for (unsigned int i = 0; i < temp_fmt_ctx->nb_streams; i++) {
-                if (temp_fmt_ctx->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
-                    AVCodecParameters* codec_params = temp_fmt_ctx->streams[i]->codecpar;
-                    if (codec_params->color_trc == AVCOL_TRC_SMPTE2084 || 
-                        codec_params->color_trc == AVCOL_TRC_ARIB_STD_B67 ||
-                        codec_params->color_primaries == AVCOL_PRI_BT2020) {
-                        is_hdr = true;
-                    }
-                    break;
-                }
-            }
-        }
-        avformat_close_input(&temp_fmt_ctx);
-    }
-    return is_hdr;
 }
 
 // TerminalWindow struct contains all state properties for a single tab/window
@@ -82,6 +62,9 @@ struct TerminalWindow {
 
     bool has_video = false;
     float exposure = 0.7f;
+    float hue_shift_degrees = 0.0f;
+    HueShiftEffect hue_shift;
+    CrtShaderEffect crt_shader;
     bool animated_typing = true;
     std::vector<char> animation_buffer;
     Uint64 last_output_chunk_time = 0;
@@ -100,11 +83,24 @@ struct TerminalWindow {
     std::string search_input_text;
     bool crt_mode_enabled = false;
     bool vibrancy_enabled = true;
+    bool hdr_console_enabled = false;
 
     float cell_w = 0.0f;
     float cell_h = 0.0f;
     int mouse_down_col = -1;
     int mouse_down_row = -1;
+
+    // Debounces the (expensive: PTY SIGWINCH + full grid reflow) resize
+    // work so a burst of resize events -- a fast native window-zoom
+    // animation firing dozens of intermediate frames in ~200ms is the worst
+    // case, but a manual edge-drag does this too -- doesn't apply a reflow
+    // per intermediate frame (which was visibly corrupting the shell's
+    // prompt redraw). Only the latest pending size is kept; it's applied
+    // once no new resize event has arrived for a short quiet period.
+    bool has_pending_resize = false;
+    int pending_cols = 0;
+    int pending_rows = 0;
+    Uint64 last_resize_event_time = 0;
 };
 
 // AppState holds the application global coordinates and window pointers
@@ -114,7 +110,6 @@ struct AppState {
     SettingsUI settings_ui;
 
     std::string video_path;
-    bool video_is_hdr = false;
     std::string font_path;
     std::string active_preset_name = "pool";
     float padding = 2.0f;
@@ -123,10 +118,12 @@ struct AppState {
     Uint64 last_tick = 0;
     bool input_broadcasting = false;
     float exposure = 0.7f;
+    float hue_shift = 0.0f;
     bool animated_typing = true;
     bool vibrancy_enabled = true;
     bool crt_mode_enabled = false;
     bool ligatures_enabled = true;
+    bool hdr_console_enabled = false;
 };
 
 static std::string resolve_default_video_path() {
@@ -196,10 +193,12 @@ static void save_config(AppState* state) {
         p.font_path = "default";
     }
     p.exposure = state->exposure;
+    p.hue_shift = state->hue_shift;
     p.animated_typing = state->animated_typing;
     p.vibrancy_enabled = state->vibrancy_enabled;
     p.crt_mode_enabled = state->crt_mode_enabled;
     p.ligatures_enabled = state->ligatures_enabled;
+    p.hdr_console_enabled = state->hdr_console_enabled;
     presets::save(p);
 
     std::ofstream f(config_dir + "/config.txt");
@@ -278,24 +277,59 @@ static void load_config(AppState* state) {
     state->font_path = (active.font_path.empty() || active.font_path == "default")
         ? resolve_default_font_path() : active.font_path;
     state->exposure = active.exposure;
+    state->hue_shift = active.hue_shift;
     state->animated_typing = active.animated_typing;
     state->vibrancy_enabled = active.vibrancy_enabled;
     state->crt_mode_enabled = active.crt_mode_enabled;
     state->ligatures_enabled = active.ligatures_enabled;
+    state->hdr_console_enabled = active.hdr_console_enabled;
 
     // Apply loaded settings to any active windows
     for (auto* tw : state->windows) {
         tw->exposure = state->exposure;
+        tw->hue_shift_degrees = state->hue_shift;
         tw->animated_typing = state->animated_typing;
         tw->vibrancy_enabled = state->vibrancy_enabled;
         tw->crt_mode_enabled = state->crt_mode_enabled;
         tw->terminal.set_enable_ligatures(state->ligatures_enabled);
+        tw->hdr_console_enabled = state->hdr_console_enabled;
     }
 }
 
 // Spawn a new terminal window container
-static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* parent_tab_window) {
+// `preset_override`, when non-null, seeds this one new window from that
+// preset's saved settings instead of AppState's shared "active preset"
+// fields -- used by the File menu's "New Window/Tab with Preset" submenus so
+// picking a preset there only affects the window being created, the same
+// way opening a new profile in Terminal.app leaves other windows alone.
+// Plain "New Window"/"New Tab" (preset_override == nullptr) keep reading
+// from AppState as before.
+static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* parent_tab_window, const Preset* preset_override = nullptr) {
     TerminalWindow* tw = new TerminalWindow();
+
+    std::string video_path = state->video_path;
+    std::string typeface_path = state->font_path;
+    float exposure = state->exposure;
+    float hue_shift_degrees = state->hue_shift;
+    bool animated_typing = state->animated_typing;
+    bool vibrancy_enabled = state->vibrancy_enabled;
+    bool crt_mode_enabled = state->crt_mode_enabled;
+    bool ligatures_enabled = state->ligatures_enabled;
+    bool hdr_console_enabled = state->hdr_console_enabled;
+
+    if (preset_override) {
+        video_path = (preset_override->video_path.empty() || preset_override->video_path == "default")
+            ? resolve_default_video_path() : preset_override->video_path;
+        typeface_path = (preset_override->font_path.empty() || preset_override->font_path == "default")
+            ? resolve_default_font_path() : preset_override->font_path;
+        exposure = preset_override->exposure;
+        hue_shift_degrees = preset_override->hue_shift;
+        animated_typing = preset_override->animated_typing;
+        vibrancy_enabled = preset_override->vibrancy_enabled;
+        crt_mode_enabled = preset_override->crt_mode_enabled;
+        ligatures_enabled = preset_override->ligatures_enabled;
+        hdr_console_enabled = preset_override->hdr_console_enabled;
+    }
 
     // Create Window
     tw->window = SDL_CreateWindow(
@@ -309,19 +343,39 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
         return nullptr;
     }
 
-    tw->vibrancy_enabled = state->vibrancy_enabled;
-    tw->crt_mode_enabled = state->crt_mode_enabled;
-    tw->terminal.set_enable_ligatures(state->ligatures_enabled);
+    tw->vibrancy_enabled = vibrancy_enabled;
+    tw->crt_mode_enabled = crt_mode_enabled;
+    tw->hdr_console_enabled = hdr_console_enabled;
+    tw->terminal.set_enable_ligatures(ligatures_enabled);
 
-    // Create Renderer. Linear colorspace if background video is HDR.
-    if (state->video_is_hdr) {
+    // Create Renderer. "gpu" backend (not the default per-platform driver)
+    // so the video/hue-shift/CRT effects can plug custom shaders into this
+    // renderer's texture draws via SDL_GPURenderState -- the classic 2D
+    // renderer backends don't support that. This part is unconditional and
+    // already proven stable (it's what hue-shift/CRT-shader have been
+    // running on all along).
+    //
+    // The linear/extended-range colorspace, on the other hand, is only
+    // requested when this window actually needs it (hdr console is on for
+    // it): that's what lets a color value go above 1.0 and actually come
+    // out brighter than SDR white instead of clamping to it, which is how
+    // hdr console makes text glow. Making *every* window request it
+    // unconditionally (tried first) made the GPU renderer stall on its
+    // first present at startup -- a plain window with nothing to show
+    // stayed blank until something else (e.g. opening Settings) forced a
+    // redraw -- so it's opt-in per window instead. Toggling hdr console
+    // live on an *already-open* window is handled separately, by tearing
+    // this renderer down and recreating it -- see
+    // recreate_renderer_for_hdr_console().
+    if (hdr_console_enabled) {
         SDL_PropertiesID props = SDL_CreateProperties();
         SDL_SetPointerProperty(props, SDL_PROP_RENDERER_CREATE_WINDOW_POINTER, tw->window);
+        SDL_SetStringProperty(props, SDL_PROP_RENDERER_CREATE_NAME_STRING, SDL_GPU_RENDERER);
         SDL_SetNumberProperty(props, SDL_PROP_RENDERER_CREATE_OUTPUT_COLORSPACE_NUMBER, SDL_COLORSPACE_SRGB_LINEAR);
         tw->renderer = SDL_CreateRendererWithProperties(props);
         SDL_DestroyProperties(props);
     } else {
-        tw->renderer = SDL_CreateRenderer(tw->window, nullptr);
+        tw->renderer = SDL_CreateRenderer(tw->window, SDL_GPU_RENDERER);
     }
 
     if (!tw->renderer) {
@@ -333,6 +387,13 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
 
     SDL_SetRenderVSync(tw->renderer, 1);
 
+    // Best-effort: hue shift/CRT-shader just won't be available (falls
+    // back to the plain rectangle overlay) if this fails, no need to fail
+    // window creation over it.
+    tw->hue_shift.init(tw->renderer);
+    tw->hue_shift_degrees = hue_shift_degrees;
+    tw->crt_shader.init(tw->renderer, hdr_console_enabled);
+
 #if defined(__APPLE__)
     enable_macos_window_vibrancy(tw->window, tw->vibrancy_enabled);
 #endif
@@ -341,15 +402,14 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     if (scale <= 0.0f) scale = 1.0f;
     state->display_scale = scale;
 
-    std::string font_path = state->font_path;
-    if (font_path.empty()) {
-        font_path = "/System/Library/Fonts/SFNSMono.ttf";
+    if (typeface_path.empty()) {
+        typeface_path = "/System/Library/Fonts/SFNSMono.ttf";
     }
 
     float font_size_px = state->base_font_size * scale;
-    if (!tw->font_manager.load_font(tw->renderer, font_path, font_size_px, false)) {
-        font_path = "/System/Library/Fonts/Supplemental/Courier New.ttf";
-        tw->font_manager.load_font(tw->renderer, font_path, font_size_px, false);
+    if (!tw->font_manager.load_font(tw->renderer, typeface_path, font_size_px, false)) {
+        typeface_path = "/System/Library/Fonts/Supplemental/Courier New.ttf";
+        tw->font_manager.load_font(tw->renderer, typeface_path, font_size_px, false);
     }
 
     tw->cell_w = (tw->font_manager.get_cell_width() / scale) + 1.0f;
@@ -373,15 +433,15 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     SDL_StartTextInput(tw->window);
 
     // Setup Video Background Engine
-    if (!state->video_path.empty() && state->video_path != "None") {
-        if (tw->video_engine.open_video(tw->renderer, state->video_path)) {
+    if (!video_path.empty() && video_path != "None") {
+        if (tw->video_engine.open_video(tw->renderer, video_path)) {
             tw->video_engine.start();
             tw->has_video = true;
         }
     }
 
-    tw->animated_typing = state->animated_typing;
-    tw->exposure = state->exposure;
+    tw->animated_typing = animated_typing;
+    tw->exposure = exposure;
     tw->fade_state = TerminalWindow::FADE_HOLD_BLACK;
     tw->fade_opacity = 1.0f;
     tw->scroll_accumulator = 0.0f;
@@ -410,6 +470,8 @@ static void destroy_terminal_window(TerminalWindow* tw) {
     tw->pty.shutdown();
     tw->video_engine.stop();
     tw->video_engine.close_video();
+    tw->hue_shift.cleanup(); // must run before destroying the renderer it was created against
+    tw->crt_shader.cleanup();
     if (tw->renderer) {
         SDL_DestroyRenderer(tw->renderer);
     }
@@ -419,6 +481,79 @@ static void destroy_terminal_window(TerminalWindow* tw) {
     delete tw;
 }
 
+// Tears down `tw`'s renderer and everything built against it (font glyph
+// atlas, video texture/decode, hue-shift/CRT-shader GPU shader state --
+// all invalid once their owning renderer/GPU device is gone), then
+// recreates all of it against a fresh renderer with `want_linear_colorspace`.
+// A renderer's output colorspace can't be changed after creation, so this
+// is what makes toggling "hdr console" live on an *already-open* window
+// possible at all -- see the colorspace comment in create_terminal_window.
+//
+// The video background has no partial-rebind API (open_video() creates its
+// FFmpeg decode context and its SDL_Texture together), so it's closed and
+// reopened from the same path/position-0 rather than migrated -- a brief
+// restart to frame 0, traded for the toggle actually being live.
+static bool recreate_renderer_for_hdr_console(AppState* state, TerminalWindow* tw, bool want_linear_colorspace) {
+    bool had_video = tw->has_video;
+    std::string video_path_to_reopen = state->video_path;
+
+    // Order matters: everything that owns a texture/shader-state against
+    // the current renderer must be torn down *before* that renderer is
+    // destroyed, or they're left holding pointers into a dead GPU device.
+    tw->video_engine.close_video(); // also stops decode; see close_video()
+    tw->has_video = false;
+    tw->hue_shift.cleanup();
+    tw->crt_shader.cleanup();
+    tw->font_manager.cleanup();
+
+    if (tw->renderer) {
+        SDL_DestroyRenderer(tw->renderer);
+        tw->renderer = nullptr;
+    }
+
+    if (want_linear_colorspace) {
+        SDL_PropertiesID props = SDL_CreateProperties();
+        SDL_SetPointerProperty(props, SDL_PROP_RENDERER_CREATE_WINDOW_POINTER, tw->window);
+        SDL_SetStringProperty(props, SDL_PROP_RENDERER_CREATE_NAME_STRING, SDL_GPU_RENDERER);
+        SDL_SetNumberProperty(props, SDL_PROP_RENDERER_CREATE_OUTPUT_COLORSPACE_NUMBER, SDL_COLORSPACE_SRGB_LINEAR);
+        tw->renderer = SDL_CreateRendererWithProperties(props);
+        SDL_DestroyProperties(props);
+    } else {
+        tw->renderer = SDL_CreateRenderer(tw->window, SDL_GPU_RENDERER);
+    }
+
+    if (!tw->renderer) {
+        std::cerr << "recreate_renderer_for_hdr_console: SDL_CreateRenderer failed: " << SDL_GetError() << std::endl;
+        return false;
+    }
+
+    SDL_SetRenderVSync(tw->renderer, 1);
+    tw->hue_shift.init(tw->renderer);
+    tw->crt_shader.init(tw->renderer, want_linear_colorspace);
+
+    float font_size_px = state->base_font_size * state->display_scale;
+    if (!tw->font_manager.load_font(tw->renderer, state->font_path, font_size_px, false)) {
+        tw->font_manager.load_font(tw->renderer, "/System/Library/Fonts/Supplemental/Courier New.ttf", font_size_px, false);
+    }
+    tw->cell_w = (tw->font_manager.get_cell_width() / state->display_scale) + 1.0f;
+    tw->cell_h = (tw->font_manager.get_cell_height() / state->display_scale) - 0.8f;
+
+    if (had_video && !video_path_to_reopen.empty() && video_path_to_reopen != "None") {
+        if (tw->video_engine.open_video(tw->renderer, video_path_to_reopen)) {
+            tw->video_engine.start();
+            tw->has_video = true;
+            tw->fade_state = TerminalWindow::FADE_HOLD_BLACK;
+            tw->fade_opacity = 1.0f;
+        }
+    }
+
+#if defined(__APPLE__)
+    enable_macos_window_vibrancy(tw->window, tw->vibrancy_enabled);
+#endif
+
+    return true;
+}
+
 // Applies a preset's background/font/exposure/toggles to `state` and every
 // live TerminalWindow, mirroring what the individual background/font/toggle
 // settings-UI handlers do, but bundled together for a one-shot preset switch.
@@ -426,14 +561,15 @@ static void apply_preset_to_state_and_windows(AppState* state, const Preset& p) 
     state->active_preset_name = p.name;
     state->video_path = (p.video_path.empty() || p.video_path == "default")
         ? resolve_default_video_path() : p.video_path;
-    state->video_is_hdr = inspect_hdr(state->video_path);
     state->font_path = (p.font_path.empty() || p.font_path == "default")
         ? resolve_default_font_path() : p.font_path;
     state->exposure = p.exposure;
+    state->hue_shift = p.hue_shift;
     state->animated_typing = p.animated_typing;
     state->vibrancy_enabled = p.vibrancy_enabled;
     state->crt_mode_enabled = p.crt_mode_enabled;
     state->ligatures_enabled = p.ligatures_enabled;
+    state->hdr_console_enabled = p.hdr_console_enabled;
 
     for (auto* tw : state->windows) {
         tw->video_engine.stop();
@@ -461,10 +597,19 @@ static void apply_preset_to_state_and_windows(AppState* state, const Preset& p) 
         }
 
         tw->exposure = state->exposure;
+        tw->hue_shift_degrees = state->hue_shift;
         tw->animated_typing = state->animated_typing;
         tw->vibrancy_enabled = state->vibrancy_enabled;
         tw->crt_mode_enabled = state->crt_mode_enabled;
         tw->terminal.set_enable_ligatures(state->ligatures_enabled);
+        if (tw->hdr_console_enabled != state->hdr_console_enabled) {
+            tw->hdr_console_enabled = state->hdr_console_enabled;
+            // This window's renderer colorspace no longer matches the
+            // incoming preset's hdr_console setting -- rebuild it (which
+            // also re-opens the video/font this loop just set, but against
+            // the correct renderer this time).
+            recreate_renderer_for_hdr_console(state, tw, tw->hdr_console_enabled);
+        }
 #if defined(__APPLE__)
         enable_macos_window_vibrancy(tw->window, state->vibrancy_enabled);
 #endif
@@ -484,9 +629,11 @@ static void sync_settings_ui_from_state(AppState* state) {
     state->settings_ui.set_paths(state->video_path, state->font_path);
     state->settings_ui.set_animated_typing(state->animated_typing);
     state->settings_ui.set_exposure(state->exposure);
+    state->settings_ui.set_hue_shift(state->hue_shift);
     state->settings_ui.set_vibrancy_enabled(state->vibrancy_enabled);
     state->settings_ui.set_crt_effect_enabled(state->crt_mode_enabled);
     state->settings_ui.set_ligatures_enabled(state->ligatures_enabled);
+    state->settings_ui.set_hdr_console_enabled(state->hdr_console_enabled);
     refresh_settings_ui_presets(state);
 }
 
@@ -515,7 +662,6 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
 
     if (argc > 1) {
         state->video_path = argv[1];
-        state->video_is_hdr = inspect_hdr(state->video_path);
     }
 
     // Spawn first window
@@ -650,6 +796,8 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             state->settings_ui.set_paths(state->video_path, state->font_path);
             state->settings_ui.set_animated_typing(state->active_window ? state->active_window->animated_typing : true);
             state->settings_ui.set_exposure(state->active_window ? state->active_window->exposure : 1.0f);
+            state->settings_ui.set_hue_shift(state->active_window ? state->active_window->hue_shift_degrees : 0.0f);
+            state->settings_ui.set_hdr_console_enabled(state->active_window ? state->active_window->hdr_console_enabled : false);
             refresh_settings_ui_presets(state);
         }
     }
@@ -741,10 +889,27 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 float mx = event->button.x;
                 float my = event->button.y;
                 float top_offset_pts = target_tw->vibrancy_enabled ? 32.0f : 34.0f;
-                
+
+                // Clicks land in the title bar strip above the terminal
+                // grid (SDL_WINDOW_HIGH_PIXEL_DENSITY + full-size content
+                // view means this app's own view -- not a native AppKit
+                // title bar -- receives them). Double-clicking there zooms
+                // the window, matching the classic macOS title-bar gesture;
+                // other click counts up here are just ignored rather than
+                // falling through into text selection with a garbage
+                // negative row.
+                if (my < top_offset_pts) {
+                    if (event->button.clicks == 2) {
+#if defined(__APPLE__)
+                        zoom_macos_window(target_tw->window);
+#endif
+                    }
+                    return SDL_APP_CONTINUE;
+                }
+
                 int col = static_cast<int>((mx - state->padding) / target_tw->cell_w);
                 int row = static_cast<int>((my - (state->padding + top_offset_pts)) / target_tw->cell_h);
-                
+
                 int clicks = event->button.clicks;
                 if (clicks == 1) {
                     target_tw->mouse_down_col = col;
@@ -914,9 +1079,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                     state->settings_ui.set_paths(state->video_path, state->font_path);
                     state->settings_ui.set_animated_typing(target_tw->animated_typing);
                     state->settings_ui.set_exposure(target_tw->exposure);
+                    state->settings_ui.set_hue_shift(target_tw->hue_shift_degrees);
                     state->settings_ui.set_broadcasting(state->input_broadcasting);
                     state->settings_ui.set_vibrancy_enabled(target_tw->vibrancy_enabled);
                     state->settings_ui.set_crt_effect_enabled(target_tw->crt_mode_enabled);
+                    state->settings_ui.set_hdr_console_enabled(target_tw->hdr_console_enabled);
                     refresh_settings_ui_presets(state);
                 }
             } else {
@@ -927,6 +1094,23 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
 
         // Ignore input if settings has focus
         if (state->settings_ui.is_open() && SDL_GetKeyboardFocus() == state->settings_ui.get_window()) {
+            return SDL_APP_CONTINUE;
+        }
+
+        // Cmd+N / Cmd+T: New Window / New Tab. Handled directly here rather
+        // than via the Cocoa menu's keyEquivalent, since the "New Window"/
+        // "New Tab" items now carry a preset submenu -- once an NSMenuItem
+        // has a submenu, AppKit stops treating it as an actionable item, so
+        // its keyEquivalent is display-only. Both go through the same
+        // set_new_window_requested()/set_new_tab_requested() flags the menu
+        // items themselves used to set, so they land on the same "with
+        // whatever preset is currently active" path as before.
+        if ((mod & SDL_KMOD_GUI) && sym == SDLK_N) {
+            set_new_window_requested(true);
+            return SDL_APP_CONTINUE;
+        }
+        if ((mod & SDL_KMOD_GUI) && sym == SDLK_T) {
+            set_new_tab_requested(true);
             return SDL_APP_CONTINUE;
         }
 
@@ -1042,9 +1226,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 float top_offset_pts = target_tw->vibrancy_enabled ? 32.0f : 34.0f;
                 int new_cols = std::max(40, static_cast<int>((w - 2 * state->padding) / target_tw->cell_w));
                 int new_rows = std::max(10, static_cast<int>((h - 2 * state->padding - top_offset_pts) / target_tw->cell_h));
-                
-                target_tw->terminal.resize(new_cols, new_rows);
-                target_tw->pty.resize_pty(new_cols, new_rows);
+
+                target_tw->pending_cols = new_cols;
+                target_tw->pending_rows = new_rows;
+                target_tw->has_pending_resize = true;
+                target_tw->last_resize_event_time = SDL_GetTicks();
             }
         }
     } else if (event->type == SDL_EVENT_USER) {
@@ -1053,7 +1239,6 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             std::cout << "Settings Event: background changed: " << path << std::endl;
 
             state->video_path = path;
-            state->video_is_hdr = inspect_hdr(state->video_path);
 
             for (auto* tw : state->windows) {
                 tw->video_engine.stop();
@@ -1100,7 +1285,6 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         } else if (event->user.code == 3) { // Clear media -> reset to default pool video background
             std::cout << "Settings Event: background cleared to default." << std::endl;
             state->video_path = resolve_default_video_path();
-            state->video_is_hdr = inspect_hdr(state->video_path);
             for (auto* tw : state->windows) {
                 tw->video_engine.stop();
                 tw->video_engine.close_video();
@@ -1172,6 +1356,27 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             apply_preset_to_state_and_windows(state, presets::load("pool"));
             save_config(state);
             sync_settings_ui_from_state(state);
+        } else if (event->user.code == 15) { // File menu: New Window with Preset
+            char* name = (char*)event->user.data1;
+            std::cout << "Menu Event: new window with preset '" << name << "'" << std::endl;
+            Preset p = presets::load(name);
+            TerminalWindow* tw = create_terminal_window(state, nullptr, &p);
+            if (tw) {
+                state->windows.push_back(tw);
+                state->active_window = tw;
+            }
+            free(name);
+        } else if (event->user.code == 16) { // File menu: New Tab with Preset
+            char* name = (char*)event->user.data1;
+            std::cout << "Menu Event: new tab with preset '" << name << "'" << std::endl;
+            Preset p = presets::load(name);
+            SDL_Window* parent_win = state->active_window ? state->active_window->window : nullptr;
+            TerminalWindow* tw = create_terminal_window(state, parent_win, &p);
+            if (tw) {
+                state->windows.push_back(tw);
+                state->active_window = tw;
+            }
+            free(name);
         }
     }
 
@@ -1389,6 +1594,15 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             save_config(state);
         }
 
+        float hue = state->settings_ui.get_hue_shift();
+        if (state->hue_shift != hue) {
+            state->hue_shift = hue;
+            for (auto* tw : state->windows) {
+                tw->hue_shift_degrees = hue;
+            }
+            save_config(state);
+        }
+
         bool vib = state->settings_ui.get_vibrancy_enabled();
         if (state->vibrancy_enabled != vib) {
             state->vibrancy_enabled = vib;
@@ -1418,12 +1632,35 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             }
             save_config(state);
         }
+
+        bool hdr_console = state->settings_ui.get_hdr_console_enabled();
+        if (state->hdr_console_enabled != hdr_console) {
+            state->hdr_console_enabled = hdr_console;
+            for (auto* tw : state->windows) {
+                tw->hdr_console_enabled = hdr_console;
+                recreate_renderer_for_hdr_console(state, tw, hdr_console);
+            }
+            save_config(state);
+        }
     }
 
     // Iterate all active windows
     for (auto* tw : state->windows) {
+        // Apply a debounced resize once the window has been settled at its
+        // current size for a short quiet period (see has_pending_resize),
+        // so a burst of resize events (a live drag, or an animated
+        // window-zoom firing many intermediate frames) doesn't reflow the
+        // grid and SIGWINCH the shell on every single one of them.
+        if (tw->has_pending_resize && (current_tick - tw->last_resize_event_time) >= 100) {
+            if (tw->pending_cols != tw->terminal.get_cols() || tw->pending_rows != tw->terminal.get_rows()) {
+                tw->terminal.resize(tw->pending_cols, tw->pending_rows);
+                tw->pty.resize_pty(tw->pending_cols, tw->pending_rows);
+            }
+            tw->has_pending_resize = false;
+        }
+
         tw->terminal.update_timers(dt);
-        
+
         // Process inertial scrolling physics
         if (std::abs(tw->scroll_velocity) > 0.01f) {
             tw->scroll_accumulator += tw->scroll_velocity * dt;
@@ -1547,6 +1784,18 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         // Ensure full window render viewport
         SDL_SetRenderViewport(tw->renderer, nullptr);
 
+        // If the real CRT shader (scanlines/halation/vignette, see
+        // crt_shader.hpp) is available, everything from here through the
+        // end of "B." below renders into an offscreen buffer instead of
+        // the window, so the shader pass in "C." can react to the actual
+        // composited video+text brightness. Falls back to the older
+        // rectangle-overlay version (drawn straight onto the window) if
+        // the GPU shader isn't available.
+        bool use_crt_shader = tw->crt_mode_enabled && tw->crt_shader.is_ready();
+        if (use_crt_shader) {
+            tw->crt_shader.begin_scene(tw->renderer);
+        }
+
         // Render Active Window Context
         if (tw->vibrancy_enabled && !tw->has_video) {
             SDL_SetRenderDrawColor(tw->renderer, 0, 0, 0, 80);
@@ -1560,24 +1809,38 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             tw->video_engine.update_frame(tw->renderer, dt);
             SDL_Texture* frame_tex = tw->video_engine.get_texture();
             if (frame_tex) {
-                SDL_SetRenderColorScale(tw->renderer, tw->exposure);
-                SDL_RenderTexture(tw->renderer, frame_tex, nullptr, nullptr);
-                SDL_SetRenderColorScale(tw->renderer, 1.0f); // Reset color scale
+                tw->hue_shift.draw(tw->renderer, frame_tex, tw->hue_shift_degrees, tw->exposure, tw->crt_mode_enabled);
             }
         }
 
-        // B. Render grid cells
+        // B. Render grid cells. "hdr console" boosts text brightness past
+        // 1.0 (true HDR: on an HDR-capable display this comes out brighter
+        // than SDR white, not just clamped/clipped to it, since the
+        // renderer is always created with the linear/extended colorspace --
+        // see the renderer-creation comment above) via the same
+        // SDL_SetRenderColorScale mechanism exposure already uses for the
+        // video, bracketed around just this text draw so the video
+        // background's own luminance is untouched.
         {
             std::lock_guard<std::mutex> lock(tw->grid_mutex);
             tw->terminal.set_enable_ligatures(state->ligatures_enabled);
             float top_pts = tw->vibrancy_enabled ? 32.0f : 34.0f;
             float start_y = (state->padding + top_pts) * state->display_scale;
             float start_x = state->padding * state->display_scale;
+            if (tw->hdr_console_enabled) {
+                SDL_SetRenderColorScale(tw->renderer, kHdrConsoleTextBoost);
+            }
             tw->terminal.render(tw->renderer, tw->font_manager, start_x, start_y, state->display_scale, dt, tw->animated_typing);
+            if (tw->hdr_console_enabled) {
+                SDL_SetRenderColorScale(tw->renderer, 1.0f);
+            }
         }
 
-        // C. Draw CRT retro shader effect if enabled
-        if (tw->crt_mode_enabled) {
+        // C. Composite with the CRT shader, or fall back to the plain
+        // rectangle-overlay version if the shader isn't available.
+        if (use_crt_shader) {
+            tw->crt_shader.end_scene(tw->renderer);
+        } else if (tw->crt_mode_enabled) {
             render_crt_effects(tw->renderer, draw_w, draw_h, state->display_scale);
         }
 

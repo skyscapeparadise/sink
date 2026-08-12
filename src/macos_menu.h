@@ -50,6 +50,11 @@ bool get_crt_mode_requested();
 // Enable or disable macOS native translucent window vibrancy / acrylic blur
 void enable_macos_window_vibrancy(SDL_Window* sdl_win, bool enable);
 
+// Classic macOS "zoom" (grow to fill the screen, or restore) with AppKit's
+// own native animation -- the same toggle a double-click on a native title
+// bar performs. Distinct from the green-button Spaces-based fullscreen.
+void zoom_macos_window(SDL_Window* sdl_win);
+
 #ifdef __cplusplus
 }
 #endif

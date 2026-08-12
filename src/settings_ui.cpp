@@ -42,10 +42,10 @@ bool SettingsUI::open(SDL_Window* parent_window) {
 
     parent_ = parent_window;
     
-    // Create settings window (spacious dimensions 500x430, High-DPI enabled)
+    // Create settings window (spacious dimensions 500x475, High-DPI enabled)
     window_ = SDL_CreateWindow(
         "sink settings",
-        500, 430,
+        500, 475,
         SDL_WINDOW_HIGH_PIXEL_DENSITY
     );
 
@@ -197,6 +197,22 @@ void SettingsUI::set_exposure(float exposure) {
     }
 }
 
+void SettingsUI::set_hue_shift(float degrees) {
+    hue_shift_ = degrees;
+    for (auto& s : sliders_) {
+        if (s.id == 2) {
+            s.value = std::clamp(hue_shift_ / 360.0f, 0.0f, 1.0f);
+            char buf[32];
+            // Plain ASCII "deg" rather than the (multi-byte UTF-8) degree
+            // sign -- draw_text() walks the string byte-by-byte, not
+            // UTF-8-aware, so a multi-byte glyph here would render broken.
+            std::snprintf(buf, sizeof(buf), "hue shift: %.0f deg", hue_shift_);
+            s.label = buf;
+            break;
+        }
+    }
+}
+
 void SettingsUI::set_vibrancy_enabled(bool enabled) {
     vibrancy_enabled_ = enabled;
     for (auto& btn : buttons_) {
@@ -222,6 +238,16 @@ void SettingsUI::set_ligatures_enabled(bool enabled) {
     for (auto& btn : buttons_) {
         if (btn.id == 9) {
             btn.label = std::string("ligatures: ") + (ligatures_enabled_ ? "on" : "off");
+            break;
+        }
+    }
+}
+
+void SettingsUI::set_hdr_console_enabled(bool enabled) {
+    hdr_console_enabled_ = enabled;
+    for (auto& btn : buttons_) {
+        if (btn.id == 10) {
+            btn.label = std::string("hdr console: ") + (hdr_console_enabled_ ? "on" : "off");
             break;
         }
     }
@@ -366,16 +392,21 @@ void SettingsUI::init_layout() {
     buttons_.push_back(btn_preset_delete);
 
     // 2. UI Buttons (shifted down 44pt from their original position to make
-    // room for the preset row above)
+    // room for the preset row above, then another 43pt below the sliders
+    // to make room for the hue shift slider added alongside exposure)
     UIButton btn_bg_select = { 1, "select file...", {24.0f, 136.0f, 125.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
     UIButton btn_bg_clear = { 2, "clear", {159.0f, 136.0f, 75.0f, 28.0f}, colors_.btn_danger, colors_.btn_danger_hover };
-    UIButton btn_font_select = { 3, "select font...", {24.0f, 270.0f, 125.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    UIButton btn_font_select = { 3, "select font...", {24.0f, 313.0f, 125.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
 
-    UIButton btn_crt_toggle = { 8, std::string("crt shader: ") + (crt_effect_enabled_ ? "on" : "off"), {24.0f, 312.0f, 135.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
-    UIButton btn_vibrancy_toggle = { 7, std::string("title bar: ") + (vibrancy_enabled_ ? "on" : "off"), {169.0f, 312.0f, 140.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
-    UIButton btn_ligatures_toggle = { 9, std::string("ligatures: ") + (ligatures_enabled_ ? "on" : "off"), {319.0f, 312.0f, 145.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    // Two rows of toggles, packed to their actual label widths instead of
+    // one-per-row -- there's plenty of horizontal room in a 468pt-wide card
+    // for three (then two) of these side by side.
+    UIButton btn_crt_toggle = { 8, std::string("crt shader: ") + (crt_effect_enabled_ ? "on" : "off"), {24.0f, 355.0f, 135.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    UIButton btn_vibrancy_toggle = { 7, std::string("title bar: ") + (vibrancy_enabled_ ? "on" : "off"), {169.0f, 355.0f, 140.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    UIButton btn_ligatures_toggle = { 9, std::string("ligatures: ") + (ligatures_enabled_ ? "on" : "off"), {319.0f, 355.0f, 145.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
 
-    UIButton btn_broadcast_toggle = { 6, std::string("broadcast: ") + (broadcasting_ ? "on" : "off"), {24.0f, 354.0f, 135.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    UIButton btn_hdr_console_toggle = { 10, std::string("hdr console: ") + (hdr_console_enabled_ ? "on" : "off"), {24.0f, 397.0f, 165.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    UIButton btn_broadcast_toggle = { 6, std::string("broadcast: ") + (broadcasting_ ? "on" : "off"), {199.0f, 397.0f, 135.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
 
     buttons_.push_back(btn_bg_select);
     buttons_.push_back(btn_bg_clear);
@@ -383,6 +414,7 @@ void SettingsUI::init_layout() {
     buttons_.push_back(btn_crt_toggle);
     buttons_.push_back(btn_vibrancy_toggle);
     buttons_.push_back(btn_ligatures_toggle);
+    buttons_.push_back(btn_hdr_console_toggle);
     buttons_.push_back(btn_broadcast_toggle);
 
     // 3. UI Sliders
@@ -390,6 +422,11 @@ void SettingsUI::init_layout() {
     std::snprintf(exposure_buf, sizeof(exposure_buf), "exposure: %.2f", exposure_);
     UISlider s_exposure = { 1, exposure_buf, {24.0f, 194.0f, 440.0f, 8.0f}, std::clamp(exposure_ / 2.0f, 0.0f, 1.0f), 0.0f, 2.0f };
     sliders_.push_back(s_exposure);
+
+    char hue_buf[32];
+    std::snprintf(hue_buf, sizeof(hue_buf), "hue shift: %.0f deg", hue_shift_);
+    UISlider s_hue = { 2, hue_buf, {24.0f, 238.0f, 440.0f, 8.0f}, std::clamp(hue_shift_ / 360.0f, 0.0f, 1.0f), 0.0f, 360.0f };
+    sliders_.push_back(s_hue);
 }
 
 void SettingsUI::update_slider_value(int slider_id, float mouse_x) {
@@ -403,6 +440,11 @@ void SettingsUI::update_slider_value(int slider_id, float mouse_x) {
                 exposure_ = pct * 2.0f;
                 char buf[32];
                 std::snprintf(buf, sizeof(buf), "exposure: %.2f", exposure_);
+                s.label = buf;
+            } else if (s.id == 2) { // Hue shift
+                hue_shift_ = pct * 360.0f;
+                char buf[32];
+                std::snprintf(buf, sizeof(buf), "hue shift: %.0f deg", hue_shift_);
                 s.label = buf;
             }
             break;
@@ -539,6 +581,8 @@ void SettingsUI::process_event(const SDL_Event& event) {
                         set_crt_effect_enabled(!crt_effect_enabled_);
                     } else if (btn.id == 9) { // Toggle Ligatures
                         set_ligatures_enabled(!ligatures_enabled_);
+                    } else if (btn.id == 10) { // Toggle HDR Console
+                        set_hdr_console_enabled(!hdr_console_enabled_);
                     } else if (btn.id == PRESET_BTN_NAME) {
                         preset_dropdown_open_ = true;
                         dropdown_hover_index_ = -1;
@@ -631,11 +675,11 @@ void SettingsUI::render() {
     }
 
     // 2. Draw section cards
-    SDL_FRect bg_card = { 16.0f * scale, 104.0f * scale, 468.0f * scale, 115.0f * scale };
+    SDL_FRect bg_card = { 16.0f * scale, 104.0f * scale, 468.0f * scale, 158.0f * scale };
     draw_rect_filled(bg_card, colors_.card, 10.0f * scale);
     draw_rect_outline(bg_card, colors_.border, 10.0f * scale);
 
-    SDL_FRect font_card = { 16.0f * scale, 236.0f * scale, 468.0f * scale, 165.0f * scale };
+    SDL_FRect font_card = { 16.0f * scale, 279.0f * scale, 468.0f * scale, 165.0f * scale };
     draw_rect_filled(font_card, colors_.card, 10.0f * scale);
     draw_rect_outline(font_card, colors_.border, 10.0f * scale);
 
@@ -683,7 +727,7 @@ void SettingsUI::render() {
     bg_disp = truncate_head(bg_disp, value_right_edge - bg_value_x);
     draw_text(bg_disp, bg_value_x, 143.0f * scale, colors_.text_primary);
 
-    draw_text("terminal typeface font", 24.0f * scale, 245.0f * scale, colors_.text_secondary);
+    draw_text("terminal typeface font", 24.0f * scale, 288.0f * scale, colors_.text_secondary);
     std::string font_disp = font_path_;
     std::string font_lower = font_disp;
     std::transform(font_lower.begin(), font_lower.end(), font_lower.begin(), ::tolower);
@@ -692,7 +736,7 @@ void SettingsUI::render() {
     }
     float font_value_x = 159.0f * scale;
     font_disp = truncate_head(font_disp, value_right_edge - font_value_x);
-    draw_text(font_disp, font_value_x, 277.0f * scale, colors_.text_primary);
+    draw_text(font_disp, font_value_x, 320.0f * scale, colors_.text_primary);
 
     // 4. Draw Buttons (ghost buttons with thin outline borders)
     bool preset_locked = (active_preset_ == "pool");
