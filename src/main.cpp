@@ -18,6 +18,7 @@
 #include "video_engine.hpp"
 #include "settings_ui.hpp"
 #include "sink_demo.hpp"
+#include "preset_manager.hpp"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -115,6 +116,7 @@ struct AppState {
     std::string video_path;
     bool video_is_hdr = false;
     std::string font_path;
+    std::string active_preset_name = "pool";
     float padding = 2.0f;
     float base_font_size = 15.0f;
     float display_scale = 1.0f;
@@ -174,38 +176,52 @@ static std::string resolve_default_font_path() {
     return "Courier New.ttf";
 }
 
+// Persists the live settings as the active preset (presets/<name>.txt), plus
+// a small config.txt pointing at which preset is active. This is called
+// after every settings tweak, same as the old flat-config version was.
 static void save_config(AppState* state) {
     const char* home = getenv("HOME");
     if (!home) return;
     std::string config_dir = std::string(home) + "/.config/sink";
     mkdir(config_dir.c_str(), 0755); // Ensure folder exists
-    
+
+    Preset p;
+    p.name = state->active_preset_name;
+    p.video_path = state->video_path;
+    if (p.video_path.find("sinkpool.mp4") != std::string::npos) {
+        p.video_path = "default";
+    }
+    p.font_path = state->font_path;
+    if (p.font_path.find("MonaspaceNeon-Regular.otf") != std::string::npos) {
+        p.font_path = "default";
+    }
+    p.exposure = state->exposure;
+    p.animated_typing = state->animated_typing;
+    p.vibrancy_enabled = state->vibrancy_enabled;
+    p.crt_mode_enabled = state->crt_mode_enabled;
+    p.ligatures_enabled = state->ligatures_enabled;
+    presets::save(p);
+
     std::ofstream f(config_dir + "/config.txt");
     if (f.is_open()) {
-        std::string v_path = state->video_path;
-        if (v_path.find("sinkpool.mp4") != std::string::npos) {
-            v_path = "default";
-        }
-        
-        std::string f_path = state->font_path;
-        if (f_path.find("MonaspaceNeon-Regular.otf") != std::string::npos) {
-            f_path = "default";
-        }
-        
-        f << "video_path=" << v_path << "\n";
-        f << "font_path=" << f_path << "\n";
-        f << "exposure=" << state->exposure << "\n";
-        f << "animated_typing=" << (state->animated_typing ? "true" : "false") << "\n";
-        f << "vibrancy_enabled=" << (state->vibrancy_enabled ? "true" : "false") << "\n";
-        f << "crt_mode_enabled=" << (state->crt_mode_enabled ? "true" : "false") << "\n";
-        f << "ligatures_enabled=" << (state->ligatures_enabled ? "true" : "false") << "\n";
-        f.close();
+        f << "active_preset=" << state->active_preset_name << "\n";
     }
 }
 
+// Loads the active preset (following config.txt's active_preset pointer)
+// into `state`. On a pre-presets install, migrates the old flat config.txt
+// fields into a "pool" preset instead of discarding them; on a fresh
+// install, seeds "pool" with hardcoded baseline defaults. Either way,
+// "pool" always ends up present on disk so there's a permanent fallback.
 static void load_config(AppState* state) {
     const char* home = getenv("HOME");
     if (!home) return;
+
+    std::string requested_preset;
+    bool has_active_preset_key = false;
+    Preset legacy;
+    bool has_legacy_fields = false;
+
     std::ifstream f(std::string(home) + "/.config/sink/config.txt");
     if (f.is_open()) {
         std::string line;
@@ -214,43 +230,66 @@ static void load_config(AppState* state) {
             if (eq == std::string::npos) continue;
             std::string key = line.substr(0, eq);
             std::string val = line.substr(eq + 1);
-            
-            if (key == "video_path") {
-                if (val == "default" || val.empty()) {
-                    state->video_path = resolve_default_video_path();
-                } else {
-                    state->video_path = val;
-                }
+
+            if (key == "active_preset") {
+                requested_preset = val.empty() ? "pool" : val;
+                has_active_preset_key = true;
+            } else if (key == "video_path") {
+                legacy.video_path = val;
+                has_legacy_fields = true;
             } else if (key == "font_path") {
-                if (val == "default" || val.empty()) {
-                    state->font_path = resolve_default_font_path();
-                } else {
-                    state->font_path = val;
-                }
+                legacy.font_path = val;
+                has_legacy_fields = true;
             } else if (key == "exposure") {
-                try {
-                    state->exposure = std::stof(val);
-                } catch (...) {}
+                try { legacy.exposure = std::stof(val); } catch (...) {}
             } else if (key == "animated_typing") {
-                state->animated_typing = (val == "true");
+                legacy.animated_typing = (val == "true");
             } else if (key == "vibrancy_enabled") {
-                state->vibrancy_enabled = (val == "true");
+                legacy.vibrancy_enabled = (val == "true");
             } else if (key == "crt_mode_enabled") {
-                state->crt_mode_enabled = (val == "true");
+                legacy.crt_mode_enabled = (val == "true");
             } else if (key == "ligatures_enabled") {
-                state->ligatures_enabled = (val == "true");
+                legacy.ligatures_enabled = (val == "true");
             }
         }
         f.close();
-        
-        // Apply loaded settings to any active windows
-        for (auto* tw : state->windows) {
-            tw->exposure = state->exposure;
-            tw->animated_typing = state->animated_typing;
-            tw->vibrancy_enabled = state->vibrancy_enabled;
-            tw->crt_mode_enabled = state->crt_mode_enabled;
-            tw->terminal.set_enable_ligatures(state->ligatures_enabled);
-        }
+    }
+
+    Preset active;
+    if (has_active_preset_key && presets::exists(requested_preset)) {
+        active = presets::load(requested_preset);
+    } else if (has_legacy_fields && !presets::exists("pool")) {
+        legacy.name = "pool";
+        presets::save(legacy);
+        active = legacy;
+    } else if (presets::exists("pool")) {
+        active = presets::load("pool");
+    } else {
+        active = Preset{}; // hardcoded baseline: name="pool" with default look
+    }
+
+    if (!presets::exists(active.name)) {
+        presets::save(active);
+    }
+
+    state->active_preset_name = active.name;
+    state->video_path = (active.video_path.empty() || active.video_path == "default")
+        ? resolve_default_video_path() : active.video_path;
+    state->font_path = (active.font_path.empty() || active.font_path == "default")
+        ? resolve_default_font_path() : active.font_path;
+    state->exposure = active.exposure;
+    state->animated_typing = active.animated_typing;
+    state->vibrancy_enabled = active.vibrancy_enabled;
+    state->crt_mode_enabled = active.crt_mode_enabled;
+    state->ligatures_enabled = active.ligatures_enabled;
+
+    // Apply loaded settings to any active windows
+    for (auto* tw : state->windows) {
+        tw->exposure = state->exposure;
+        tw->animated_typing = state->animated_typing;
+        tw->vibrancy_enabled = state->vibrancy_enabled;
+        tw->crt_mode_enabled = state->crt_mode_enabled;
+        tw->terminal.set_enable_ligatures(state->ligatures_enabled);
     }
 }
 
@@ -380,9 +419,80 @@ static void destroy_terminal_window(TerminalWindow* tw) {
     delete tw;
 }
 
+// Applies a preset's background/font/exposure/toggles to `state` and every
+// live TerminalWindow, mirroring what the individual background/font/toggle
+// settings-UI handlers do, but bundled together for a one-shot preset switch.
+static void apply_preset_to_state_and_windows(AppState* state, const Preset& p) {
+    state->active_preset_name = p.name;
+    state->video_path = (p.video_path.empty() || p.video_path == "default")
+        ? resolve_default_video_path() : p.video_path;
+    state->video_is_hdr = inspect_hdr(state->video_path);
+    state->font_path = (p.font_path.empty() || p.font_path == "default")
+        ? resolve_default_font_path() : p.font_path;
+    state->exposure = p.exposure;
+    state->animated_typing = p.animated_typing;
+    state->vibrancy_enabled = p.vibrancy_enabled;
+    state->crt_mode_enabled = p.crt_mode_enabled;
+    state->ligatures_enabled = p.ligatures_enabled;
+
+    for (auto* tw : state->windows) {
+        tw->video_engine.stop();
+        tw->video_engine.close_video();
+        tw->has_video = false;
+        if (!state->video_path.empty() && state->video_path != "None") {
+            if (tw->video_engine.open_video(tw->renderer, state->video_path)) {
+                tw->video_engine.start();
+                tw->has_video = true;
+                tw->fade_state = TerminalWindow::FADE_HOLD_BLACK;
+                tw->fade_opacity = 1.0f;
+            }
+        }
+
+        if (tw->font_manager.load_font(tw->renderer, state->font_path, state->base_font_size * state->display_scale, false)) {
+            tw->cell_w = (tw->font_manager.get_cell_width() / state->display_scale) + 1.0f;
+            tw->cell_h = (tw->font_manager.get_cell_height() / state->display_scale) - 0.8f;
+
+            int w, h;
+            SDL_GetWindowSize(tw->window, &w, &h);
+            int new_cols = std::max(40, static_cast<int>((w - 2 * state->padding) / tw->cell_w));
+            int new_rows = std::max(10, static_cast<int>((h - 2 * state->padding) / tw->cell_h));
+            tw->terminal.resize(new_cols, new_rows);
+            tw->pty.resize_pty(new_cols, new_rows);
+        }
+
+        tw->exposure = state->exposure;
+        tw->animated_typing = state->animated_typing;
+        tw->vibrancy_enabled = state->vibrancy_enabled;
+        tw->crt_mode_enabled = state->crt_mode_enabled;
+        tw->terminal.set_enable_ligatures(state->ligatures_enabled);
+#if defined(__APPLE__)
+        enable_macos_window_vibrancy(tw->window, state->vibrancy_enabled);
+#endif
+    }
+}
+
+// Pushes the current preset list/selection into the (already-open) settings
+// window so its preset row and dropdown reflect what's on disk.
+static void refresh_settings_ui_presets(AppState* state) {
+    state->settings_ui.set_preset_names(presets::list_names());
+    state->settings_ui.set_active_preset(state->active_preset_name);
+}
+
+// Re-syncs every settings-window control from AppState, used after a preset
+// switch/create/duplicate/delete replaces the live settings wholesale.
+static void sync_settings_ui_from_state(AppState* state) {
+    state->settings_ui.set_paths(state->video_path, state->font_path);
+    state->settings_ui.set_animated_typing(state->animated_typing);
+    state->settings_ui.set_exposure(state->exposure);
+    state->settings_ui.set_vibrancy_enabled(state->vibrancy_enabled);
+    state->settings_ui.set_crt_effect_enabled(state->crt_mode_enabled);
+    state->settings_ui.set_ligatures_enabled(state->ligatures_enabled);
+    refresh_settings_ui_presets(state);
+}
+
 // SDL3 Application initialization entry point
 SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
-    SDL_SetAppMetadata("sink", "0.6.0", "com.rainmultimedia.sink");
+    SDL_SetAppMetadata("sink", "0.8.0", "com.rainmultimedia.sink");
     SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_CREATOR_STRING, "rain multimedia");
     SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_COPYRIGHT_STRING, "copyright © 2026 rain multimedia. all rights reserved.");
 
@@ -397,16 +507,16 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
     g_app_state = state;
 
     state->video_path = resolve_default_video_path();
+    state->font_path = resolve_default_font_path();
 
-    // Load config if present
+    // Load config if present (may override the defaults above with the
+    // active preset's saved background/font/etc)
     load_config(state);
 
     if (argc > 1) {
         state->video_path = argv[1];
         state->video_is_hdr = inspect_hdr(state->video_path);
     }
-
-    state->font_path = resolve_default_font_path();
 
     // Spawn first window
     TerminalWindow* tw = create_terminal_window(state, nullptr);
@@ -540,6 +650,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             state->settings_ui.set_paths(state->video_path, state->font_path);
             state->settings_ui.set_animated_typing(state->active_window ? state->active_window->animated_typing : true);
             state->settings_ui.set_exposure(state->active_window ? state->active_window->exposure : 1.0f);
+            refresh_settings_ui_presets(state);
         }
     }
 
@@ -806,6 +917,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                     state->settings_ui.set_broadcasting(state->input_broadcasting);
                     state->settings_ui.set_vibrancy_enabled(target_tw->vibrancy_enabled);
                     state->settings_ui.set_crt_effect_enabled(target_tw->crt_mode_enabled);
+                    refresh_settings_ui_presets(state);
                 }
             } else {
                 state->settings_ui.close();
@@ -1020,6 +1132,46 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             bool broadcast = (bool)(intptr_t)event->user.data1;
             std::cout << "Settings Event: input broadcasting toggled: " << (broadcast ? "ON" : "OFF") << std::endl;
             state->input_broadcasting = broadcast;
+        } else if (event->user.code == 10) { // Switch preset
+            char* name = (char*)event->user.data1;
+            std::cout << "Settings Event: switched to preset '" << name << "'" << std::endl;
+            apply_preset_to_state_and_windows(state, presets::load(name));
+            save_config(state);
+            sync_settings_ui_from_state(state);
+            free(name);
+        } else if (event->user.code == 11) { // New preset, seeded with baseline defaults
+            char* name = (char*)event->user.data1;
+            std::cout << "Settings Event: new preset '" << name << "'" << std::endl;
+            Preset p; // Preset{} defaults = the same baseline "pool" ships with
+            p.name = presets::unique_name(name);
+            presets::save(p);
+            apply_preset_to_state_and_windows(state, p);
+            save_config(state);
+            sync_settings_ui_from_state(state);
+            free(name);
+        } else if (event->user.code == 12) { // Duplicate active preset
+            std::cout << "Settings Event: duplicating preset '" << state->active_preset_name << "'" << std::endl;
+            Preset dup = presets::load(state->active_preset_name);
+            dup.name = presets::unique_name(state->active_preset_name + " copy");
+            presets::save(dup);
+            apply_preset_to_state_and_windows(state, dup);
+            save_config(state);
+            sync_settings_ui_from_state(state);
+        } else if (event->user.code == 13) { // Rename active preset
+            char* name = (char*)event->user.data1;
+            std::cout << "Settings Event: renaming preset '" << state->active_preset_name << "' to '" << name << "'" << std::endl;
+            if (presets::rename(state->active_preset_name, name)) {
+                state->active_preset_name = name;
+                save_config(state); // rewrites the active_preset pointer only; look/feel is unchanged
+            }
+            sync_settings_ui_from_state(state);
+            free(name);
+        } else if (event->user.code == 14) { // Delete active preset
+            std::cout << "Settings Event: deleting preset '" << state->active_preset_name << "'" << std::endl;
+            presets::remove(state->active_preset_name); // no-op if it's "pool"
+            apply_preset_to_state_and_windows(state, presets::load("pool"));
+            save_config(state);
+            sync_settings_ui_from_state(state);
         }
     }
 

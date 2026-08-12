@@ -5,6 +5,19 @@
 #include <vector>
 #include "font_manager.hpp"
 
+// Button ids used for the preset row. Kept out of the 1-9 range used by the
+// background/font/toggle controls above.
+enum PresetButtonId {
+    PRESET_BTN_NAME = 20,     // click to open the preset dropdown
+    PRESET_BTN_NEW = 21,
+    PRESET_BTN_DUPLICATE = 22,
+    PRESET_BTN_RENAME = 23,
+    PRESET_BTN_DELETE = 24,
+};
+
+// What a committed name-edit should do once the user presses Enter.
+enum class PresetEditMode { kNone, kNew, kRename };
+
 struct UIColors {
     SDL_FColor bg = {0.04f, 0.05f, 0.08f, 1.00f};          // Deep black-slate background
     SDL_FColor card = {1.00f, 1.00f, 1.00f, 0.02f};        // Translucent card container
@@ -69,6 +82,11 @@ public:
     void set_ligatures_enabled(bool enabled);
     bool get_ligatures_enabled() const { return ligatures_enabled_; }
 
+    // Preset list + currently active preset, shown in the preset row.
+    // `names` should already be sorted the way it should display ("pool" first).
+    void set_preset_names(const std::vector<std::string>& names);
+    void set_active_preset(const std::string& name);
+
 private:
     SDL_Window* window_ = nullptr;
     SDL_Renderer* renderer_ = nullptr;
@@ -95,9 +113,44 @@ private:
     SDL_Texture* sink_logo_ = nullptr;
     SDL_Texture* rain_logo_ = nullptr;
 
+    // Preset row state
+    std::vector<std::string> preset_names_ = {"pool"};
+    std::string active_preset_ = "pool";
+    bool preset_dropdown_open_ = false;
+    int dropdown_hover_index_ = -1;
+    static constexpr int kMaxDropdownRows = 8;
+
+    // Inline text editing, used for both "new preset" and "rename preset".
+    // Committing pushes an SDL_EVENT_USER (see .cpp for codes); the caller
+    // (main.cpp) owns actually creating/renaming/switching the preset.
+    bool editing_name_ = false;
+    PresetEditMode edit_mode_ = PresetEditMode::kNone;
+    std::string edit_buffer_;
+    bool edit_save_hovered_ = false;
+    bool edit_cancel_hovered_ = false;
+
     void init_layout();
     void update_slider_value(int slider_id, float mouse_x);
     void draw_text(const std::string& text, float x, float y, const SDL_FColor& color, bool monospace = false);
     void draw_rect_filled(const SDL_FRect& rect, const SDL_FColor& color, float radius = 0.0f);
     void draw_rect_outline(const SDL_FRect& rect, const SDL_FColor& color, float radius = 0.0f);
+
+    // Measures rendered text width in the same (physical/scaled) pixel
+    // space as glyph advances, since the font is loaded at a size that
+    // already bakes in the display scale.
+    float measure_text_width(const std::string& text);
+    // Truncates from the front (keeping the tail, prefixed with "...") so
+    // the result fits within max_width -- used for paths/filenames, where
+    // the identifying part is usually at the end.
+    std::string truncate_head(const std::string& text, float max_width);
+
+    SDL_FRect dropdown_row_rect(int index) const;
+    // Layout for the name-edit row: text field, then explicit "save"/
+    // "cancel" buttons (mouse-discoverable alternative to Enter/Escape).
+    SDL_FRect edit_field_rect() const;
+    SDL_FRect edit_save_rect() const;
+    SDL_FRect edit_cancel_rect() const;
+    void begin_edit(PresetEditMode mode, const std::string& initial_text);
+    void cancel_edit();
+    void commit_edit();
 };

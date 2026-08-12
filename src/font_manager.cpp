@@ -1,6 +1,7 @@
 #include "font_manager.hpp"
 #include <iostream>
 #include <algorithm>
+#include <vector>
 
 FontManager::FontManager() {}
 
@@ -140,10 +141,31 @@ bool FontManager::build_atlas(SDL_Renderer* renderer) {
     const int cols = 16;
     const int rows = (num_chars + cols - 1) / cols;
 
+    SDL_Color white = {255, 255, 255, 255};
+
+    // Render every glyph up front so cells can be sized from the *actual*
+    // widest/tallest glyph in this font, not just 'n' (cell_width_'s basis).
+    // In a proportional font, wide letters like 'm' can render wider than
+    // that nominal cell; packing them into an undersized cell then bleeds
+    // their pixels into the next glyph's region of the atlas texture, which
+    // permanently corrupts that glyph (most visible on repeated wide
+    // letters, e.g. "mm", but not limited to them).
+    std::vector<SDL_Surface*> glyph_surfaces(num_chars, nullptr);
+    int max_glyph_w = static_cast<int>(cell_width_);
+    int max_glyph_h = static_cast<int>(cell_height_);
+    for (int i = 0; i < num_chars; ++i) {
+        SDL_Surface* glyph_surf = TTF_RenderGlyph_Blended(font_, start_char + i, white);
+        glyph_surfaces[i] = glyph_surf;
+        if (glyph_surf) {
+            max_glyph_w = std::max(max_glyph_w, glyph_surf->w);
+            max_glyph_h = std::max(max_glyph_h, glyph_surf->h);
+        }
+    }
+
     // Add spacing (padding) between cells to prevent bilinear bleeding artifacts
     const int spacing = 4;
-    int cell_w_spaced = static_cast<int>(cell_width_) + spacing;
-    int cell_h_spaced = static_cast<int>(cell_height_) + spacing;
+    int cell_w_spaced = max_glyph_w + spacing;
+    int cell_h_spaced = max_glyph_h + spacing;
 
     int atlas_w = cols * cell_w_spaced;
     int atlas_h = rows * cell_h_spaced;
@@ -157,21 +179,22 @@ bool FontManager::build_atlas(SDL_Renderer* renderer) {
     SDL_Surface* atlas_surface = SDL_CreateSurface(pow2_w, pow2_h, SDL_PIXELFORMAT_RGBA32);
     if (!atlas_surface) {
         std::cerr << "Failed to create atlas surface: " << SDL_GetError() << std::endl;
+        for (SDL_Surface* s : glyph_surfaces) {
+            if (s) SDL_DestroySurface(s);
+        }
         return false;
     }
 
     // Set blend mode on atlas surface to preserve transparency during blits
     SDL_SetSurfaceBlendMode(atlas_surface, SDL_BLENDMODE_BLEND);
 
-    SDL_Color white = {255, 255, 255, 255};
-
     for (int i = 0; i < num_chars; ++i) {
         char32_t codepoint = start_char + i;
-        SDL_Surface* glyph_surf = TTF_RenderGlyph_Blended(font_, codepoint, white);
-        
+        SDL_Surface* glyph_surf = glyph_surfaces[i];
+
         int col = i % cols;
         int row = i / cols;
-        
+
         float x = col * cell_w_spaced;
         float y = row * cell_h_spaced;
 
