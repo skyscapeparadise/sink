@@ -9,7 +9,8 @@ enum ParserState {
     STATE_ESCAPE,
     STATE_CSI,
     STATE_STR,      // OSC/DCS/APC/PM/SOS payload: consumed and discarded until a terminator
-    STATE_STR_ESC   // saw ESC while inside a string sequence; next byte decides if it's ST ('\')
+    STATE_STR_ESC,  // saw ESC while inside a string sequence; next byte decides if it's ST ('\')
+    STATE_CHARSET   // saw ESC ( / ) / * / + ; next byte designates a character set
 };
 
 class ANSIParser {
@@ -26,6 +27,11 @@ private:
     std::string csi_buffer_;
     std::string trigger_buffer_;
     bool is_private_mode_ = false;
+
+    // Character-set designation (SCS). Only G0 via ESC ( affects rendering;
+    // designations for the other banks are parsed but ignored.
+    char charset_designator_ = 0;
+    bool g0_dec_graphics_ = false;
 
     // UTF-8 state variables to parse multi-byte characters
     int utf8_bytes_needed_ = 0;

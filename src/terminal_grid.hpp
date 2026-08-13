@@ -70,8 +70,17 @@ public:
     void trigger_error_flash() { error_glow_opacity_ = 1.0f; }
     void update_timers(float dt);
 
-    void set_alt_screen(bool active) { alt_screen_active_ = active; }
+    // Leaving the alt screen restores cursor visibility, so a full-screen app
+    // that hid the cursor (or crashed before civis was undone) doesn't leave
+    // the shell without one.
+    void set_alt_screen(bool active) {
+        alt_screen_active_ = active;
+        if (!active) cursor_visible_ = true;
+    }
     bool is_alt_screen_active() const { return alt_screen_active_; }
+
+    void set_cursor_visible(bool visible) { cursor_visible_ = visible; }
+    bool is_cursor_visible() const { return cursor_visible_; }
 
     void set_bracketed_paste(bool active) { bracketed_paste_active_ = active; }
     bool is_bracketed_paste_active() const { return bracketed_paste_active_; }
@@ -149,6 +158,7 @@ private:
     int select_end_row_ = -1;
     bool selecting_ = false;
     bool alt_screen_active_ = false;
+    bool cursor_visible_ = true;
     bool bracketed_paste_active_ = false;
     int prompt_boundary_col_ = -1;
 

@@ -94,6 +94,9 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                 grid.set_cursor_col(grid.get_cursor_col() - 1);
             } else if (c == '\x07') {
                 // Bell: Ignore audio alerts
+            } else if (c == 0x0E || c == 0x0F) {
+                // SO/SI: shift between G0/G1. G1 isn't tracked (ncurses on
+                // xterm-likes designates G0 directly), so just consume them.
             } else if (c == '\t') {
                 // Tab: Move to next tab stop (multiples of 8)
                 int next_tab = (grid.get_cursor_col() + 8) & ~7;
@@ -106,7 +109,21 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                       (c >= 0x200B && c <= 0x200D) ||
                       c == 0x2060 ||
                       c == 0xFEFF)) {
-                    grid.write_character(c);
+                    char32_t out = c;
+                    if (g0_dec_graphics_ && c >= 0x60 && c <= 0x7E) {
+                        // DEC Special Graphics: 0x60-0x7E become line-drawing
+                        // and symbol glyphs while ESC ( 0 is in effect.
+                        static const char32_t dec_graphics[31] = {
+                            0x25C6, 0x2592, 0x2409, 0x240C, 0x240D, 0x240A,
+                            0x00B0, 0x00B1, 0x2424, 0x240B, 0x2518, 0x2510,
+                            0x250C, 0x2514, 0x253C, 0x23BA, 0x23BB, 0x2500,
+                            0x23BC, 0x23BD, 0x251C, 0x2524, 0x2534, 0x252C,
+                            0x2502, 0x2264, 0x2265, 0x03C0, 0x2260, 0x00A3,
+                            0x00B7
+                        };
+                        out = dec_graphics[c - 0x60];
+                    }
+                    grid.write_character(out);
 
                     if (c >= 32 && c < 127) {
                         trigger_buffer_ += std::tolower(static_cast<char>(c));
@@ -139,6 +156,11 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
             } else if (c == '8') { // DECRC: Restore Cursor
                 grid.restore_cursor();
                 state_ = STATE_NORMAL;
+            } else if (c == '(' || c == ')' || c == '*' || c == '+') {
+                // SCS: designate character set for G0-G3; the final byte
+                // (e.g. 'B' = US-ASCII, '0' = DEC line drawing) follows.
+                charset_designator_ = static_cast<char>(c);
+                state_ = STATE_CHARSET;
             } else {
                 state_ = STATE_NORMAL;
             }
@@ -163,6 +185,13 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                 state_ = STATE_ESCAPE;
                 process_char(grid, c);
             }
+            break;
+        }
+        case STATE_CHARSET: {
+            if (charset_designator_ == '(') {
+                g0_dec_graphics_ = (c == '0');
+            }
+            state_ = STATE_NORMAL;
             break;
         }
         case STATE_CSI: {
@@ -336,7 +365,9 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
             break;
         }
         case 'h': { // Set Mode (SM / DECSET)
-            if (is_private_mode_ && get_param(0, 0) == 1049) {
+            if (is_private_mode_ && get_param(0, 0) == 25) {
+                grid.set_cursor_visible(true); // DECTCEM
+            } else if (is_private_mode_ && get_param(0, 0) == 1049) {
                 grid.set_alt_screen(true);
             } else if (is_private_mode_ && get_param(0, 0) == 2004) {
                 grid.set_bracketed_paste(true);
@@ -352,7 +383,9 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
             break;
         }
         case 'l': { // Reset Mode (RM / DECRST)
-            if (is_private_mode_ && get_param(0, 0) == 1049) {
+            if (is_private_mode_ && get_param(0, 0) == 25) {
+                grid.set_cursor_visible(false); // DECTCEM
+            } else if (is_private_mode_ && get_param(0, 0) == 1049) {
                 grid.set_alt_screen(false);
             } else if (is_private_mode_ && get_param(0, 0) == 2004) {
                 grid.set_bracketed_paste(false);
