@@ -390,7 +390,7 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     // Best-effort: hue shift/CRT-shader just won't be available (falls
     // back to the plain rectangle overlay) if this fails, no need to fail
     // window creation over it.
-    tw->hue_shift.init(tw->renderer);
+    tw->hue_shift.init(tw->renderer, hdr_console_enabled);
     tw->hue_shift_degrees = hue_shift_degrees;
     tw->crt_shader.init(tw->renderer, hdr_console_enabled);
 
@@ -528,7 +528,7 @@ static bool recreate_renderer_for_hdr_console(AppState* state, TerminalWindow* t
     }
 
     SDL_SetRenderVSync(tw->renderer, 1);
-    tw->hue_shift.init(tw->renderer);
+    tw->hue_shift.init(tw->renderer, want_linear_colorspace);
     tw->crt_shader.init(tw->renderer, want_linear_colorspace);
 
     float font_size_px = state->base_font_size * state->display_scale;

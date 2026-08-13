@@ -640,7 +640,14 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
 
             // Populate Text Geometry
             if (!skip_text && render_cp != 32 && render_cp != 0) {
-                const GlyphInfo* glyph = font_manager.get_glyph(renderer, render_cp);
+                bool is_ligature = (render_cp != cell.codepoint && render_cp >= 0x2000);
+                // Ligature substitute glyphs are rasterized from a ~2x-size
+                // font instance so the stretch below (to visually span two
+                // character cells) is a near-1:1 blit instead of a ~2x
+                // upscale -- see FontManager::get_ligature_glyph().
+                const GlyphInfo* glyph = is_ligature
+                    ? font_manager.get_ligature_glyph(renderer, render_cp)
+                    : font_manager.get_glyph(renderer, render_cp);
                 if (glyph && glyph->src_rect.w > 0.0f && glyph->src_rect.h > 0.0f) {
                     bool is_dynamic = (render_cp < 32 || render_cp > 126);
                     float tex_w = is_dynamic ? dyn_atlas_w : atlas_w;
@@ -654,12 +661,28 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
 
                         float glyph_w = glyph->src_rect.w;
                         float glyph_h = glyph->src_rect.h;
-                        bool is_ligature = (render_cp != cell.codepoint && render_cp >= 0x2000);
 
                         if (glyph->is_color || is_ligature) {
                             float target_w = is_ligature ? (cell_w * 2.0f) : cell_w;
-                            float scale_factor = target_w / glyph_w;
-                            glyph_w = target_w;
+                            // Scaling purely to hit the width target assumes
+                            // the glyph's natural aspect ratio already fits
+                            // "N cells wide, 1 row tall" -- for some
+                            // substitute glyphs (this font's arrow
+                            // especially) that's off enough that doing so
+                            // pushes the height well past the row.
+                            // Strictly capping height to fit the row instead
+                            // overcorrects the other way: it shrinks the
+                            // whole glyph down until it's narrower than a
+                            // single character. So: cap height at a modest
+                            // overflow allowance (not a strict 1:1 fit) and
+                            // let width fall short of the full span if the
+                            // glyph's proportions demand it -- a compromise
+                            // between "too big" and "too tiny" given a
+                            // source glyph that isn't really shaped for
+                            // this 2-cells-wide-by-1-row-tall box.
+                            float max_h = cell_h * (is_ligature ? 1.4f : 1.0f);
+                            float scale_factor = std::min(target_w / glyph_w, max_h / glyph_h);
+                            glyph_w *= scale_factor;
                             glyph_h *= scale_factor;
                         }
 

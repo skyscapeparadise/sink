@@ -37,12 +37,17 @@ void FontManager::cleanup() {
         TTF_CloseFont(emoji_font_);
         emoji_font_ = nullptr;
     }
+    if (ligature_font_) {
+        TTF_CloseFont(ligature_font_);
+        ligature_font_ = nullptr;
+    }
     if (is_ttf_initialized_) {
         TTF_Quit();
         is_ttf_initialized_ = false;
     }
     glyph_cache_.clear();
     dynamic_glyph_cache_.clear();
+    ligature_glyph_cache_.clear();
     std::fill_n(has_ascii_cache_, 128, false);
     dynamic_x_ = 0;
     dynamic_y_ = 0;
@@ -62,6 +67,10 @@ bool FontManager::load_font(SDL_Renderer* renderer, const std::string& font_path
         TTF_CloseFont(emoji_font_);
         emoji_font_ = nullptr;
     }
+    if (ligature_font_) {
+        TTF_CloseFont(ligature_font_);
+        ligature_font_ = nullptr;
+    }
     if (atlas_texture_) {
         SDL_DestroyTexture(atlas_texture_);
         atlas_texture_ = nullptr;
@@ -72,6 +81,7 @@ bool FontManager::load_font(SDL_Renderer* renderer, const std::string& font_path
     }
     glyph_cache_.clear();
     dynamic_glyph_cache_.clear();
+    ligature_glyph_cache_.clear();
     dynamic_x_ = 0;
     dynamic_y_ = 0;
     dynamic_row_h_ = 0;
@@ -90,6 +100,14 @@ bool FontManager::load_font(SDL_Renderer* renderer, const std::string& font_path
     emoji_font_ = TTF_OpenFont("/System/Library/Fonts/Apple Color Emoji.ttc", font_size);
     if (!emoji_font_) {
         std::cerr << "Warning: Failed to open Apple Color Emoji font. Emoji support may be degraded." << std::endl;
+    }
+
+    // Same face, ~2x point size -- see get_ligature_glyph().
+    ligature_font_ = TTF_OpenFont(font_path.c_str(), font_size * 2.0f);
+    if (!ligature_font_) {
+        std::cerr << "Warning: Failed to open ligature-size font instance; ligatures will fall back to the softer upscaled rendering." << std::endl;
+    } else if (bold) {
+        TTF_SetFontStyle(ligature_font_, TTF_STYLE_BOLD);
     }
 
     // Create dynamic atlas texture (1024x1024 RGBA32)
@@ -340,11 +358,13 @@ const GlyphInfo* FontManager::get_glyph(SDL_Renderer* renderer, char32_t codepoi
 
     // Check if atlas is full
     if (dynamic_y_ + h + 4 > 1024) {
-        // Reset packer coordinates & clear cache
+        // Reset packer coordinates & clear cache. Both dynamic caches share
+        // this one atlas texture/packer, so both go stale together.
         dynamic_x_ = 0;
         dynamic_y_ = 0;
         dynamic_row_h_ = 0;
         dynamic_glyph_cache_.clear();
+        ligature_glyph_cache_.clear();
 
         // Clear dynamic texture
         std::vector<uint32_t> empty_pixels(1024 * 1024, 0);
@@ -395,4 +415,77 @@ const GlyphInfo* FontManager::get_glyph(SDL_Renderer* renderer, char32_t codepoi
     SDL_DestroySurface(glyph_surf);
 
     return &dynamic_glyph_cache_[codepoint];
+}
+
+const GlyphInfo* FontManager::get_ligature_glyph(SDL_Renderer* renderer, char32_t codepoint) const {
+    auto it = ligature_glyph_cache_.find(codepoint);
+    if (it != ligature_glyph_cache_.end()) {
+        return &it->second;
+    }
+
+    if (!renderer || !dynamic_atlas_texture_ || !ligature_font_) {
+        // No ligature-size font instance available (e.g. it failed to
+        // load) -- fall back to the normal-size glyph rather than nothing;
+        // terminal_grid's existing upscale still makes it fill the cell
+        // span, just softer.
+        return get_glyph(renderer, codepoint);
+    }
+
+    SDL_Color white = {255, 255, 255, 255};
+    SDL_Surface* glyph_surf = TTF_RenderGlyph_Blended(ligature_font_, codepoint, white);
+    if (!glyph_surf) {
+        return get_glyph(renderer, codepoint);
+    }
+
+    int w = glyph_surf->w;
+    int h = glyph_surf->h;
+
+    if (dynamic_x_ + w + 4 > 1024) {
+        dynamic_x_ = 0;
+        dynamic_y_ += dynamic_row_h_ + 4;
+        dynamic_row_h_ = 0;
+    }
+
+    if (dynamic_y_ + h + 4 > 1024) {
+        dynamic_x_ = 0;
+        dynamic_y_ = 0;
+        dynamic_row_h_ = 0;
+        dynamic_glyph_cache_.clear();
+        ligature_glyph_cache_.clear();
+
+        std::vector<uint32_t> empty_pixels(1024 * 1024, 0);
+        SDL_UpdateTexture(dynamic_atlas_texture_, nullptr, empty_pixels.data(), 1024 * sizeof(uint32_t));
+    }
+
+    SDL_Rect dst_rect = { dynamic_x_, dynamic_y_, w, h };
+    SDL_Surface* converted_surf = SDL_ConvertSurface(glyph_surf, SDL_PIXELFORMAT_RGBA32);
+    if (converted_surf) {
+        SDL_UpdateTexture(dynamic_atlas_texture_, &dst_rect, converted_surf->pixels, converted_surf->pitch);
+        SDL_DestroySurface(converted_surf);
+    } else {
+        SDL_UpdateTexture(dynamic_atlas_texture_, &dst_rect, glyph_surf->pixels, glyph_surf->pitch);
+    }
+
+    int adv = 0;
+    TTF_GetGlyphMetrics(ligature_font_, codepoint, nullptr, nullptr, nullptr, nullptr, &adv);
+    float actual_advance = adv > 0 ? static_cast<float>(adv) : static_cast<float>(w);
+
+    GlyphInfo info;
+    info.src_rect = {
+        static_cast<float>(dynamic_x_),
+        static_cast<float>(dynamic_y_),
+        static_cast<float>(w),
+        static_cast<float>(h)
+    };
+    info.advance = actual_advance;
+    info.is_color = false;
+
+    ligature_glyph_cache_[codepoint] = info;
+
+    dynamic_x_ += w + 4;
+    dynamic_row_h_ = std::max(dynamic_row_h_, h);
+
+    SDL_DestroySurface(glyph_surf);
+
+    return &ligature_glyph_cache_[codepoint];
 }
