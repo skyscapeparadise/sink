@@ -17,6 +17,7 @@ struct Preset {
     bool crt_mode_enabled = false;
     bool ligatures_enabled = true;
     bool hdr_console_enabled = false;
+    int scrollback_lines = 10000;
 };
 
 // Presets are stored as individual key=value text files under
