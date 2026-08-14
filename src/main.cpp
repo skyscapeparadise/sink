@@ -133,6 +133,7 @@ struct AppState {
     bool crt_mode_enabled = false;
     bool ligatures_enabled = true;
     bool hdr_console_enabled = false;
+    int scrollback_lines = 10000;
 };
 
 static std::string resolve_default_video_path() {
@@ -208,6 +209,7 @@ static void save_config(AppState* state) {
     p.crt_mode_enabled = state->crt_mode_enabled;
     p.ligatures_enabled = state->ligatures_enabled;
     p.hdr_console_enabled = state->hdr_console_enabled;
+    p.scrollback_lines = state->scrollback_lines;
     presets::save(p);
 
     std::ofstream f(config_dir + "/config.txt");
@@ -292,6 +294,7 @@ static void load_config(AppState* state) {
     state->crt_mode_enabled = active.crt_mode_enabled;
     state->ligatures_enabled = active.ligatures_enabled;
     state->hdr_console_enabled = active.hdr_console_enabled;
+    state->scrollback_lines = active.scrollback_lines;
 
     // Apply loaded settings to any active windows
     for (auto* tw : state->windows) {
@@ -301,6 +304,7 @@ static void load_config(AppState* state) {
         tw->vibrancy_enabled = state->vibrancy_enabled;
         tw->crt_mode_enabled = state->crt_mode_enabled;
         tw->terminal.set_enable_ligatures(state->ligatures_enabled);
+        tw->terminal.set_max_scrollback(static_cast<size_t>(state->scrollback_lines));
         tw->hdr_console_enabled = state->hdr_console_enabled;
     }
 }
@@ -325,6 +329,7 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     bool crt_mode_enabled = state->crt_mode_enabled;
     bool ligatures_enabled = state->ligatures_enabled;
     bool hdr_console_enabled = state->hdr_console_enabled;
+    int scrollback_lines = state->scrollback_lines;
 
     if (preset_override) {
         video_path = (preset_override->video_path.empty() || preset_override->video_path == "default")
@@ -338,6 +343,7 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
         crt_mode_enabled = preset_override->crt_mode_enabled;
         ligatures_enabled = preset_override->ligatures_enabled;
         hdr_console_enabled = preset_override->hdr_console_enabled;
+        scrollback_lines = preset_override->scrollback_lines;
     }
 
     // Create Window
@@ -356,6 +362,7 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     tw->crt_mode_enabled = crt_mode_enabled;
     tw->hdr_console_enabled = hdr_console_enabled;
     tw->terminal.set_enable_ligatures(ligatures_enabled);
+    tw->terminal.set_max_scrollback(static_cast<size_t>(scrollback_lines));
 
     // Create Renderer. "gpu" backend (not the default per-platform driver)
     // so the video/hue-shift/CRT effects can plug custom shaders into this
@@ -579,6 +586,7 @@ static void apply_preset_to_state_and_windows(AppState* state, const Preset& p) 
     state->crt_mode_enabled = p.crt_mode_enabled;
     state->ligatures_enabled = p.ligatures_enabled;
     state->hdr_console_enabled = p.hdr_console_enabled;
+    state->scrollback_lines = p.scrollback_lines;
 
     for (auto* tw : state->windows) {
         tw->video_engine.stop();
@@ -611,6 +619,7 @@ static void apply_preset_to_state_and_windows(AppState* state, const Preset& p) 
         tw->vibrancy_enabled = state->vibrancy_enabled;
         tw->crt_mode_enabled = state->crt_mode_enabled;
         tw->terminal.set_enable_ligatures(state->ligatures_enabled);
+        tw->terminal.set_max_scrollback(static_cast<size_t>(state->scrollback_lines));
         if (tw->hdr_console_enabled != state->hdr_console_enabled) {
             tw->hdr_console_enabled = state->hdr_console_enabled;
             // This window's renderer colorspace no longer matches the
@@ -1210,6 +1219,15 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 target_tw->terminal.search_next();
                 return SDL_APP_CONTINUE;
             }
+        }
+
+        // Cmd+Up / Cmd+Down: jump between OSC 133 shell prompts (needs shell
+        // integration emitting 133;A marks; without them these do nothing)
+        if ((mod & SDL_KMOD_GUI) && (sym == SDLK_UP || sym == SDLK_DOWN)) {
+            std::lock_guard<std::mutex> lock(target_tw->grid_mutex);
+            if (sym == SDLK_UP) target_tw->terminal.scroll_to_prev_prompt();
+            else                target_tw->terminal.scroll_to_next_prompt();
+            return SDL_APP_CONTINUE;
         }
 
         // Cmd+Comma settings window trigger
@@ -1895,6 +1913,12 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 tw->parser.parse(tw->terminal, output.data(), output.size());
             }
             tw->terminal.lock_prompt_boundary_if_unset();
+        }
+
+        // Apply any OSC 0/2 title change from the data just parsed
+        if (tw->terminal.has_pending_title()) {
+            std::string title = tw->terminal.take_window_title();
+            SDL_SetWindowTitle(tw->window, title.empty() ? "sink" : title.c_str());
         }
 
         // Process retro animated typing ticks
