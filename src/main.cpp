@@ -18,6 +18,7 @@
 #include "video_engine.hpp"
 #include "settings_ui.hpp"
 #include "sink_demo.hpp"
+#include "app_state.hpp"
 #include "preset_manager.hpp"
 #include "hue_shift.hpp"
 #include "crt_shader.hpp"
@@ -46,95 +47,6 @@ extern "C" void trigger_menu_render_tick() {
 }
 
 // TerminalWindow struct contains all state properties for a single tab/window
-struct TerminalWindow {
-    SDL_Window* window = nullptr;
-    SDL_Renderer* renderer = nullptr;
-    FontManager font_manager;
-    TerminalGrid terminal;
-    PTYBridge pty;
-    ANSIParser parser;
-    VideoEngine video_engine;
-    std::mutex grid_mutex;
-    std::atomic<bool> demo_running{false};
-    std::atomic<bool> demo_skip_requested{false};
-    std::atomic<bool> demo_abort{false};
-    std::thread demo_thread;
-
-    bool has_video = false;
-    float exposure = 0.7f;
-    float hue_shift_degrees = 0.0f;
-    HueShiftEffect hue_shift;
-    CrtShaderEffect crt_shader;
-    bool animated_typing = true;
-    std::vector<char> animation_buffer;
-    Uint64 last_output_chunk_time = 0;
-    int rapid_chunk_streak = 0;
-    float scroll_accumulator = 0.0f;
-    float scroll_velocity = 0.0f;
-    Uint64 last_wheel_time = 0;
-
-    // Dissolve state
-    enum FadeState { FADE_HOLD_BLACK, FADE_OUT, FADE_DONE };
-    FadeState fade_state = FADE_HOLD_BLACK;
-    float fade_opacity = 1.0f;
-
-    // Feature states
-    bool search_drawer_open = false;
-    std::string search_input_text;
-    bool crt_mode_enabled = false;
-    bool vibrancy_enabled = true;
-    bool hdr_console_enabled = false;
-
-    float cell_w = 0.0f;
-    float cell_h = 0.0f;
-    int mouse_down_col = -1;
-    int mouse_down_row = -1;
-
-    // Last cell sent as a mouse motion report; motion inside one cell is
-    // pixel-level noise the app never wants repeated
-    int last_mouse_report_col = -1;
-    int last_mouse_report_row = -1;
-
-    // Fractional wheel ticks carried between events while translating
-    // alt-screen scrolling into arrow keys (trackpads emit tiny deltas)
-    float alt_scroll_accum = 0.0f;
-
-    // Debounces the (expensive: PTY SIGWINCH + full grid reflow) resize
-    // work so a burst of resize events -- a fast native window-zoom
-    // animation firing dozens of intermediate frames in ~200ms is the worst
-    // case, but a manual edge-drag does this too -- doesn't apply a reflow
-    // per intermediate frame (which was visibly corrupting the shell's
-    // prompt redraw). Only the latest pending size is kept; it's applied
-    // once no new resize event has arrived for a short quiet period.
-    bool has_pending_resize = false;
-    int pending_cols = 0;
-    int pending_rows = 0;
-    Uint64 last_resize_event_time = 0;
-};
-
-// AppState holds the application global coordinates and window pointers
-struct AppState {
-    std::vector<TerminalWindow*> windows;
-    TerminalWindow* active_window = nullptr;
-    SettingsUI settings_ui;
-
-    std::string video_path;
-    std::string font_path;
-    std::string active_preset_name = "pool";
-    float padding = 2.0f;
-    float base_font_size = 15.0f;
-    float display_scale = 1.0f;
-    Uint64 last_tick = 0;
-    bool input_broadcasting = false;
-    float exposure = 0.7f;
-    float hue_shift = 0.0f;
-    bool animated_typing = true;
-    bool vibrancy_enabled = true;
-    bool crt_mode_enabled = false;
-    bool ligatures_enabled = true;
-    bool hdr_console_enabled = false;
-    int scrollback_lines = 10000;
-};
 
 static std::string resolve_default_video_path() {
     std::string default_video = "sinkpool.mp4";
@@ -303,8 +215,10 @@ static void load_config(AppState* state) {
         tw->animated_typing = state->animated_typing;
         tw->vibrancy_enabled = state->vibrancy_enabled;
         tw->crt_mode_enabled = state->crt_mode_enabled;
-        tw->terminal.set_enable_ligatures(state->ligatures_enabled);
-        tw->terminal.set_max_scrollback(static_cast<size_t>(state->scrollback_lines));
+        for (Pane* pane : all_panes(tw)) {
+            pane->terminal.set_enable_ligatures(state->ligatures_enabled);
+            pane->terminal.set_max_scrollback(static_cast<size_t>(state->scrollback_lines));
+        }
         tw->hdr_console_enabled = state->hdr_console_enabled;
     }
 }
@@ -319,6 +233,11 @@ static void load_config(AppState* state) {
 // from AppState as before.
 static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* parent_tab_window, const Preset* preset_override = nullptr) {
     TerminalWindow* tw = new TerminalWindow();
+
+    // Every window starts as a single-pane split tree
+    tw->root = std::make_unique<PaneNode>();
+    tw->root->pane = std::make_unique<Pane>();
+    tw->focused = tw->root->pane.get();
 
     std::string video_path = state->video_path;
     std::string typeface_path = state->font_path;
@@ -361,8 +280,8 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     tw->vibrancy_enabled = vibrancy_enabled;
     tw->crt_mode_enabled = crt_mode_enabled;
     tw->hdr_console_enabled = hdr_console_enabled;
-    tw->terminal.set_enable_ligatures(ligatures_enabled);
-    tw->terminal.set_max_scrollback(static_cast<size_t>(scrollback_lines));
+    tw->fpane().terminal.set_enable_ligatures(ligatures_enabled);
+    tw->fpane().terminal.set_max_scrollback(static_cast<size_t>(scrollback_lines));
 
     // Create Renderer. "gpu" backend (not the default per-platform driver)
     // so the video/hue-shift/CRT effects can plug custom shaders into this
@@ -438,11 +357,11 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     int cols = std::max(40, static_cast<int>((win_w - 2 * state->padding) / tw->cell_w));
     int rows = std::max(10, static_cast<int>((win_h - 2 * state->padding - top_offset_pts) / tw->cell_h));
 
-    tw->terminal.resize(cols, rows);
-    tw->terminal.clear_screen();
+    tw->fpane().terminal.resize(cols, rows);
+    tw->fpane().terminal.clear_screen();
 
     // Start Pseudo-Terminal process connection
-    if (!tw->pty.spawn(cols, rows)) {
+    if (!tw->fpane().pty.spawn(cols, rows)) {
         std::cerr << "Failed to initialize PTY shell context" << std::endl;
     }
 
@@ -460,14 +379,20 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     tw->exposure = exposure;
     tw->fade_state = TerminalWindow::FADE_HOLD_BLACK;
     tw->fade_opacity = 1.0f;
-    tw->scroll_accumulator = 0.0f;
-    tw->scroll_velocity = 0.0f;
-    tw->last_wheel_time = 0;
+    tw->fpane().scroll_accumulator = 0.0f;
+    tw->fpane().scroll_velocity = 0.0f;
+    tw->fpane().last_wheel_time = 0;
 
     // Attach as tab if a parent window is present
     if (parent_tab_window) {
         add_window_as_tab(parent_tab_window, tw->window);
     }
+
+    // Assign the root pane its content rect (single pane = whole content
+    // area); later splits re-run the layout
+    tw->fpane().rect = { 0.0f, top_offset_pts,
+                         static_cast<float>(win_w),
+                         static_cast<float>(win_h) - top_offset_pts };
 
     return tw;
 }
@@ -476,14 +401,16 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
 static void destroy_terminal_window(TerminalWindow* tw) {
     if (!tw) return;
     // Any running sinkdemo/sinksing thread still holds tw and touches
-    // tw->terminal/tw->pty/tw->grid_mutex on its own schedule. Signal it to
+    // tw->fpane().terminal/tw->fpane().pty/tw->fpane().grid_mutex on its own schedule. Signal it to
     // unwind and join before freeing tw, otherwise it dereferences freed
     // memory on its next iteration.
     SinkDemo::request_abort(tw);
     if (tw->demo_thread.joinable()) {
         tw->demo_thread.join();
     }
-    tw->pty.shutdown();
+    for (Pane* pane : all_panes(tw)) {
+        pane->pty.shutdown();
+    }
     tw->video_engine.stop();
     tw->video_engine.close_video();
     tw->hue_shift.cleanup(); // must run before destroying the renderer it was created against
@@ -495,6 +422,195 @@ static void destroy_terminal_window(TerminalWindow* tw) {
         SDL_DestroyWindow(tw->window);
     }
     delete tw;
+}
+
+// ---- Split-pane management -------------------------------------------------
+
+static constexpr float kPaneGutterPts = 1.0f; // divider line thickness
+
+// Recursively assigns pane rects for `node` within `rect` (window points)
+// and applies the resulting grid/PTY geometry to each leaf.
+static void layout_pane_node(AppState* state, TerminalWindow* tw, PaneNode* node, SDL_FRect rect) {
+    if (node->is_leaf()) {
+        Pane* pane = node->pane.get();
+        pane->rect = rect;
+        int cols = std::max(20, static_cast<int>((rect.w - 2 * state->padding) / tw->cell_w));
+        int rows = std::max(5, static_cast<int>((rect.h - 2 * state->padding) / tw->cell_h));
+        if (cols != pane->terminal.get_cols() || rows != pane->terminal.get_rows()) {
+            std::lock_guard<std::mutex> lock(pane->grid_mutex);
+            pane->terminal.resize(cols, rows);
+            pane->pty.resize_pty(cols, rows);
+        }
+        return;
+    }
+    if (node->vertical) {
+        float aw = std::floor((rect.w - kPaneGutterPts) * node->ratio);
+        layout_pane_node(state, tw, node->a.get(), { rect.x, rect.y, aw, rect.h });
+        layout_pane_node(state, tw, node->b.get(),
+                         { rect.x + aw + kPaneGutterPts, rect.y,
+                           rect.w - aw - kPaneGutterPts, rect.h });
+    } else {
+        float ah = std::floor((rect.h - kPaneGutterPts) * node->ratio);
+        layout_pane_node(state, tw, node->a.get(), { rect.x, rect.y, rect.w, ah });
+        layout_pane_node(state, tw, node->b.get(),
+                         { rect.x, rect.y + ah + kPaneGutterPts,
+                           rect.w, rect.h - ah - kPaneGutterPts });
+    }
+}
+
+static void layout_panes(AppState* state, TerminalWindow* tw) {
+    int w = 0, h = 0;
+    SDL_GetWindowSize(tw->window, &w, &h);
+    float top = tw->vibrancy_enabled ? 32.0f : 34.0f;
+    layout_pane_node(state, tw, tw->root.get(),
+                     { 0.0f, top, static_cast<float>(w), static_cast<float>(h) - top });
+}
+
+static Pane* pane_at(TerminalWindow* tw, float x, float y) {
+    for (Pane* pane : all_panes(tw)) {
+        if (x >= pane->rect.x && x < pane->rect.x + pane->rect.w &&
+            y >= pane->rect.y && y < pane->rect.y + pane->rect.h) {
+            return pane;
+        }
+    }
+    return tw->focused;
+}
+
+static PaneNode* find_leaf(PaneNode* node, Pane* pane) {
+    if (!node) return nullptr;
+    if (node->is_leaf()) return node->pane.get() == pane ? node : nullptr;
+    if (PaneNode* found = find_leaf(node->a.get(), pane)) return found;
+    return find_leaf(node->b.get(), pane);
+}
+
+static PaneNode* find_parent(PaneNode* node, PaneNode* child) {
+    if (!node || node->is_leaf()) return nullptr;
+    if (node->a.get() == child || node->b.get() == child) return node;
+    if (PaneNode* found = find_parent(node->a.get(), child)) return found;
+    return find_parent(node->b.get(), child);
+}
+
+// Splits the focused pane in two; the new pane spawns its own shell and
+// takes focus (matching iTerm2/Ghostty).
+static void split_focused_pane(AppState* state, TerminalWindow* tw, bool vertical) {
+    PaneNode* leaf = find_leaf(tw->root.get(), tw->focused);
+    if (!leaf) return;
+
+    auto new_pane = std::make_unique<Pane>();
+    new_pane->terminal.set_enable_ligatures(state->ligatures_enabled);
+    new_pane->terminal.set_max_scrollback(static_cast<size_t>(state->scrollback_lines));
+
+    // Seed the new grid/PTY at roughly half the old pane; layout_panes
+    // recomputes the exact geometry right after
+    int cols = std::max(20, vertical ? leaf->pane->terminal.get_cols() / 2
+                                     : leaf->pane->terminal.get_cols());
+    int rows = std::max(5, vertical ? leaf->pane->terminal.get_rows()
+                                    : leaf->pane->terminal.get_rows() / 2);
+    new_pane->terminal.resize(cols, rows);
+    new_pane->terminal.clear_screen();
+    if (!new_pane->pty.spawn(cols, rows)) {
+        std::cerr << "split: failed to spawn PTY for new pane" << std::endl;
+        return;
+    }
+
+    leaf->a = std::make_unique<PaneNode>();
+    leaf->a->pane = std::move(leaf->pane);
+    leaf->b = std::make_unique<PaneNode>();
+    leaf->b->pane = std::move(new_pane);
+    leaf->vertical = vertical;
+    leaf->ratio = 0.5f;
+
+    tw->focused = leaf->b->pane.get();
+    layout_panes(state, tw);
+}
+
+// Closes the focused pane, promoting its sibling subtree. Returns false if
+// this is the window's last pane (caller should close the window instead).
+static bool close_focused_pane(AppState* state, TerminalWindow* tw) {
+    if (tw->root->is_leaf()) return false;
+
+    PaneNode* leaf = find_leaf(tw->root.get(), tw->focused);
+    if (!leaf) return false;
+    PaneNode* parent = find_parent(tw->root.get(), leaf);
+    if (!parent) return false;
+
+    // A demo streaming into this pane holds pointers into it; unwind first
+    if (tw->demo_pane == tw->focused && tw->demo_running.load()) {
+        SinkDemo::request_abort(tw);
+        if (tw->demo_thread.joinable()) tw->demo_thread.join();
+        tw->demo_abort.store(false); // abort is sticky per-launch, not per-window
+    }
+    if (tw->demo_pane == tw->focused) tw->demo_pane = nullptr;
+
+    tw->focused->pty.shutdown();
+
+    // Promote the sibling subtree into the parent slot
+    std::unique_ptr<PaneNode> sibling =
+        (parent->a.get() == leaf) ? std::move(parent->b) : std::move(parent->a);
+    parent->pane = std::move(sibling->pane);
+    parent->vertical = sibling->vertical;
+    parent->ratio = sibling->ratio;
+    parent->a = std::move(sibling->a);
+    parent->b = std::move(sibling->b);
+
+    std::vector<Pane*> remaining = all_panes(tw);
+    tw->focused = remaining.empty() ? nullptr : remaining.front();
+    layout_panes(state, tw);
+    return true;
+}
+
+// Directional focus move: nearest pane center strictly in the requested
+// direction from the focused pane's center.
+static void focus_pane_directional(TerminalWindow* tw, int dx, int dy) {
+    Pane* from = tw->focused;
+    float fcx = from->rect.x + from->rect.w / 2.0f;
+    float fcy = from->rect.y + from->rect.h / 2.0f;
+    Pane* best = nullptr;
+    float best_dist = 0.0f;
+    for (Pane* pane : all_panes(tw)) {
+        if (pane == from) continue;
+        float cx = pane->rect.x + pane->rect.w / 2.0f;
+        float cy = pane->rect.y + pane->rect.h / 2.0f;
+        if ((dx < 0 && cx >= fcx) || (dx > 0 && cx <= fcx) ||
+            (dy < 0 && cy >= fcy) || (dy > 0 && cy <= fcy)) {
+            continue;
+        }
+        float dist = (cx - fcx) * (cx - fcx) + (cy - fcy) * (cy - fcy);
+        if (!best || dist < best_dist) {
+            best = pane;
+            best_dist = dist;
+        }
+    }
+    if (best) tw->focused = best;
+}
+
+// Draws divider lines in the gutters between panes (in pixels).
+static void render_pane_dividers(TerminalWindow* tw, PaneNode* node, float scale) {
+    if (!node || node->is_leaf()) return;
+    // The gutter sits between child a's far edge and child b's near edge;
+    // derive it from the first pane of each subtree along the split axis.
+    std::vector<Pane*> a_panes, b_panes;
+    collect_panes(node->a.get(), a_panes);
+    collect_panes(node->b.get(), b_panes);
+    if (!a_panes.empty() && !b_panes.empty()) {
+        SDL_FRect gutter;
+        if (node->vertical) {
+            float gx = b_panes.front()->rect.x - kPaneGutterPts;
+            gutter = { gx, a_panes.front()->rect.y, kPaneGutterPts,
+                       a_panes.front()->rect.h };
+        } else {
+            float gy = b_panes.front()->rect.y - kPaneGutterPts;
+            gutter = { a_panes.front()->rect.x, gy,
+                       a_panes.front()->rect.w, kPaneGutterPts };
+        }
+        SDL_FRect px = { gutter.x * scale, gutter.y * scale,
+                         gutter.w * scale, gutter.h * scale };
+        SDL_SetRenderDrawBlendMode(tw->renderer, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(tw->renderer, 255, 255, 255, 48);
+        SDL_RenderFillRect(tw->renderer, &px);
+    }
+    render_pane_dividers(tw, node->a.get(), scale);
+    render_pane_dividers(tw, node->b.get(), scale);
 }
 
 // Tears down `tw`'s renderer and everything built against it (font glyph
@@ -605,12 +721,7 @@ static void apply_preset_to_state_and_windows(AppState* state, const Preset& p) 
             tw->cell_w = (tw->font_manager.get_cell_width() / state->display_scale) + 1.0f;
             tw->cell_h = (tw->font_manager.get_cell_height() / state->display_scale) - 0.8f;
 
-            int w, h;
-            SDL_GetWindowSize(tw->window, &w, &h);
-            int new_cols = std::max(40, static_cast<int>((w - 2 * state->padding) / tw->cell_w));
-            int new_rows = std::max(10, static_cast<int>((h - 2 * state->padding) / tw->cell_h));
-            tw->terminal.resize(new_cols, new_rows);
-            tw->pty.resize_pty(new_cols, new_rows);
+            layout_panes(state, tw);
         }
 
         tw->exposure = state->exposure;
@@ -618,8 +729,10 @@ static void apply_preset_to_state_and_windows(AppState* state, const Preset& p) 
         tw->animated_typing = state->animated_typing;
         tw->vibrancy_enabled = state->vibrancy_enabled;
         tw->crt_mode_enabled = state->crt_mode_enabled;
-        tw->terminal.set_enable_ligatures(state->ligatures_enabled);
-        tw->terminal.set_max_scrollback(static_cast<size_t>(state->scrollback_lines));
+        for (Pane* pane : all_panes(tw)) {
+            pane->terminal.set_enable_ligatures(state->ligatures_enabled);
+            pane->terminal.set_max_scrollback(static_cast<size_t>(state->scrollback_lines));
+        }
         if (tw->hdr_console_enabled != state->hdr_console_enabled) {
             tw->hdr_console_enabled = state->hdr_console_enabled;
             // This window's renderer colorspace no longer matches the
@@ -700,14 +813,14 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
 }
 
 static bool delete_selection_in_prompt(TerminalWindow* tw) {
-    if (!tw || tw->terminal.is_alt_screen_active() || !tw->terminal.has_selection()) {
+    if (!tw || tw->fpane().terminal.is_alt_screen_active() || !tw->fpane().terminal.has_selection()) {
         return false;
     }
-    int cols = tw->terminal.get_cols();
-    int r0 = tw->terminal.get_select_start_row();
-    int r1 = tw->terminal.get_select_end_row();
-    int c0 = tw->terminal.get_select_start_col();
-    int c1 = tw->terminal.get_select_end_col();
+    int cols = tw->fpane().terminal.get_cols();
+    int r0 = tw->fpane().terminal.get_select_start_row();
+    int r1 = tw->fpane().terminal.get_select_end_row();
+    int c0 = tw->fpane().terminal.get_select_start_col();
+    int c1 = tw->fpane().terminal.get_select_end_col();
 
     int start_r, start_c, end_r, end_c;
     if ((r0 < r1) || (r0 == r1 && c0 <= c1)) {
@@ -718,12 +831,12 @@ static bool delete_selection_in_prompt(TerminalWindow* tw) {
         end_r = r0; end_c = c0;
     }
 
-    int total_history = static_cast<int>(tw->terminal.get_scrollback_size());
-    int cursor_row_active = tw->terminal.get_cursor_row();
+    int total_history = static_cast<int>(tw->fpane().terminal.get_scrollback_size());
+    int cursor_row_active = tw->fpane().terminal.get_cursor_row();
     int cursor_row_grid = cursor_row_active + total_history;
-    int cursor_col = tw->terminal.get_cursor_col();
-    int prompt_boundary = tw->terminal.get_prompt_boundary();
-    const auto& row_wrapped = tw->terminal.get_row_wrapped();
+    int cursor_col = tw->fpane().terminal.get_cursor_col();
+    int prompt_boundary = tw->fpane().terminal.get_prompt_boundary();
+    const auto& row_wrapped = tw->fpane().terminal.get_row_wrapped();
 
     // Trace prompt start row in grid coordinates
     int p_start_row_active = cursor_row_active;
@@ -734,7 +847,7 @@ static bool delete_selection_in_prompt(TerminalWindow* tw) {
 
     // Trace prompt end row in grid coordinates
     int p_end_row_active = cursor_row_active;
-    while (p_end_row_active < tw->terminal.get_rows() - 1 && p_end_row_active < static_cast<int>(row_wrapped.size()) && row_wrapped[p_end_row_active]) {
+    while (p_end_row_active < tw->fpane().terminal.get_rows() - 1 && p_end_row_active < static_cast<int>(row_wrapped.size()) && row_wrapped[p_end_row_active]) {
         p_end_row_active++;
     }
     int p_end_row_grid = p_end_row_active + total_history;
@@ -783,22 +896,22 @@ static bool delete_selection_in_prompt(TerminalWindow* tw) {
             }
         }
 
-        tw->pty.write_to_pty(payload.data(), payload.size());
-        tw->terminal.clear_selection();
+        tw->fpane().pty.write_to_pty(payload.data(), payload.size());
+        tw->fpane().terminal.clear_selection();
         return true;
     }
     return false;
 }
 
 static void perform_cut_action(TerminalWindow* tw) {
-    if (!tw || !tw->terminal.has_selection()) return;
-    std::string selected_text = tw->terminal.get_selected_text();
+    if (!tw || !tw->fpane().terminal.has_selection()) return;
+    std::string selected_text = tw->fpane().terminal.get_selected_text();
     if (!selected_text.empty()) {
         SDL_SetClipboardText(selected_text.c_str());
     }
     bool handled = delete_selection_in_prompt(tw);
     if (!handled) {
-        tw->terminal.clear_selection();
+        tw->fpane().terminal.clear_selection();
     }
 }
 
@@ -874,6 +987,16 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         }
     }
 
+    // Clicking anywhere inside a pane focuses it before any further mouse
+    // routing (reports, selection) resolves against the focused pane
+    if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+        event->button.windowID == SDL_GetWindowID(target_tw->window)) {
+        float top_pts = target_tw->vibrancy_enabled ? 32.0f : 34.0f;
+        if (event->button.y >= top_pts) {
+            target_tw->focused = pane_at(target_tw, event->button.x, event->button.y);
+        }
+    }
+
     // ---- Mouse reporting (DECSET 9/1000/1002/1003, SGR 1006 encoding) ----
     // When the running app has requested mouse events (vim, htop, tmux, ...),
     // clicks, drags and wheel ticks inside the grid are encoded and written
@@ -881,7 +1004,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
     // bypasses reporting so native selection/clipboard stay reachable, the
     // same escape hatch xterm and every GPU terminal provide.
     {
-        int mouse_mode = target_tw->terminal.get_mouse_mode();
+        int mouse_mode = target_tw->fpane().terminal.get_mouse_mode();
         bool is_mouse_event = event->type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
                               event->type == SDL_EVENT_MOUSE_BUTTON_UP ||
                               event->type == SDL_EVENT_MOUSE_MOTION ||
@@ -892,15 +1015,16 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
 
             float top_offset_pts = target_tw->vibrancy_enabled ? 32.0f : 34.0f;
             auto cell_of = [&](float mx, float my, int& col, int& row) {
-                col = std::clamp(static_cast<int>((mx - state->padding) / target_tw->cell_w),
-                                 0, target_tw->terminal.get_cols() - 1);
-                row = std::clamp(static_cast<int>((my - (state->padding + top_offset_pts)) / target_tw->cell_h),
-                                 0, target_tw->terminal.get_rows() - 1);
+                const SDL_FRect& pr = target_tw->fpane().rect;
+                col = std::clamp(static_cast<int>((mx - pr.x - state->padding) / target_tw->cell_w),
+                                 0, target_tw->fpane().terminal.get_cols() - 1);
+                row = std::clamp(static_cast<int>((my - pr.y - state->padding) / target_tw->cell_h),
+                                 0, target_tw->fpane().terminal.get_rows() - 1);
             };
             auto send_report = [&](int button_code, int col, int row, bool release) {
                 char buf[40];
                 int len;
-                if (target_tw->terminal.is_mouse_sgr()) {
+                if (target_tw->fpane().terminal.is_mouse_sgr()) {
                     len = std::snprintf(buf, sizeof(buf), "\x1b[<%d;%d;%d%c",
                                         button_code, col + 1, row + 1, release ? 'm' : 'M');
                 } else {
@@ -911,7 +1035,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                                         static_cast<char>(32 + std::min(col + 1, 223)),
                                         static_cast<char>(32 + std::min(row + 1, 223)));
                 }
-                if (len > 0) target_tw->pty.write_to_pty(buf, static_cast<size_t>(len));
+                if (len > 0) target_tw->fpane().pty.write_to_pty(buf, static_cast<size_t>(len));
             };
             SDL_Keymod mods = SDL_GetModState();
             // X10 mode (9) is press-only and predates modifier reporting
@@ -927,8 +1051,8 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                     int col, row;
                     cell_of(event->button.x, event->button.y, col, row);
                     send_report(sdl_button_code(event->button.button) + mod_bits, col, row, false);
-                    target_tw->last_mouse_report_col = col;
-                    target_tw->last_mouse_report_row = row;
+                    target_tw->fpane().last_mouse_report_col = col;
+                    target_tw->fpane().last_mouse_report_row = row;
                     return SDL_APP_CONTINUE;
                 }
             } else if (event->type == SDL_EVENT_MOUSE_BUTTON_UP &&
@@ -947,15 +1071,15 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 if (report_motion && event->motion.y >= top_offset_pts) {
                     int col, row;
                     cell_of(event->motion.x, event->motion.y, col, row);
-                    if (col != target_tw->last_mouse_report_col ||
-                        row != target_tw->last_mouse_report_row) {
+                    if (col != target_tw->fpane().last_mouse_report_col ||
+                        row != target_tw->fpane().last_mouse_report_row) {
                         int base = 3; // "no button" for pure hover in 1003
                         if (held & SDL_BUTTON_LMASK)      base = 0;
                         else if (held & SDL_BUTTON_MMASK) base = 1;
                         else if (held & SDL_BUTTON_RMASK) base = 2;
                         send_report(base + 32 + mod_bits, col, row, false);
-                        target_tw->last_mouse_report_col = col;
-                        target_tw->last_mouse_report_row = row;
+                        target_tw->fpane().last_mouse_report_col = col;
+                        target_tw->fpane().last_mouse_report_row = row;
                     }
                 }
                 // Motion never falls through to native drag-selection while
@@ -984,22 +1108,22 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
     // (Scrollback is invisible on the alt screen anyway; inertial-scrolling
     // it would just drag stale shell history over the app's UI.)
     if (event->type == SDL_EVENT_MOUSE_WHEEL &&
-        target_tw->terminal.is_alt_screen_active() &&
-        target_tw->terminal.get_mouse_mode() == 0 &&
-        target_tw->terminal.is_alternate_scroll() &&
+        target_tw->fpane().terminal.is_alt_screen_active() &&
+        target_tw->fpane().terminal.get_mouse_mode() == 0 &&
+        target_tw->fpane().terminal.is_alternate_scroll() &&
         event->wheel.windowID == SDL_GetWindowID(target_tw->window) &&
         !(state->settings_ui.is_open() && SDL_GetKeyboardFocus() == state->settings_ui.get_window())) {
         float wy = -event->wheel.y;
         if (event->wheel.direction == SDL_MOUSEWHEEL_FLIPPED) wy = -wy;
-        target_tw->alt_scroll_accum += wy * 3.0f; // ~3 lines per wheel notch
-        int lines = static_cast<int>(target_tw->alt_scroll_accum);
+        target_tw->fpane().alt_scroll_accum += wy * 3.0f; // ~3 lines per wheel notch
+        int lines = static_cast<int>(target_tw->fpane().alt_scroll_accum);
         if (lines != 0) {
-            target_tw->alt_scroll_accum -= static_cast<float>(lines);
-            bool app_keys = target_tw->terminal.is_app_cursor_keys();
+            target_tw->fpane().alt_scroll_accum -= static_cast<float>(lines);
+            bool app_keys = target_tw->fpane().terminal.is_app_cursor_keys();
             const char* seq = (lines > 0) ? (app_keys ? "\x1bOA" : "\x1b[A")
                                           : (app_keys ? "\x1bOB" : "\x1b[B");
             for (int n = std::abs(lines); n > 0; --n) {
-                target_tw->pty.write_to_pty(seq, 3);
+                target_tw->fpane().pty.write_to_pty(seq, 3);
             }
         }
         return SDL_APP_CONTINUE;
@@ -1015,11 +1139,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         }
         
         Uint64 now = SDL_GetTicks();
-        float delta_sec = (target_tw->last_wheel_time > 0) ? static_cast<float>(now - target_tw->last_wheel_time) / 1000.0f : 0.1f;
-        target_tw->last_wheel_time = now;
+        float delta_sec = (target_tw->fpane().last_wheel_time > 0) ? static_cast<float>(now - target_tw->fpane().last_wheel_time) / 1000.0f : 0.1f;
+        target_tw->fpane().last_wheel_time = now;
         
-        if ((wheel_y > 0.0f && target_tw->scroll_velocity < 0.0f) || (wheel_y < 0.0f && target_tw->scroll_velocity > 0.0f)) {
-            target_tw->scroll_velocity = 0.0f;
+        if ((wheel_y > 0.0f && target_tw->fpane().scroll_velocity < 0.0f) || (wheel_y < 0.0f && target_tw->fpane().scroll_velocity > 0.0f)) {
+            target_tw->fpane().scroll_velocity = 0.0f;
         }
         
         float target_v = 0.0f;
@@ -1029,11 +1153,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             target_v = wheel_y * 10.0f;
         }
         
-        target_tw->scroll_velocity = target_tw->scroll_velocity * 0.2f + target_v * 0.8f;
-        target_tw->scroll_accumulator += wheel_y * 0.3f;
+        target_tw->fpane().scroll_velocity = target_tw->fpane().scroll_velocity * 0.2f + target_v * 0.8f;
+        target_tw->fpane().scroll_accumulator += wheel_y * 0.3f;
     } else if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
         if (event->button.windowID == SDL_GetWindowID(target_tw->window)) {
-            target_tw->scroll_velocity = 0.0f;
+            target_tw->fpane().scroll_velocity = 0.0f;
             if (event->button.button == SDL_BUTTON_LEFT) {
                 float mx = event->button.x;
                 float my = event->button.y;
@@ -1056,25 +1180,25 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                     return SDL_APP_CONTINUE;
                 }
 
-                int col = static_cast<int>((mx - state->padding) / target_tw->cell_w);
-                int row = static_cast<int>((my - (state->padding + top_offset_pts)) / target_tw->cell_h);
+                int col = static_cast<int>((mx - target_tw->fpane().rect.x - state->padding) / target_tw->cell_w);
+                int row = static_cast<int>((my - target_tw->fpane().rect.y - state->padding) / target_tw->cell_h);
 
                 int clicks = event->button.clicks;
                 if (clicks == 1) {
-                    target_tw->mouse_down_col = col;
-                    target_tw->mouse_down_row = row;
-                    target_tw->terminal.start_selection(col, row);
+                    target_tw->fpane().mouse_down_col = col;
+                    target_tw->fpane().mouse_down_row = row;
+                    target_tw->fpane().terminal.start_selection(col, row);
                 } else if (clicks == 2) {
                     // Double click: select word
-                    target_tw->terminal.select_word_at(col, row);
-                    std::string selected_text = target_tw->terminal.get_selected_text();
+                    target_tw->fpane().terminal.select_word_at(col, row);
+                    std::string selected_text = target_tw->fpane().terminal.get_selected_text();
                     if (!selected_text.empty()) {
                         SDL_SetClipboardText(selected_text.c_str());
                     }
                 } else if (clicks == 3) {
                     // Triple click: select line
-                    target_tw->terminal.select_line_at(row);
-                    std::string selected_text = target_tw->terminal.get_selected_text();
+                    target_tw->fpane().terminal.select_line_at(row);
+                    std::string selected_text = target_tw->fpane().terminal.get_selected_text();
                     if (!selected_text.empty()) {
                         SDL_SetClipboardText(selected_text.c_str());
                     }
@@ -1087,11 +1211,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             float my = event->motion.y;
             float top_offset_pts = target_tw->vibrancy_enabled ? 32.0f : 34.0f;
             
-            int col = static_cast<int>((mx - state->padding) / target_tw->cell_w);
-            int row = static_cast<int>((my - (state->padding + top_offset_pts)) / target_tw->cell_h);
+            int col = static_cast<int>((mx - target_tw->fpane().rect.x - state->padding) / target_tw->cell_w);
+            int row = static_cast<int>((my - target_tw->fpane().rect.y - state->padding) / target_tw->cell_h);
             
-            if (target_tw->terminal.is_selecting()) {
-                target_tw->terminal.update_selection(col, row);
+            if (target_tw->fpane().terminal.is_selecting()) {
+                target_tw->fpane().terminal.update_selection(col, row);
             }
         }
     } else if (event->type == SDL_EVENT_MOUSE_BUTTON_UP) {
@@ -1101,17 +1225,17 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 float my = event->button.y;
                 float top_offset_pts = target_tw->vibrancy_enabled ? 32.0f : 34.0f;
                 
-                int col = static_cast<int>((mx - state->padding) / target_tw->cell_w);
-                int row = static_cast<int>((my - (state->padding + top_offset_pts)) / target_tw->cell_h);
+                int col = static_cast<int>((mx - target_tw->fpane().rect.x - state->padding) / target_tw->cell_w);
+                int row = static_cast<int>((my - target_tw->fpane().rect.y - state->padding) / target_tw->cell_h);
                 
                 int clicks = event->button.clicks;
-                if (clicks == 1 && col == target_tw->mouse_down_col && row == target_tw->mouse_down_row) {
+                if (clicks == 1 && col == target_tw->fpane().mouse_down_col && row == target_tw->fpane().mouse_down_row) {
                     // Snapping cursor on mouse release
-                    if (!target_tw->terminal.is_alt_screen_active()) {
-                        int cols = target_tw->terminal.get_cols();
-                        int cursor_row = target_tw->terminal.get_cursor_row();
-                        int cursor_col = target_tw->terminal.get_cursor_col();
-                        const auto& row_wrapped = target_tw->terminal.get_row_wrapped();
+                    if (!target_tw->fpane().terminal.is_alt_screen_active()) {
+                        int cols = target_tw->fpane().terminal.get_cols();
+                        int cursor_row = target_tw->fpane().terminal.get_cursor_row();
+                        int cursor_col = target_tw->fpane().terminal.get_cursor_col();
+                        const auto& row_wrapped = target_tw->fpane().terminal.get_row_wrapped();
 
                         int p_start_row = cursor_row;
                         while (p_start_row > 0 && (p_start_row - 1) < static_cast<int>(row_wrapped.size()) && row_wrapped[p_start_row - 1]) {
@@ -1119,16 +1243,16 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                         }
 
                         int p_end_row = cursor_row;
-                        while (p_end_row < target_tw->terminal.get_rows() - 1 && p_end_row < static_cast<int>(row_wrapped.size()) && row_wrapped[p_end_row]) {
+                        while (p_end_row < target_tw->fpane().terminal.get_rows() - 1 && p_end_row < static_cast<int>(row_wrapped.size()) && row_wrapped[p_end_row]) {
                             p_end_row++;
                         }
 
-                        if (target_tw->terminal.get_prompt_boundary() == -1) {
-                            target_tw->terminal.set_prompt_boundary(cursor_col);
+                        if (target_tw->fpane().terminal.get_prompt_boundary() == -1) {
+                            target_tw->fpane().terminal.set_prompt_boundary(cursor_col);
                         }
 
                         if (row >= p_start_row && row <= p_end_row) {
-                            int prompt_boundary = target_tw->terminal.get_prompt_boundary();
+                            int prompt_boundary = target_tw->fpane().terminal.get_prompt_boundary();
                             if (!(row == p_start_row && prompt_boundary != -1 && col < prompt_boundary)) {
                                 int cursor_idx = (cursor_row - p_start_row) * cols + cursor_col;
                                 int click_idx = (row - p_start_row) * cols + col;
@@ -1145,14 +1269,14 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                                     }
                                 }
                                 if (!move_payload.empty()) {
-                                    target_tw->pty.write_to_pty(move_payload.data(), move_payload.size());
+                                    target_tw->fpane().pty.write_to_pty(move_payload.data(), move_payload.size());
                                 }
-                                target_tw->terminal.clear_selection();
+                                target_tw->fpane().terminal.clear_selection();
                             }
                         }
                     }
                 }
-                target_tw->terminal.end_selection();
+                target_tw->fpane().terminal.end_selection();
             }
         }
     } else if (event->type == SDL_EVENT_TEXT_INPUT) {
@@ -1161,23 +1285,23 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         }
         if (target_tw && target_tw->search_drawer_open) {
             target_tw->search_input_text += event->text.text;
-            target_tw->terminal.set_search_query(target_tw->search_input_text);
+            target_tw->fpane().terminal.set_search_query(target_tw->search_input_text);
             return SDL_APP_CONTINUE;
         }
         if (state->input_broadcasting) {
             for (auto* tw : state->windows) {
-                tw->terminal.clear_selection();
-                tw->terminal.reset_scroll();
-                tw->scroll_velocity = 0.0f;
-                tw->scroll_accumulator = 0.0f;
-                tw->pty.write_to_pty(event->text.text, std::strlen(event->text.text));
+                tw->fpane().terminal.clear_selection();
+                tw->fpane().terminal.reset_scroll();
+                tw->fpane().scroll_velocity = 0.0f;
+                tw->fpane().scroll_accumulator = 0.0f;
+                tw->fpane().pty.write_to_pty(event->text.text, std::strlen(event->text.text));
             }
         } else {
-            target_tw->terminal.clear_selection();
-            target_tw->terminal.reset_scroll();
-            target_tw->scroll_velocity = 0.0f;
-            target_tw->scroll_accumulator = 0.0f;
-            target_tw->pty.write_to_pty(event->text.text, std::strlen(event->text.text));
+            target_tw->fpane().terminal.clear_selection();
+            target_tw->fpane().terminal.reset_scroll();
+            target_tw->fpane().scroll_velocity = 0.0f;
+            target_tw->fpane().scroll_accumulator = 0.0f;
+            target_tw->fpane().pty.write_to_pty(event->text.text, std::strlen(event->text.text));
         }
     } else if (event->type == SDL_EVENT_KEY_DOWN) {
         SDL_Keycode sym = event->key.key;
@@ -1186,9 +1310,9 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         // Cmd+F search bar toggle shortcut
         if ((mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) && sym == SDLK_F) {
             target_tw->search_drawer_open = !target_tw->search_drawer_open;
-            target_tw->terminal.set_search_active(target_tw->search_drawer_open);
+            target_tw->fpane().terminal.set_search_active(target_tw->search_drawer_open);
             if (target_tw->search_drawer_open) {
-                target_tw->terminal.set_search_query(target_tw->search_input_text);
+                target_tw->fpane().terminal.set_search_query(target_tw->search_input_text);
             }
             return SDL_APP_CONTINUE;
         }
@@ -1197,26 +1321,26 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         if (target_tw && target_tw->search_drawer_open) {
             if (sym == SDLK_ESCAPE) {
                 target_tw->search_drawer_open = false;
-                target_tw->terminal.set_search_active(false);
+                target_tw->fpane().terminal.set_search_active(false);
                 return SDL_APP_CONTINUE;
             } else if (sym == SDLK_BACKSPACE || sym == SDLK_DELETE) {
                 if (!target_tw->search_input_text.empty()) {
                     target_tw->search_input_text.pop_back();
-                    target_tw->terminal.set_search_query(target_tw->search_input_text);
+                    target_tw->fpane().terminal.set_search_query(target_tw->search_input_text);
                 }
                 return SDL_APP_CONTINUE;
             } else if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) {
                 if (mod & SDL_KMOD_SHIFT) {
-                    target_tw->terminal.search_prev();
+                    target_tw->fpane().terminal.search_prev();
                 } else {
-                    target_tw->terminal.search_next();
+                    target_tw->fpane().terminal.search_next();
                 }
                 return SDL_APP_CONTINUE;
             } else if (sym == SDLK_UP) {
-                target_tw->terminal.search_prev();
+                target_tw->fpane().terminal.search_prev();
                 return SDL_APP_CONTINUE;
             } else if (sym == SDLK_DOWN) {
-                target_tw->terminal.search_next();
+                target_tw->fpane().terminal.search_next();
                 return SDL_APP_CONTINUE;
             }
         }
@@ -1224,9 +1348,9 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         // Cmd+Up / Cmd+Down: jump between OSC 133 shell prompts (needs shell
         // integration emitting 133;A marks; without them these do nothing)
         if ((mod & SDL_KMOD_GUI) && (sym == SDLK_UP || sym == SDLK_DOWN)) {
-            std::lock_guard<std::mutex> lock(target_tw->grid_mutex);
-            if (sym == SDLK_UP) target_tw->terminal.scroll_to_prev_prompt();
-            else                target_tw->terminal.scroll_to_next_prompt();
+            std::lock_guard<std::mutex> lock(target_tw->fpane().grid_mutex);
+            if (sym == SDLK_UP) target_tw->fpane().terminal.scroll_to_prev_prompt();
+            else                target_tw->fpane().terminal.scroll_to_next_prompt();
             return SDL_APP_CONTINUE;
         }
 
@@ -1272,6 +1396,25 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             return SDL_APP_CONTINUE;
         }
 
+        // Split panes: Cmd+D side-by-side, Cmd+Shift+D stacked (iTerm2
+        // bindings); Cmd+Shift+W closes the focused pane; Cmd+Opt+arrows
+        // move focus directionally
+        if ((mod & SDL_KMOD_GUI) && sym == SDLK_D) {
+            split_focused_pane(state, target_tw, !(mod & SDL_KMOD_SHIFT));
+            return SDL_APP_CONTINUE;
+        }
+        if ((mod & SDL_KMOD_GUI) && (mod & SDL_KMOD_SHIFT) && sym == SDLK_W) {
+            close_focused_pane(state, target_tw);
+            return SDL_APP_CONTINUE;
+        }
+        if ((mod & SDL_KMOD_GUI) && (mod & SDL_KMOD_ALT) &&
+            (sym == SDLK_LEFT || sym == SDLK_RIGHT || sym == SDLK_UP || sym == SDLK_DOWN)) {
+            int dx = (sym == SDLK_LEFT) ? -1 : (sym == SDLK_RIGHT) ? 1 : 0;
+            int dy = (sym == SDLK_UP) ? -1 : (sym == SDLK_DOWN) ? 1 : 0;
+            focus_pane_directional(target_tw, dx, dy);
+            return SDL_APP_CONTINUE;
+        }
+
         // Tab key demo skip trigger
         if (sym == SDLK_TAB && SinkDemo::is_demo_running(target_tw)) {
             SinkDemo::request_skip(target_tw);
@@ -1286,33 +1429,34 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         }
 
         for (auto* tw : target_windows) {
-            if (tw->terminal.get_prompt_boundary() == -1) {
-                tw->terminal.set_prompt_boundary(tw->terminal.get_cursor_col());
+            if (tw->fpane().terminal.get_prompt_boundary() == -1) {
+                tw->fpane().terminal.set_prompt_boundary(tw->fpane().terminal.get_cursor_col());
             }
             if ((mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) && sym == SDLK_X) {
                 perform_cut_action(tw);
                 return SDL_APP_CONTINUE;
             }
             if (!(mod & SDL_KMOD_GUI) && sym != SDLK_BACKSPACE && sym != SDLK_DELETE) {
-                tw->terminal.clear_selection();
+                tw->fpane().terminal.clear_selection();
             }
-            tw->terminal.reset_scroll();
-            tw->scroll_velocity = 0.0f;
-            tw->scroll_accumulator = 0.0f;
+            tw->fpane().terminal.reset_scroll();
+            tw->fpane().scroll_velocity = 0.0f;
+            tw->fpane().scroll_accumulator = 0.0f;
 
             if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) {
-                std::string typed_line = tw->terminal.get_current_line_text();
+                std::string typed_line = tw->fpane().terminal.get_current_line_text();
                 
                 if (SinkDemo::is_demo_command(typed_line) && !SinkDemo::is_demo_running(tw)) {
                     const char cancel_cmd[] = "\x15\x03";
-                    tw->pty.write_to_pty(cancel_cmd, 2);
+                    tw->fpane().pty.write_to_pty(cancel_cmd, 2);
                     if (tw->demo_thread.joinable()) tw->demo_thread.join();
+                    tw->demo_pane = tw->focused;
                     tw->demo_thread = std::thread([tw, state]() {
                         SinkDemo::run_demo(tw, state);
                     });
                 } else if (SinkDemo::is_sing_command(typed_line) && !SinkDemo::is_demo_running(tw)) {
                     const char cancel_cmd[] = "\x15\x03";
-                    tw->pty.write_to_pty(cancel_cmd, 2);
+                    tw->fpane().pty.write_to_pty(cancel_cmd, 2);
                     std::string song_name;
                     size_t pos = typed_line.find("sinksing");
                     if (pos != std::string::npos) {
@@ -1326,42 +1470,43 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                         }
                     }
                     if (tw->demo_thread.joinable()) tw->demo_thread.join();
+                    tw->demo_pane = tw->focused;
                     tw->demo_thread = std::thread([tw, song_name]() {
                         SinkDemo::run_sing(tw, song_name);
                     });
                 } else if (!SinkDemo::is_demo_command(typed_line) && !SinkDemo::is_sing_command(typed_line)) {
                     const char c = '\r';
-                    tw->pty.write_to_pty(&c, 1);
+                    tw->fpane().pty.write_to_pty(&c, 1);
                 }
             } else if (sym == SDLK_BACKSPACE || sym == SDLK_DELETE) {
                 bool handled = delete_selection_in_prompt(tw);
                 if (!handled) {
                     if (sym == SDLK_DELETE) {
-                        tw->pty.write_to_pty("\x1b[3~", 4); // Standard vt100 delete key sequence
+                        tw->fpane().pty.write_to_pty("\x1b[3~", 4); // Standard vt100 delete key sequence
                     } else {
                         const char c = '\x7f';
-                        tw->pty.write_to_pty(&c, 1);
+                        tw->fpane().pty.write_to_pty(&c, 1);
                     }
                 }
             } else if (sym == SDLK_TAB) {
                 const char c = '\t';
-                tw->pty.write_to_pty(&c, 1);
+                tw->fpane().pty.write_to_pty(&c, 1);
             } else if (sym == SDLK_ESCAPE) {
                 const char c = '\x1b';
-                tw->pty.write_to_pty(&c, 1);
+                tw->fpane().pty.write_to_pty(&c, 1);
             } else if (sym == SDLK_UP || sym == SDLK_DOWN ||
                        sym == SDLK_RIGHT || sym == SDLK_LEFT) {
                 // DECCKM: full-screen apps ask for the SS3 (ESC O x) form
-                bool app_keys = tw->terminal.is_app_cursor_keys();
+                bool app_keys = tw->fpane().terminal.is_app_cursor_keys();
                 char final_byte = (sym == SDLK_UP)    ? 'A'
                                 : (sym == SDLK_DOWN)  ? 'B'
                                 : (sym == SDLK_RIGHT) ? 'C' : 'D';
                 char seq[3] = { '\x1b', app_keys ? 'O' : '[', final_byte };
-                tw->pty.write_to_pty(seq, 3);
+                tw->fpane().pty.write_to_pty(seq, 3);
             } else if (mod & SDL_KMOD_CTRL) {
                 if (sym >= SDLK_A && sym <= SDLK_Z) {
                     char control_char = static_cast<char>(sym - SDLK_A + 1);
-                    tw->pty.write_to_pty(&control_char, 1);
+                    tw->fpane().pty.write_to_pty(&control_char, 1);
                 }
             }
         }
@@ -1382,12 +1527,8 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             int w = event->window.data1;
             int h = event->window.data2;
             if (w > 0 && h > 0) {
-                float top_offset_pts = target_tw->vibrancy_enabled ? 32.0f : 34.0f;
-                int new_cols = std::max(40, static_cast<int>((w - 2 * state->padding) / target_tw->cell_w));
-                int new_rows = std::max(10, static_cast<int>((h - 2 * state->padding - top_offset_pts) / target_tw->cell_h));
-
-                target_tw->pending_cols = new_cols;
-                target_tw->pending_rows = new_rows;
+                target_tw->pending_w = w;
+                target_tw->pending_h = h;
                 target_tw->has_pending_resize = true;
                 target_tw->last_resize_event_time = SDL_GetTicks();
             }
@@ -1428,13 +1569,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                     tw->cell_w = (tw->font_manager.get_cell_width() / state->display_scale) + 1.0f;
                     tw->cell_h = (tw->font_manager.get_cell_height() / state->display_scale) - 0.8f;
 
-                    int w, h;
-                    SDL_GetWindowSize(tw->window, &w, &h);
-                    int new_cols = std::max(40, static_cast<int>((w - 2 * state->padding) / tw->cell_w));
-                    int new_rows = std::max(10, static_cast<int>((h - 2 * state->padding) / tw->cell_h));
-                    
-                    tw->terminal.resize(new_cols, new_rows);
-                    tw->pty.resize_pty(new_cols, new_rows);
+                    layout_panes(state, tw);
                 }
             }
 
@@ -1464,9 +1599,9 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             for (auto* tw : state->windows) {
                 tw->animated_typing = anim;
                 if (!tw->animated_typing) {
-                    if (!tw->animation_buffer.empty()) {
-                        tw->parser.parse(tw->terminal, tw->animation_buffer.data(), tw->animation_buffer.size());
-                        tw->animation_buffer.clear();
+                    if (!tw->fpane().animation_buffer.empty()) {
+                        tw->fpane().parser.parse(tw->fpane().terminal, tw->fpane().animation_buffer.data(), tw->fpane().animation_buffer.size());
+                        tw->fpane().animation_buffer.clear();
                     }
                 }
             }
@@ -1603,8 +1738,8 @@ static void render_search_drawer(TerminalWindow* tw, int width, int height) {
 
     // Label & Input text
     std::string text = "Find: " + tw->search_input_text + "_";
-    int count = tw->terminal.get_search_match_count();
-    int idx = tw->terminal.get_current_search_index();
+    int count = tw->fpane().terminal.get_search_match_count();
+    int idx = tw->fpane().terminal.get_current_search_index();
 
     std::string match_info;
     if (tw->search_input_text.empty()) {
@@ -1656,7 +1791,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             perform_cut_action(tw);
         }
         if (get_copy_requested()) {
-            std::string selected_text = tw->terminal.get_selected_text();
+            std::string selected_text = tw->fpane().terminal.get_selected_text();
             if (!selected_text.empty()) {
                 SDL_SetClipboardText(selected_text.c_str());
             }
@@ -1665,34 +1800,34 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             if (SDL_HasClipboardText()) {
                 char* text = SDL_GetClipboardText();
                 if (text) {
-                    if (tw->terminal.is_bracketed_paste_active()) {
+                    if (tw->fpane().terminal.is_bracketed_paste_active()) {
                         // Wrap in bracketed-paste markers so the shell treats the
                         // content as literal text instead of executing embedded newlines.
-                        tw->pty.write_to_pty("\x1b[200~", 6);
-                        tw->pty.write_to_pty(text, strlen(text));
-                        tw->pty.write_to_pty("\x1b[201~", 6);
+                        tw->fpane().pty.write_to_pty("\x1b[200~", 6);
+                        tw->fpane().pty.write_to_pty(text, strlen(text));
+                        tw->fpane().pty.write_to_pty("\x1b[201~", 6);
                     } else {
-                        tw->pty.write_to_pty(text, strlen(text));
+                        tw->fpane().pty.write_to_pty(text, strlen(text));
                     }
                     SDL_free(text);
                 }
             }
         }
         if (get_select_all_requested()) {
-            tw->terminal.select_all();
+            tw->fpane().terminal.select_all();
         }
         if (get_print_requested()) {
-            std::string print_text = tw->terminal.get_selected_text();
+            std::string print_text = tw->fpane().terminal.get_selected_text();
             if (print_text.empty()) {
-                print_text = tw->terminal.get_all_text();
+                print_text = tw->fpane().terminal.get_all_text();
             }
             trigger_print_dialog(print_text.c_str());
         }
         if (get_find_requested()) {
             tw->search_drawer_open = !tw->search_drawer_open;
-            tw->terminal.set_search_active(tw->search_drawer_open);
+            tw->fpane().terminal.set_search_active(tw->search_drawer_open);
             if (tw->search_drawer_open) {
-                tw->terminal.set_search_query(tw->search_input_text);
+                tw->fpane().terminal.set_search_query(tw->search_input_text);
             }
         }
         if (get_crt_mode_requested()) {
@@ -1787,7 +1922,9 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         if (state->ligatures_enabled != lig) {
             state->ligatures_enabled = lig;
             for (auto* tw : state->windows) {
-                tw->terminal.set_enable_ligatures(lig);
+                for (Pane* pane : all_panes(tw)) {
+                    pane->terminal.set_enable_ligatures(lig);
+                }
             }
             save_config(state);
         }
@@ -1811,48 +1948,48 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         // window-zoom firing many intermediate frames) doesn't reflow the
         // grid and SIGWINCH the shell on every single one of them.
         if (tw->has_pending_resize && (current_tick - tw->last_resize_event_time) >= 100) {
-            if (tw->pending_cols != tw->terminal.get_cols() || tw->pending_rows != tw->terminal.get_rows()) {
-                tw->terminal.resize(tw->pending_cols, tw->pending_rows);
-                tw->pty.resize_pty(tw->pending_cols, tw->pending_rows);
-            }
+            // layout_panes no-ops any pane whose cols/rows come out unchanged
+            layout_panes(state, tw);
             tw->has_pending_resize = false;
         }
 
-        tw->terminal.update_timers(dt);
+        for (Pane* pane : all_panes(tw)) {
+            pane->terminal.update_timers(dt);
 
-        // Process inertial scrolling physics
-        if (std::abs(tw->scroll_velocity) > 0.01f) {
-            tw->scroll_accumulator += tw->scroll_velocity * dt;
-            float friction = 6.0f;
-            tw->scroll_velocity *= std::exp(-friction * dt);
-            if (std::abs(tw->scroll_velocity) < 0.05f) {
-                tw->scroll_velocity = 0.0f;
+            // Process inertial scrolling physics
+            if (std::abs(pane->scroll_velocity) > 0.01f) {
+                pane->scroll_accumulator += pane->scroll_velocity * dt;
+                float friction = 6.0f;
+                pane->scroll_velocity *= std::exp(-friction * dt);
+                if (std::abs(pane->scroll_velocity) < 0.05f) {
+                    pane->scroll_velocity = 0.0f;
+                }
             }
-        }
-        
-        if (std::abs(tw->scroll_accumulator) >= 1.0f) {
-            int lines = 0;
-            if (tw->scroll_accumulator >= 1.0f) {
-                lines = static_cast<int>(std::floor(tw->scroll_accumulator));
-                tw->scroll_accumulator -= static_cast<float>(lines);
-            } else if (tw->scroll_accumulator <= -1.0f) {
-                lines = static_cast<int>(std::ceil(tw->scroll_accumulator));
-                tw->scroll_accumulator -= static_cast<float>(lines);
-            }
-            
-            if (lines != 0) {
-                int current_offset = tw->terminal.get_scroll_offset();
-                int max_offset = static_cast<int>(tw->terminal.get_scrollback_size());
-                
-                if ((lines > 0 && current_offset >= max_offset) || (lines < 0 && current_offset <= 0)) {
-                    tw->scroll_velocity = 0.0f;
-                    tw->scroll_accumulator = 0.0f;
-                } else {
-                    tw->terminal.scroll_view(lines);
-                    int new_offset = tw->terminal.get_scroll_offset();
-                    if (new_offset == 0 || new_offset == max_offset) {
-                        tw->scroll_velocity = 0.0f;
-                        tw->scroll_accumulator = 0.0f;
+
+            if (std::abs(pane->scroll_accumulator) >= 1.0f) {
+                int lines = 0;
+                if (pane->scroll_accumulator >= 1.0f) {
+                    lines = static_cast<int>(std::floor(pane->scroll_accumulator));
+                    pane->scroll_accumulator -= static_cast<float>(lines);
+                } else if (pane->scroll_accumulator <= -1.0f) {
+                    lines = static_cast<int>(std::ceil(pane->scroll_accumulator));
+                    pane->scroll_accumulator -= static_cast<float>(lines);
+                }
+
+                if (lines != 0) {
+                    int current_offset = pane->terminal.get_scroll_offset();
+                    int max_offset = static_cast<int>(pane->terminal.get_scrollback_size());
+
+                    if ((lines > 0 && current_offset >= max_offset) || (lines < 0 && current_offset <= 0)) {
+                        pane->scroll_velocity = 0.0f;
+                        pane->scroll_accumulator = 0.0f;
+                    } else {
+                        pane->terminal.scroll_view(lines);
+                        int new_offset = pane->terminal.get_scroll_offset();
+                        if (new_offset == 0 || new_offset == max_offset) {
+                            pane->scroll_velocity = 0.0f;
+                            pane->scroll_accumulator = 0.0f;
+                        }
                     }
                 }
             }
@@ -1874,10 +2011,14 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             tw->fade_opacity = 0.0f;
         }
 
-        // Process incoming shell data (suppressed while sinkdemo is running for this window)
-        std::vector<char> output = tw->pty.read_pending();
-        if (!output.empty() && !SinkDemo::is_demo_running(tw)) {
-            std::lock_guard<std::mutex> lock(tw->grid_mutex);
+        // Process incoming shell data per pane (suppressed for the pane a
+        // running sinkdemo is streaming into; the other panes stay live)
+        for (Pane* pane_ptr : all_panes(tw)) {
+        Pane& pane = *pane_ptr;
+        std::vector<char> output = pane.pty.read_pending();
+        bool demo_owns_pane = SinkDemo::is_demo_running(tw) && pane_ptr == &tw->demo_target();
+        if (!output.empty() && !demo_owns_pane) {
+            std::lock_guard<std::mutex> lock(pane.grid_mutex);
             if (tw->animated_typing) {
                 // A human at the keyboard produces isolated chunks (a keystroke's
                 // echo) tens-to-hundreds of ms apart. A program streaming
@@ -1889,42 +2030,43 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 // plausibly could, treat the whole burst as program output so
                 // the typewriter pacing doesn't make rendering fall behind it.
                 Uint64 now = SDL_GetTicks();
-                Uint64 gap = now - tw->last_output_chunk_time;
-                tw->last_output_chunk_time = now;
+                Uint64 gap = now - pane.last_output_chunk_time;
+                pane.last_output_chunk_time = now;
                 if (gap < 40) {
-                    tw->rapid_chunk_streak++;
+                    pane.rapid_chunk_streak++;
                 } else {
-                    tw->rapid_chunk_streak = 0;
+                    pane.rapid_chunk_streak = 0;
                 }
-                bool fast_turnover = tw->rapid_chunk_streak >= 3;
+                bool fast_turnover = pane.rapid_chunk_streak >= 3;
 
                 if (output.size() > 5 || fast_turnover) {
                     // Large chunk / fast turnover (command or program output): bypass typing effect
-                    if (!tw->animation_buffer.empty()) {
-                        tw->parser.parse(tw->terminal, tw->animation_buffer.data(), tw->animation_buffer.size());
-                        tw->animation_buffer.clear();
+                    if (!pane.animation_buffer.empty()) {
+                        pane.parser.parse(pane.terminal, pane.animation_buffer.data(), pane.animation_buffer.size());
+                        pane.animation_buffer.clear();
                     }
-                    tw->parser.parse(tw->terminal, output.data(), output.size());
+                    pane.parser.parse(pane.terminal, output.data(), output.size());
                 } else {
                     // Small, unhurried chunk (user typing): queue for animated typing
-                    tw->animation_buffer.insert(tw->animation_buffer.end(), output.begin(), output.end());
+                    pane.animation_buffer.insert(pane.animation_buffer.end(), output.begin(), output.end());
                 }
             } else {
-                tw->parser.parse(tw->terminal, output.data(), output.size());
+                pane.parser.parse(pane.terminal, output.data(), output.size());
             }
-            tw->terminal.lock_prompt_boundary_if_unset();
+            pane.terminal.lock_prompt_boundary_if_unset();
         }
 
-        // Apply any OSC 0/2 title change from the data just parsed
-        if (tw->terminal.has_pending_title()) {
-            std::string title = tw->terminal.take_window_title();
+        // Apply any OSC 0/2 title change from the data just parsed (only
+        // the focused pane owns the window title)
+        if (pane_ptr == tw->focused && pane.terminal.has_pending_title()) {
+            std::string title = pane.terminal.take_window_title();
             SDL_SetWindowTitle(tw->window, title.empty() ? "sink" : title.c_str());
         }
 
         // Process retro animated typing ticks
-        if (tw->animated_typing && !tw->animation_buffer.empty()) {
-            std::lock_guard<std::mutex> lock(tw->grid_mutex);
-            size_t total_pending = tw->animation_buffer.size();
+        if (tw->animated_typing && !pane.animation_buffer.empty()) {
+            std::lock_guard<std::mutex> lock(pane.grid_mutex);
+            size_t total_pending = pane.animation_buffer.size();
             size_t chars_to_process = 0;
             
             if (total_pending > 2000) {
@@ -1935,13 +2077,14 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 chars_to_process = std::min(total_pending, (size_t)4);
             }
             
-            tw->parser.parse(tw->terminal, tw->animation_buffer.data(), chars_to_process);
-            tw->animation_buffer.erase(tw->animation_buffer.begin(), tw->animation_buffer.begin() + chars_to_process);
+            pane.parser.parse(pane.terminal, pane.animation_buffer.data(), chars_to_process);
+            pane.animation_buffer.erase(pane.animation_buffer.begin(), pane.animation_buffer.begin() + chars_to_process);
             
-            if (tw->animation_buffer.empty()) {
-                tw->terminal.lock_prompt_boundary_if_unset();
+            if (pane.animation_buffer.empty()) {
+                pane.terminal.lock_prompt_boundary_if_unset();
             }
         }
+        } // end per-pane read/parse loop
 
         int draw_w = 0, draw_h = 0;
         SDL_GetRenderOutputSize(tw->renderer, &draw_w, &draw_h);
@@ -1986,19 +2129,36 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         // SDL_SetRenderColorScale mechanism exposure already uses for the
         // video, bracketed around just this text draw so the video
         // background's own luminance is untouched.
-        {
-            std::lock_guard<std::mutex> lock(tw->grid_mutex);
-            tw->terminal.set_enable_ligatures(state->ligatures_enabled);
-            float top_pts = tw->vibrancy_enabled ? 32.0f : 34.0f;
-            float start_y = (state->padding + top_pts) * state->display_scale;
-            float start_x = state->padding * state->display_scale;
+        for (Pane* pane_ptr : all_panes(tw)) {
+            Pane& pane = *pane_ptr;
+            std::lock_guard<std::mutex> lock(pane.grid_mutex);
+            pane.terminal.set_enable_ligatures(state->ligatures_enabled);
+            float start_x = (pane.rect.x + state->padding) * state->display_scale;
+            float start_y = (pane.rect.y + state->padding) * state->display_scale;
+
+            // Clip each pane so its margin fill and glyphs can't bleed
+            // across the divider into a neighbor
+            SDL_Rect clip = {
+                static_cast<int>(pane.rect.x * state->display_scale),
+                static_cast<int>(pane.rect.y * state->display_scale),
+                static_cast<int>(pane.rect.w * state->display_scale),
+                static_cast<int>(pane.rect.h * state->display_scale)
+            };
+            SDL_SetRenderClipRect(tw->renderer, &clip);
+
             if (tw->hdr_console_enabled) {
                 SDL_SetRenderColorScale(tw->renderer, kHdrConsoleTextBoost);
             }
-            tw->terminal.render(tw->renderer, tw->font_manager, start_x, start_y, state->display_scale, dt, tw->animated_typing);
+            pane.terminal.render(tw->renderer, tw->font_manager, start_x, start_y, state->display_scale, dt, tw->animated_typing);
             if (tw->hdr_console_enabled) {
                 SDL_SetRenderColorScale(tw->renderer, 1.0f);
             }
+            SDL_SetRenderClipRect(tw->renderer, nullptr);
+        }
+
+        // Divider lines between panes
+        if (!tw->root->is_leaf()) {
+            render_pane_dividers(tw, tw->root.get(), state->display_scale);
         }
 
         // C. Composite with the CRT shader, or fall back to the plain
