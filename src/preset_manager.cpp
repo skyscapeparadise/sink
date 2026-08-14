@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <string>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
@@ -91,6 +92,10 @@ Preset load(const std::string& name) {
             p.ligatures_enabled = (val == "true");
         } else if (key == "hdr_console_enabled") {
             p.hdr_console_enabled = (val == "true");
+        } else if (key == "scrollback_lines") {
+            try {
+                p.scrollback_lines = std::clamp(std::stoi(val), 100, 1000000);
+            } catch (...) {}
         }
     }
     return p;
@@ -111,6 +116,7 @@ void save(const Preset& preset) {
     f << "crt_mode_enabled=" << (preset.crt_mode_enabled ? "true" : "false") << "\n";
     f << "ligatures_enabled=" << (preset.ligatures_enabled ? "true" : "false") << "\n";
     f << "hdr_console_enabled=" << (preset.hdr_console_enabled ? "true" : "false") << "\n";
+    f << "scrollback_lines=" << preset.scrollback_lines << "\n";
 }
 
 std::vector<std::string> list_names() {
