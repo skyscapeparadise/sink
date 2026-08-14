@@ -458,31 +458,35 @@ void setup_macos_menu() {
         [editMenu addItem:[NSMenuItem separatorItem]];
         [editMenu addItem:findItem];
 
-        // Setup the Shell Menu (after Edit), holding the split-pane
-        // commands. The key equivalents shown here are the same shortcuts
-        // main.cpp's SDL key handler implements; AppKit consumes a matching
-        // keystroke before SDL sees it, so both paths route through the
-        // same request flags / split helpers and never double-fire.
-        NSMenuItem* shellItem = nil;
+        // Split-pane commands live in the Window menu: unlike New Window/New
+        // Tab (which create a new session), splitting changes this window's
+        // *layout* -- the same category as Window's own Minimize/Zoom, so it
+        // reads better there than under Shell. SDL's Cocoa backend creates
+        // the Window menu itself (with Minimize/Zoom/the open-window list)
+        // before this function runs, so it's found rather than built, and
+        // its existing items are left alone -- only our block is appended.
+        NSMenuItem* windowItem = nil;
         for (NSMenuItem* item in [mainMenu itemArray]) {
-            if ([[item title] isEqualToString:@"Shell"]) {
-                shellItem = item;
+            if ([[item title] isEqualToString:@"Window"]) {
+                windowItem = item;
                 break;
             }
         }
 
-        if (!shellItem) {
-            shellItem = [[NSMenuItem alloc] initWithTitle:@"Shell" action:nil keyEquivalent:@""];
-            NSMenu* newShellMenu = [[NSMenu alloc] initWithTitle:@"Shell"];
-            [shellItem setSubmenu:newShellMenu];
-            NSInteger editIndex = [mainMenu indexOfItem:editItem];
-            [mainMenu insertItem:shellItem atIndex:editIndex + 1];
+        if (!windowItem) {
+            windowItem = [[NSMenuItem alloc] initWithTitle:@"Window" action:nil keyEquivalent:@""];
+            NSMenu* newWindowMenu = [[NSMenu alloc] initWithTitle:@"Window"];
+            [windowItem setSubmenu:newWindowMenu];
+            [mainMenu addItem:windowItem];
+            [NSApp setWindowsMenu:newWindowMenu];
         }
 
-        NSMenu* shellMenu = [shellItem submenu];
-        [shellMenu removeAllItems];
-        [shellMenu setAutoenablesItems:NO];
+        NSMenu* windowMenu = [windowItem submenu];
+        [windowMenu setAutoenablesItems:NO];
 
+        // Our items go in their own block up top, above whatever AppKit
+        // manages (Minimize/Zoom appear above the window list historically,
+        // but inserting at 0 is robust regardless of exact AppKit ordering)
         NSMenuItem* splitRightItem = [[NSMenuItem alloc] initWithTitle:@"Split Pane Right"
                                                                 action:@selector(splitPaneRight:)
                                                          keyEquivalent:@"d"];
@@ -511,9 +515,9 @@ void setup_macos_menu() {
             { @"Select Pane Below",    NSDownArrowFunctionKey,  4 },
         };
 
-        [shellMenu addItem:splitRightItem];
-        [shellMenu addItem:splitDownItem];
-        [shellMenu addItem:[NSMenuItem separatorItem]];
+        NSInteger insertAt = 0;
+        [windowMenu insertItem:splitRightItem atIndex:insertAt++];
+        [windowMenu insertItem:splitDownItem atIndex:insertAt++];
         for (const PaneDir& dir : dirs) {
             NSString* key = [NSString stringWithCharacters:&dir.key length:1];
             NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:dir.title
@@ -523,10 +527,10 @@ void setup_macos_menu() {
             [item setTarget:g_menu_handler];
             [item setEnabled:YES];
             [item setTag:dir.tag];
-            [shellMenu addItem:item];
+            [windowMenu insertItem:item atIndex:insertAt++];
         }
-        [shellMenu addItem:[NSMenuItem separatorItem]];
-        [shellMenu addItem:closePaneItem];
+        [windowMenu insertItem:closePaneItem atIndex:insertAt++];
+        [windowMenu insertItem:[NSMenuItem separatorItem] atIndex:insertAt++];
     }
 }
 
@@ -700,6 +704,25 @@ void add_window_as_tab(SDL_Window* parent_sdl_win, SDL_Window* child_sdl_win) {
             [parent_nswin addTabbedWindow:child_nswin ordered:NSWindowAbove];
             [child_nswin makeKeyAndOrderFront:nil];
         }
+    }
+}
+
+float get_native_content_top_inset(SDL_Window* sdl_win) {
+    @autoreleasepool {
+        if (!sdl_win) return -1.0f;
+        SDL_PropertiesID props = SDL_GetWindowProperties(sdl_win);
+        NSWindow* nswin = (__bridge NSWindow*)SDL_GetPointerProperty(props, "SDL.window.cocoa.window", NULL);
+        if (!nswin) return -1.0f;
+        NSView* contentView = [nswin contentView];
+        if (!contentView) return -1.0f;
+        // contentLayoutRect excludes whatever AppKit is currently drawing
+        // above the content -- the title bar strip alone with one tab, or
+        // title bar + tab strip once a window has more than one. Diffing
+        // its height against the full content view height gives that
+        // combined inset without sink needing to know the tab bar's exact
+        // (version-dependent, undocumented) height itself.
+        NSRect layoutRect = [nswin contentLayoutRect];
+        return (float)(contentView.bounds.size.height - layoutRect.size.height);
     }
 }
 

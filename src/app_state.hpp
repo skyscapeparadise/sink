@@ -69,6 +69,10 @@ struct PaneNode {
     std::unique_ptr<PaneNode> a;
     std::unique_ptr<PaneNode> b;
 
+    // Layout rect this node occupied last layout pass (window points);
+    // divider dragging derives the new split ratio from it
+    SDL_FRect rect = {0.0f, 0.0f, 0.0f, 0.0f};
+
     bool is_leaf() const { return pane != nullptr; }
 };
 
@@ -84,6 +88,9 @@ struct TerminalWindow {
     std::unique_ptr<PaneNode> root;
     Pane* focused = nullptr;
     Pane* demo_pane = nullptr;
+
+    // Internal node whose divider is being dragged (null when not dragging)
+    PaneNode* dragging_divider = nullptr;
 
     std::atomic<bool> demo_running{false};
     std::atomic<bool> demo_skip_requested{false};
@@ -123,6 +130,11 @@ struct TerminalWindow {
     int pending_w = 0;
     int pending_h = 0;
     Uint64 last_resize_event_time = 0;
+
+    // Detects a native tab bar appearing/disappearing (see
+    // get_top_offset_pts): unlike an actual window resize, that doesn't
+    // fire SDL_EVENT_WINDOW_RESIZED, so it's polled once a frame instead.
+    float last_top_offset_pts = -1.0f;
 
     // Focused-pane accessor. The vast majority of call sites (keyboard
     // input, clipboard, prompt editing) act on the focused pane; mouse and

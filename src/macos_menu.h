@@ -12,6 +12,13 @@ void setup_macos_menu();
 // Groups a newly created child window as a tab inside a parent window
 void add_window_as_tab(SDL_Window* parent_sdl_win, SDL_Window* child_sdl_win);
 
+// Height in points of whatever AppKit is currently drawing above the
+// content view (title bar strip, plus the native tab bar when the window
+// has more than one tab) -- derived from NSWindow.contentLayoutRect, the
+// documented API for exactly this. Returns -1 if unavailable (window gone,
+// non-Apple build wouldn't call this at all).
+float get_native_content_top_inset(SDL_Window* sdl_win);
+
 // Thread-safe flags to request menu commands
 void set_settings_requested(bool requested);
 bool get_settings_requested();
