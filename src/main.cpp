@@ -231,6 +231,22 @@ static void load_config(AppState* state) {
 // way opening a new profile in Terminal.app leaves other windows alone.
 // Plain "New Window"/"New Tab" (preset_override == nullptr) keep reading
 // from AppState as before.
+// Top inset (points) above the content area: sink's own custom-painted
+// title bar strip, plus -- when this window has more than one tab -- the
+// native tab bar that AppKit draws above it without resizing the content
+// view (sink uses NSWindowStyleMaskFullSizeContentView, so that resize
+// never happens on its own; without this the tab strip just overlaps the
+// first row of terminal content). Only ever *adds* to the tuned 32/34pt
+// base, so a single-tab window's already pixel-matched layout is untouched.
+static float get_top_offset_pts(TerminalWindow* tw) {
+    float base = tw->vibrancy_enabled ? 32.0f : 34.0f;
+#if defined(__APPLE__)
+    float native = get_native_content_top_inset(tw->window);
+    if (native > base) return native;
+#endif
+    return base;
+}
+
 static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* parent_tab_window, const Preset* preset_override = nullptr) {
     TerminalWindow* tw = new TerminalWindow();
 
@@ -353,7 +369,7 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     // Settle initial grid scale dimensions
     int win_w = 0, win_h = 0;
     SDL_GetWindowSize(tw->window, &win_w, &win_h);
-    float top_offset_pts = tw->vibrancy_enabled ? 32.0f : 34.0f;
+    float top_offset_pts = get_top_offset_pts(tw);
     int cols = std::max(40, static_cast<int>((win_w - 2 * state->padding) / tw->cell_w));
     int rows = std::max(10, static_cast<int>((win_h - 2 * state->padding - top_offset_pts) / tw->cell_h));
 
@@ -428,12 +444,19 @@ static void destroy_terminal_window(TerminalWindow* tw) {
 
 static constexpr float kPaneGutterPts = 1.0f; // divider line thickness
 
-// Recursively assigns pane rects for `node` within `rect` (window points)
-// and applies the resulting grid/PTY geometry to each leaf.
-static void layout_pane_node(AppState* state, TerminalWindow* tw, PaneNode* node, SDL_FRect rect) {
+// Recursively assigns pane rects for `node` within `rect` (window points).
+// With `apply_grids` set it also applies the resulting grid/PTY geometry to
+// each leaf; without it only the rects move -- used mid-divider-drag so the
+// expensive (and shell-visible: reflow + SIGWINCH) part runs debounced
+// instead of once per mouse-motion event, which corrupts the shell's
+// in-flight prompt redraw (the same pathology the window-resize debounce
+// exists to avoid).
+static void layout_pane_node(AppState* state, TerminalWindow* tw, PaneNode* node, SDL_FRect rect, bool apply_grids) {
+    node->rect = rect;
     if (node->is_leaf()) {
         Pane* pane = node->pane.get();
         pane->rect = rect;
+        if (!apply_grids) return;
         int cols = std::max(20, static_cast<int>((rect.w - 2 * state->padding) / tw->cell_w));
         int rows = std::max(5, static_cast<int>((rect.h - 2 * state->padding) / tw->cell_h));
         if (cols != pane->terminal.get_cols() || rows != pane->terminal.get_rows()) {
@@ -445,25 +468,26 @@ static void layout_pane_node(AppState* state, TerminalWindow* tw, PaneNode* node
     }
     if (node->vertical) {
         float aw = std::floor((rect.w - kPaneGutterPts) * node->ratio);
-        layout_pane_node(state, tw, node->a.get(), { rect.x, rect.y, aw, rect.h });
+        layout_pane_node(state, tw, node->a.get(), { rect.x, rect.y, aw, rect.h }, apply_grids);
         layout_pane_node(state, tw, node->b.get(),
                          { rect.x + aw + kPaneGutterPts, rect.y,
-                           rect.w - aw - kPaneGutterPts, rect.h });
+                           rect.w - aw - kPaneGutterPts, rect.h }, apply_grids);
     } else {
         float ah = std::floor((rect.h - kPaneGutterPts) * node->ratio);
-        layout_pane_node(state, tw, node->a.get(), { rect.x, rect.y, rect.w, ah });
+        layout_pane_node(state, tw, node->a.get(), { rect.x, rect.y, rect.w, ah }, apply_grids);
         layout_pane_node(state, tw, node->b.get(),
                          { rect.x, rect.y + ah + kPaneGutterPts,
-                           rect.w, rect.h - ah - kPaneGutterPts });
+                           rect.w, rect.h - ah - kPaneGutterPts }, apply_grids);
     }
 }
 
-static void layout_panes(AppState* state, TerminalWindow* tw) {
+static void layout_panes(AppState* state, TerminalWindow* tw, bool apply_grids = true) {
     int w = 0, h = 0;
     SDL_GetWindowSize(tw->window, &w, &h);
-    float top = tw->vibrancy_enabled ? 32.0f : 34.0f;
+    float top = get_top_offset_pts(tw);
     layout_pane_node(state, tw, tw->root.get(),
-                     { 0.0f, top, static_cast<float>(w), static_cast<float>(h) - top });
+                     { 0.0f, top, static_cast<float>(w), static_cast<float>(h) - top },
+                     apply_grids);
 }
 
 static Pane* pane_at(TerminalWindow* tw, float x, float y) {
@@ -555,8 +579,34 @@ static bool close_focused_pane(AppState* state, TerminalWindow* tw) {
 
     std::vector<Pane*> remaining = all_panes(tw);
     tw->focused = remaining.empty() ? nullptr : remaining.front();
+    tw->dragging_divider = nullptr; // tree just changed under any active drag
     layout_panes(state, tw);
     return true;
+}
+
+// Returns the gutter rect of an internal node's divider, inflated by a few
+// points on each side so it's actually grabbable at 1pt visual thickness.
+static SDL_FRect divider_grab_rect(const PaneNode* node) {
+    const float grab = 3.0f;
+    if (node->vertical) {
+        float aw = std::floor((node->rect.w - kPaneGutterPts) * node->ratio);
+        return { node->rect.x + aw - grab, node->rect.y,
+                 kPaneGutterPts + 2 * grab, node->rect.h };
+    }
+    float ah = std::floor((node->rect.h - kPaneGutterPts) * node->ratio);
+    return { node->rect.x, node->rect.y + ah - grab,
+             node->rect.w, kPaneGutterPts + 2 * grab };
+}
+
+// Finds the internal node whose (inflated) divider gutter contains (x, y).
+static PaneNode* divider_at(PaneNode* node, float x, float y) {
+    if (!node || node->is_leaf()) return nullptr;
+    SDL_FRect g = divider_grab_rect(node);
+    if (x >= g.x && x < g.x + g.w && y >= g.y && y < g.y + g.h) {
+        return node;
+    }
+    if (PaneNode* found = divider_at(node->a.get(), x, y)) return found;
+    return divider_at(node->b.get(), x, y);
 }
 
 // Directional focus move: nearest pane center strictly in the requested
@@ -987,11 +1037,72 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         }
     }
 
+    // ---- Divider drag-resize ----
+    // Grabbing the gutter between panes adjusts that split's ratio live;
+    // hovering it shows a resize cursor. Handled before focus-on-click so a
+    // divider grab never starts a selection in the pane underneath.
+    if (!target_tw->root->is_leaf()) {
+        if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+            event->button.button == SDL_BUTTON_LEFT &&
+            event->button.windowID == SDL_GetWindowID(target_tw->window)) {
+            if (PaneNode* node = divider_at(target_tw->root.get(), event->button.x, event->button.y)) {
+                target_tw->dragging_divider = node;
+                return SDL_APP_CONTINUE;
+            }
+        } else if (event->type == SDL_EVENT_MOUSE_MOTION &&
+                   event->motion.windowID == SDL_GetWindowID(target_tw->window)) {
+            static SDL_Cursor* cursor_default = nullptr;
+            static SDL_Cursor* cursor_ew = nullptr;
+            static SDL_Cursor* cursor_ns = nullptr;
+            if (!cursor_default) {
+                cursor_default = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_DEFAULT);
+                cursor_ew = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_EW_RESIZE);
+                cursor_ns = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NS_RESIZE);
+            }
+
+            if (PaneNode* node = target_tw->dragging_divider) {
+                // Ratio from the mouse position within the node's rect,
+                // clamped so neither side collapses below usability
+                float r;
+                if (node->vertical) {
+                    r = (event->motion.x - node->rect.x) / std::max(1.0f, node->rect.w - kPaneGutterPts);
+                } else {
+                    r = (event->motion.y - node->rect.y) / std::max(1.0f, node->rect.h - kPaneGutterPts);
+                }
+                node->ratio = std::clamp(r, 0.1f, 0.9f);
+                // Rects (divider position, clipping) track the mouse live;
+                // the grid reflow + SIGWINCH are deferred to mouse-up, not
+                // debounced. A debounce still fires mid-drag whenever the
+                // gesture pauses for >100ms (people pause while dragging),
+                // and each such pause was sending the shell another SIGWINCH
+                // before the previous prompt redraw had settled -- the more
+                // hesitant the drag, the more corrupted/duplicated fragments
+                // piled up. Deferring unconditionally to release guarantees
+                // exactly one reflow per drag, no matter how it's paced.
+                layout_panes(state, target_tw, false);
+                return SDL_APP_CONTINUE;
+            }
+
+            PaneNode* hover = divider_at(target_tw->root.get(), event->motion.x, event->motion.y);
+            SDL_SetCursor(hover ? (hover->vertical ? cursor_ew : cursor_ns) : cursor_default);
+            if (hover) return SDL_APP_CONTINUE;
+        } else if (event->type == SDL_EVENT_MOUSE_BUTTON_UP &&
+                   event->button.button == SDL_BUTTON_LEFT &&
+                   target_tw->dragging_divider) {
+            target_tw->dragging_divider = nullptr;
+            // Drag finished: apply the final geometry right away (one
+            // reflow + one SIGWINCH) instead of waiting out the debounce
+            layout_panes(state, target_tw);
+            target_tw->has_pending_resize = false;
+            return SDL_APP_CONTINUE;
+        }
+    }
+
     // Clicking anywhere inside a pane focuses it before any further mouse
     // routing (reports, selection) resolves against the focused pane
     if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
         event->button.windowID == SDL_GetWindowID(target_tw->window)) {
-        float top_pts = target_tw->vibrancy_enabled ? 32.0f : 34.0f;
+        float top_pts = get_top_offset_pts(target_tw);
         if (event->button.y >= top_pts) {
             target_tw->focused = pane_at(target_tw, event->button.x, event->button.y);
         }
@@ -1005,15 +1116,16 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
     // same escape hatch xterm and every GPU terminal provide.
     {
         int mouse_mode = target_tw->fpane().terminal.get_mouse_mode();
+        // Wheel events are handled by the unified hovered-pane wheel block
+        // below, not here
         bool is_mouse_event = event->type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
                               event->type == SDL_EVENT_MOUSE_BUTTON_UP ||
-                              event->type == SDL_EVENT_MOUSE_MOTION ||
-                              event->type == SDL_EVENT_MOUSE_WHEEL;
+                              event->type == SDL_EVENT_MOUSE_MOTION;
         if (mouse_mode != 0 && is_mouse_event &&
             !(SDL_GetModState() & SDL_KMOD_SHIFT) &&
             !(state->settings_ui.is_open() && SDL_GetKeyboardFocus() == state->settings_ui.get_window())) {
 
-            float top_offset_pts = target_tw->vibrancy_enabled ? 32.0f : 34.0f;
+            float top_offset_pts = get_top_offset_pts(target_tw);
             auto cell_of = [&](float mx, float my, int& col, int& row) {
                 const SDL_FRect& pr = target_tw->fpane().rect;
                 col = std::clamp(static_cast<int>((mx - pr.x - state->padding) / target_tw->cell_w),
@@ -1085,19 +1197,6 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 // Motion never falls through to native drag-selection while
                 // reporting is active
                 if (mouse_mode == 1002 || mouse_mode == 1003) return SDL_APP_CONTINUE;
-            } else if (event->type == SDL_EVENT_MOUSE_WHEEL &&
-                       event->wheel.windowID == SDL_GetWindowID(target_tw->window) &&
-                       mouse_mode != 9) {
-                // Same sign normalization as the inertial scrollback handler
-                // below: positive wy = view up (button 64 / arrow up)
-                float wy = -event->wheel.y;
-                if (event->wheel.direction == SDL_MOUSEWHEEL_FLIPPED) wy = -wy;
-                if (wy != 0.0f && event->wheel.mouse_y >= top_offset_pts) {
-                    int col, row;
-                    cell_of(event->wheel.mouse_x, event->wheel.mouse_y, col, row);
-                    send_report((wy > 0.0f ? 64 : 65) + mod_bits, col, row, false);
-                }
-                return SDL_APP_CONTINUE;
             }
         }
     }
@@ -1107,61 +1206,93 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
     // translates wheel ticks into arrow keys there, so sink does too.
     // (Scrollback is invisible on the alt screen anyway; inertial-scrolling
     // it would just drag stale shell history over the app's UI.)
+    // ---- Unified wheel routing: every wheel behavior (mouse reports,
+    // alternate scroll, inertial scrollback) targets the pane under the
+    // cursor, matching iTerm2 -- hovering a pane is enough to scroll it.
     if (event->type == SDL_EVENT_MOUSE_WHEEL &&
-        target_tw->fpane().terminal.is_alt_screen_active() &&
-        target_tw->fpane().terminal.get_mouse_mode() == 0 &&
-        target_tw->fpane().terminal.is_alternate_scroll() &&
-        event->wheel.windowID == SDL_GetWindowID(target_tw->window) &&
-        !(state->settings_ui.is_open() && SDL_GetKeyboardFocus() == state->settings_ui.get_window())) {
-        float wy = -event->wheel.y;
-        if (event->wheel.direction == SDL_MOUSEWHEEL_FLIPPED) wy = -wy;
-        target_tw->fpane().alt_scroll_accum += wy * 3.0f; // ~3 lines per wheel notch
-        int lines = static_cast<int>(target_tw->fpane().alt_scroll_accum);
-        if (lines != 0) {
-            target_tw->fpane().alt_scroll_accum -= static_cast<float>(lines);
-            bool app_keys = target_tw->fpane().terminal.is_app_cursor_keys();
-            const char* seq = (lines > 0) ? (app_keys ? "\x1bOA" : "\x1b[A")
-                                          : (app_keys ? "\x1bOB" : "\x1b[B");
-            for (int n = std::abs(lines); n > 0; --n) {
-                target_tw->fpane().pty.write_to_pty(seq, 3);
-            }
-        }
-        return SDL_APP_CONTINUE;
-    }
-
-    if (event->type == SDL_EVENT_MOUSE_WHEEL) {
+        event->wheel.windowID == SDL_GetWindowID(target_tw->window)) {
         if (state->settings_ui.is_open() && SDL_GetKeyboardFocus() == state->settings_ui.get_window()) {
             return SDL_APP_CONTINUE;
         }
-        float wheel_y = -event->wheel.y;
-        if (event->wheel.direction == SDL_MOUSEWHEEL_FLIPPED) {
-            wheel_y = -wheel_y;
+        Pane& hp = *pane_at(target_tw, event->wheel.mouse_x, event->wheel.mouse_y);
+        float top_pts = get_top_offset_pts(target_tw);
+        // Positive wy = view up (wheel-up button 64 / arrow up)
+        float wy = -event->wheel.y;
+        if (event->wheel.direction == SDL_MOUSEWHEEL_FLIPPED) wy = -wy;
+
+        int hp_mouse_mode = hp.terminal.get_mouse_mode();
+        bool shift_bypass = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
+
+        if (hp_mouse_mode != 0 && hp_mouse_mode != 9 && !shift_bypass) {
+            // The app in the hovered pane asked for wheel events
+            if (wy != 0.0f && event->wheel.mouse_y >= top_pts) {
+                SDL_Keymod mods = SDL_GetModState();
+                int mod_bits = ((mods & SDL_KMOD_ALT) ? 8 : 0) | ((mods & SDL_KMOD_CTRL) ? 16 : 0);
+                int button_code = (wy > 0.0f ? 64 : 65) + mod_bits;
+                int col = std::clamp(static_cast<int>((event->wheel.mouse_x - hp.rect.x - state->padding) / target_tw->cell_w),
+                                     0, hp.terminal.get_cols() - 1);
+                int row = std::clamp(static_cast<int>((event->wheel.mouse_y - hp.rect.y - state->padding) / target_tw->cell_h),
+                                     0, hp.terminal.get_rows() - 1);
+                char buf[40];
+                int len;
+                if (hp.terminal.is_mouse_sgr()) {
+                    len = std::snprintf(buf, sizeof(buf), "\x1b[<%d;%d;%dM", button_code, col + 1, row + 1);
+                } else {
+                    len = std::snprintf(buf, sizeof(buf), "\x1b[M%c%c%c",
+                                        static_cast<char>(32 + button_code),
+                                        static_cast<char>(32 + std::min(col + 1, 223)),
+                                        static_cast<char>(32 + std::min(row + 1, 223)));
+                }
+                if (len > 0) hp.pty.write_to_pty(buf, static_cast<size_t>(len));
+            }
+            return SDL_APP_CONTINUE;
         }
-        
+
+        if (hp.terminal.is_alt_screen_active() && hp_mouse_mode == 0 &&
+            hp.terminal.is_alternate_scroll()) {
+            // Pager/editor without mouse mode: wheel becomes arrow keys
+            hp.alt_scroll_accum += wy * 3.0f; // ~3 lines per wheel notch
+            int lines = static_cast<int>(hp.alt_scroll_accum);
+            if (lines != 0) {
+                hp.alt_scroll_accum -= static_cast<float>(lines);
+                bool app_keys = hp.terminal.is_app_cursor_keys();
+                const char* seq = (lines > 0) ? (app_keys ? "\x1bOA" : "\x1b[A")
+                                              : (app_keys ? "\x1bOB" : "\x1b[B");
+                for (int n = std::abs(lines); n > 0; --n) {
+                    hp.pty.write_to_pty(seq, 3);
+                }
+            }
+            return SDL_APP_CONTINUE;
+        }
+
+        // Inertial scrollback on the hovered pane
         Uint64 now = SDL_GetTicks();
-        float delta_sec = (target_tw->fpane().last_wheel_time > 0) ? static_cast<float>(now - target_tw->fpane().last_wheel_time) / 1000.0f : 0.1f;
-        target_tw->fpane().last_wheel_time = now;
-        
-        if ((wheel_y > 0.0f && target_tw->fpane().scroll_velocity < 0.0f) || (wheel_y < 0.0f && target_tw->fpane().scroll_velocity > 0.0f)) {
-            target_tw->fpane().scroll_velocity = 0.0f;
+        float delta_sec = (hp.last_wheel_time > 0) ? static_cast<float>(now - hp.last_wheel_time) / 1000.0f : 0.1f;
+        hp.last_wheel_time = now;
+
+        if ((wy > 0.0f && hp.scroll_velocity < 0.0f) || (wy < 0.0f && hp.scroll_velocity > 0.0f)) {
+            hp.scroll_velocity = 0.0f;
         }
-        
+
         float target_v = 0.0f;
         if (delta_sec > 0.001f && delta_sec < 0.2f) {
-            target_v = (wheel_y * 3.75f) / delta_sec;
+            target_v = (wy * 3.75f) / delta_sec;
         } else {
-            target_v = wheel_y * 10.0f;
+            target_v = wy * 10.0f;
         }
-        
-        target_tw->fpane().scroll_velocity = target_tw->fpane().scroll_velocity * 0.2f + target_v * 0.8f;
-        target_tw->fpane().scroll_accumulator += wheel_y * 0.3f;
-    } else if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+
+        hp.scroll_velocity = hp.scroll_velocity * 0.2f + target_v * 0.8f;
+        hp.scroll_accumulator += wy * 0.3f;
+        return SDL_APP_CONTINUE;
+    }
+
+    if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
         if (event->button.windowID == SDL_GetWindowID(target_tw->window)) {
             target_tw->fpane().scroll_velocity = 0.0f;
             if (event->button.button == SDL_BUTTON_LEFT) {
                 float mx = event->button.x;
                 float my = event->button.y;
-                float top_offset_pts = target_tw->vibrancy_enabled ? 32.0f : 34.0f;
+                float top_offset_pts = get_top_offset_pts(target_tw);
 
                 // Clicks land in the title bar strip above the terminal
                 // grid (SDL_WINDOW_HIGH_PIXEL_DENSITY + full-size content
@@ -1209,7 +1340,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         if (event->motion.windowID == SDL_GetWindowID(target_tw->window)) {
             float mx = event->motion.x;
             float my = event->motion.y;
-            float top_offset_pts = target_tw->vibrancy_enabled ? 32.0f : 34.0f;
+            float top_offset_pts = get_top_offset_pts(target_tw);
             
             int col = static_cast<int>((mx - target_tw->fpane().rect.x - state->padding) / target_tw->cell_w);
             int row = static_cast<int>((my - target_tw->fpane().rect.y - state->padding) / target_tw->cell_h);
@@ -1223,7 +1354,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             if (event->button.button == SDL_BUTTON_LEFT) {
                 float mx = event->button.x;
                 float my = event->button.y;
-                float top_offset_pts = target_tw->vibrancy_enabled ? 32.0f : 34.0f;
+                float top_offset_pts = get_top_offset_pts(target_tw);
                 
                 int col = static_cast<int>((mx - target_tw->fpane().rect.x - state->padding) / target_tw->cell_w);
                 int row = static_cast<int>((my - target_tw->fpane().rect.y - state->padding) / target_tw->cell_h);
@@ -1396,26 +1527,13 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             return SDL_APP_CONTINUE;
         }
 
-        // Split panes: Cmd+D side-by-side, Cmd+Shift+D stacked (iTerm2
-        // bindings); Cmd+Shift+W closes the focused pane; Cmd+Opt+arrows
-        // move focus directionally
-        if ((mod & SDL_KMOD_GUI) && sym == SDLK_D) {
-            split_focused_pane(state, target_tw, !(mod & SDL_KMOD_SHIFT));
-            return SDL_APP_CONTINUE;
-        }
-        if ((mod & SDL_KMOD_GUI) && (mod & SDL_KMOD_SHIFT) && sym == SDLK_W) {
-            if (!close_focused_pane(state, target_tw)) {
-                set_close_window_requested(true); // last pane: close the window
-            }
-            return SDL_APP_CONTINUE;
-        }
-        if ((mod & SDL_KMOD_GUI) && (mod & SDL_KMOD_ALT) &&
-            (sym == SDLK_LEFT || sym == SDLK_RIGHT || sym == SDLK_UP || sym == SDLK_DOWN)) {
-            int dx = (sym == SDLK_LEFT) ? -1 : (sym == SDLK_RIGHT) ? 1 : 0;
-            int dy = (sym == SDLK_UP) ? -1 : (sym == SDLK_DOWN) ? 1 : 0;
-            focus_pane_directional(target_tw, dx, dy);
-            return SDL_APP_CONTINUE;
-        }
+        // Split-pane commands (Cmd+D, Cmd+Shift+D, Cmd+Shift+W, Cmd+Opt+arrows)
+        // are handled exclusively via the Shell menu's key equivalents +
+        // request-flag polling below -- same pattern as Cut/Copy/Paste/Find/
+        // Close Window, none of which have an SDL-side handler either.
+        // AppKit consumes the keystroke for its own menu dispatch, so an SDL
+        // handler here would double-fire alongside it (this used to be a bug:
+        // Cmd+D created two panes, one from each path).
 
         // Tab key demo skip trigger
         if (sym == SDLK_TAB && SinkDemo::is_demo_running(target_tw)) {
@@ -1980,6 +2098,18 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             tw->has_pending_resize = false;
         }
 
+        // A native tab bar appearing/disappearing changes the usable content
+        // height without the window's own frame changing size, so it never
+        // fires SDL_EVENT_WINDOW_RESIZED -- poll for it here instead. Rare
+        // and discrete (only on tab add/remove), so no debounce needed.
+        float current_top_offset = get_top_offset_pts(tw);
+        if (current_top_offset != tw->last_top_offset_pts) {
+            tw->last_top_offset_pts = current_top_offset;
+            if (!tw->has_pending_resize) { // avoid fighting an in-flight debounce
+                layout_panes(state, tw);
+            }
+        }
+
         for (Pane* pane : all_panes(tw)) {
             pane->terminal.update_timers(dt);
 
@@ -2179,6 +2309,19 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             pane.terminal.render(tw->renderer, tw->font_manager, start_x, start_y, state->display_scale, dt, tw->animated_typing);
             if (tw->hdr_console_enabled) {
                 SDL_SetRenderColorScale(tw->renderer, 1.0f);
+            }
+
+            // Dim unfocused panes so the active one reads at a glance
+            if (pane_ptr != tw->focused && !tw->root->is_leaf()) {
+                SDL_FRect dim = {
+                    pane.rect.x * state->display_scale,
+                    pane.rect.y * state->display_scale,
+                    pane.rect.w * state->display_scale,
+                    pane.rect.h * state->display_scale
+                };
+                SDL_SetRenderDrawBlendMode(tw->renderer, SDL_BLENDMODE_BLEND);
+                SDL_SetRenderDrawColor(tw->renderer, 0, 0, 0, 64);
+                SDL_RenderFillRect(tw->renderer, &dim);
             }
             SDL_SetRenderClipRect(tw->renderer, nullptr);
         }
