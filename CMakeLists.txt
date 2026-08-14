@@ -65,3 +65,20 @@ if(NOT APPLE AND NOT WIN32)
         target_link_libraries(sink PRIVATE ${UTIL_LIBRARY})
     endif()
 endif()
+
+# Parser/grid unit tests: no window or PTY, so only the sources the grid
+# pulls in (font_manager for the render path's symbols) are needed.
+enable_testing()
+add_executable(sink_tests
+    tests/test_ansi_parser.cpp
+    src/ansi_parser.cpp
+    src/terminal_grid.cpp
+    src/font_manager.cpp
+)
+target_include_directories(sink_tests PRIVATE src)
+target_link_libraries(sink_tests PRIVATE
+    SDL3::SDL3
+    SDL3_ttf::SDL3_ttf
+    SDL3_image::SDL3_image
+)
+add_test(NAME ansi_parser COMMAND sink_tests)

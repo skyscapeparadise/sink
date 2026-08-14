@@ -21,6 +21,46 @@ static int parse_csi_param(const std::string& buffer) {
     }
 }
 
+// Standard ANSI 16-color palette (indices 0-15 of the xterm-256 palette)
+static const SDL_FColor ansi_colors[16] = {
+    {0.05f, 0.05f, 0.05f, 1.0f},     // 0: Black
+    {0.85f, 0.15f, 0.15f, 1.0f},     // 1: Red
+    {0.15f, 0.85f, 0.15f, 1.0f},     // 2: Green
+    {0.85f, 0.75f, 0.15f, 1.0f},     // 3: Yellow
+    {0.15f, 0.15f, 0.85f, 1.0f},     // 4: Blue
+    {0.85f, 0.15f, 0.85f, 1.0f},     // 5: Magenta
+    {0.15f, 0.85f, 0.85f, 1.0f},     // 6: Cyan
+    {0.85f, 0.85f, 0.85f, 1.0f},     // 7: White
+    {0.30f, 0.30f, 0.30f, 1.0f},     // 8: Bright Black (Grey)
+    {1.00f, 0.30f, 0.30f, 1.0f},     // 9: Bright Red
+    {0.30f, 1.00f, 0.30f, 1.0f},     // 10: Bright Green
+    {1.00f, 1.00f, 0.30f, 1.0f},     // 11: Bright Yellow
+    {0.30f, 0.30f, 1.00f, 1.0f},     // 12: Bright Blue
+    {1.00f, 0.30f, 1.00f, 1.0f},     // 13: Bright Magenta
+    {0.30f, 1.00f, 1.00f, 1.0f},     // 14: Bright Cyan
+    {1.00f, 1.00f, 1.00f, 1.0f}      // 15: Bright White
+};
+
+// xterm 256-color palette lookup: 0-15 named colors, 16-231 a 6x6x6 RGB
+// cube (levels 0,95,135,175,215,255), 232-255 a 24-step grayscale ramp.
+static SDL_FColor xterm_256_color(int idx) {
+    idx = std::clamp(idx, 0, 255);
+    if (idx < 16) {
+        return ansi_colors[idx];
+    }
+    if (idx < 232) {
+        int n = idx - 16;
+        int levels[3] = { n / 36, (n / 6) % 6, n % 6 };
+        float rgb[3];
+        for (int i = 0; i < 3; ++i) {
+            rgb[i] = (levels[i] == 0 ? 0 : levels[i] * 40 + 55) / 255.0f;
+        }
+        return { rgb[0], rgb[1], rgb[2], 1.0f };
+    }
+    float v = (8 + 10 * (idx - 232)) / 255.0f;
+    return { v, v, v, 1.0f };
+}
+
 void ANSIParser::reset_csi() {
     csi_params_.clear();
     csi_buffer_.clear();
@@ -77,14 +117,8 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                 state_ = STATE_ESCAPE;
                 reset_csi();
             } else if (c == '\n' || c == '\v' || c == '\f') {
-                // Line feed: move cursor down (scrolling if it hits bottom)
-                grid.clear_wrap_pending();
-                int cur_row = grid.get_cursor_row();
-                if (cur_row >= grid.get_rows() - 1) {
-                    grid.scroll_up();
-                } else {
-                    grid.set_cursor_row(cur_row + 1);
-                }
+                // Line feed: move cursor down, scrolling at the bottom margin
+                grid.index();
             } else if (c == '\r') {
                 // Carriage return: move cursor to start of line
                 grid.set_cursor_col(0);
@@ -156,6 +190,16 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
             } else if (c == '8') { // DECRC: Restore Cursor
                 grid.restore_cursor();
                 state_ = STATE_NORMAL;
+            } else if (c == 'D') { // IND: Index (down one, scroll at margin)
+                grid.index();
+                state_ = STATE_NORMAL;
+            } else if (c == 'E') { // NEL: Next Line (index + carriage return)
+                grid.index();
+                grid.set_cursor_col(0);
+                state_ = STATE_NORMAL;
+            } else if (c == 'M') { // RI: Reverse Index (up one, scroll at margin)
+                grid.reverse_index();
+                state_ = STATE_NORMAL;
             } else if (c == '(' || c == ')' || c == '*' || c == '+') {
                 // SCS: designate character set for G0-G3; the final byte
                 // (e.g. 'B' = US-ASCII, '0' = DEC line drawing) follows.
@@ -199,7 +243,11 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                 is_private_mode_ = true;
             } else if (c >= '0' && c <= '9') {
                 csi_buffer_ += static_cast<char>(c);
-            } else if (c == ';') {
+            } else if (c == ';' || c == ':') {
+                // ':' is the ITU subparameter separator (e.g. SGR 38:5:196).
+                // Treating it like ';' keeps the digits from concatenating
+                // into a single garbage parameter; the colon-form extended
+                // color sequences then parse identically to the ';' form.
                 csi_params_.push_back(parse_csi_param(csi_buffer_));
                 csi_buffer_.clear();
             } else if (c >= 0x40 && c <= 0x7E) {
@@ -233,72 +281,96 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
 
     switch (command) {
         case 'm': { // Select Graphic Rendition (SGR)
-            if (csi_params_.empty()) {
+            uint8_t attrs = grid.get_current_attrs();
+            // Applies bold-as-bright: a base-palette (30-37) foreground gets
+            // its bright variant while bold is on, regardless of whether the
+            // color or the bold arrived first in the parameter list.
+            auto apply_base_fg = [&]() {
+                if (fg_base_index_ >= 0) {
+                    int idx = fg_base_index_ + ((attrs & ATTR_BOLD) ? 8 : 0);
+                    grid.set_current_fg(ansi_colors[idx]);
+                }
+            };
+            auto reset_all = [&]() {
                 grid.set_current_fg({0.9f, 0.9f, 0.9f, 1.0f});
                 grid.set_current_bg({0.0f, 0.0f, 0.0f, 0.0f});
+                attrs = 0;
+                fg_base_index_ = -1;
+            };
+
+            if (csi_params_.empty()) {
+                reset_all();
+                grid.set_current_attrs(attrs);
                 break;
             }
-            
-            // Standard ANSI 16-color palette
-            static const SDL_FColor ansi_colors[16] = {
-                {0.05f, 0.05f, 0.05f, 1.0f},     // 0: Black
-                {0.85f, 0.15f, 0.15f, 1.0f},     // 1: Red
-                {0.15f, 0.85f, 0.15f, 1.0f},     // 2: Green
-                {0.85f, 0.75f, 0.15f, 1.0f},     // 3: Yellow
-                {0.15f, 0.15f, 0.85f, 1.0f},     // 4: Blue
-                {0.85f, 0.15f, 0.85f, 1.0f},     // 5: Magenta
-                {0.15f, 0.85f, 0.85f, 1.0f},     // 6: Cyan
-                {0.85f, 0.85f, 0.85f, 1.0f},     // 7: White
-                {0.30f, 0.30f, 0.30f, 1.0f},     // 8: Bright Black (Grey)
-                {1.00f, 0.30f, 0.30f, 1.0f},     // 9: Bright Red
-                {0.30f, 1.00f, 0.30f, 1.0f},     // 10: Bright Green
-                {1.00f, 1.00f, 0.30f, 1.0f},     // 11: Bright Yellow
-                {0.30f, 0.30f, 1.00f, 1.0f},     // 12: Bright Blue
-                {1.00f, 0.30f, 1.00f, 1.0f},     // 13: Bright Magenta
-                {0.30f, 1.00f, 1.00f, 1.0f},     // 14: Bright Cyan
-                {1.00f, 1.00f, 1.00f, 1.0f}      // 15: Bright White
-            };
 
             for (size_t i = 0; i < csi_params_.size(); ++i) {
                 int param = csi_params_[i];
                 if (param == 0) {
-                    // Reset styling
-                    grid.set_current_fg({0.9f, 0.9f, 0.9f, 1.0f});
-                    grid.set_current_bg({0.0f, 0.0f, 0.0f, 0.0f});
+                    reset_all();
+                } else if (param == 1) {
+                    attrs |= ATTR_BOLD;
+                    apply_base_fg();
+                } else if (param == 2) {
+                    attrs |= ATTR_DIM;
+                } else if (param == 3) {
+                    attrs |= ATTR_ITALIC;
+                } else if (param == 4 || param == 21) { // 21: double underline
+                    attrs |= ATTR_UNDERLINE;
+                } else if (param == 7) {
+                    attrs |= ATTR_REVERSE;
+                } else if (param == 9) {
+                    attrs |= ATTR_STRIKETHROUGH;
+                } else if (param == 22) { // normal intensity
+                    attrs &= ~(ATTR_BOLD | ATTR_DIM);
+                    apply_base_fg();
+                } else if (param == 23) {
+                    attrs &= ~ATTR_ITALIC;
+                } else if (param == 24) {
+                    attrs &= ~ATTR_UNDERLINE;
+                } else if (param == 27) {
+                    attrs &= ~ATTR_REVERSE;
+                } else if (param == 29) {
+                    attrs &= ~ATTR_STRIKETHROUGH;
                 } else if (param >= 30 && param <= 37) {
-                    grid.set_current_fg(ansi_colors[param - 30]);
+                    fg_base_index_ = param - 30;
+                    apply_base_fg();
                 } else if (param >= 40 && param <= 47) {
                     grid.set_current_bg(ansi_colors[param - 40]);
                 } else if (param >= 90 && param <= 97) {
+                    // Explicit bright: not subject to bold re-brightening
+                    fg_base_index_ = -1;
                     grid.set_current_fg(ansi_colors[param - 90 + 8]);
                 } else if (param >= 100 && param <= 107) {
                     grid.set_current_bg(ansi_colors[param - 100 + 8]);
-                } else if (param == 38) {
-                    // 38;2;R;G;B (24-bit truecolor foreground)
+                } else if (param == 38 || param == 48) {
+                    if (param == 38) fg_base_index_ = -1;
+                    // Extended color: 38/48;2;R;G;B (24-bit truecolor) or
+                    // 38/48;5;N (256-color indexed palette)
+                    bool is_fg = (param == 38);
                     if (i + 4 < csi_params_.size() && csi_params_[i + 1] == 2) {
                         float r = std::clamp(csi_params_[i + 2], 0, 255) / 255.0f;
                         float g = std::clamp(csi_params_[i + 3], 0, 255) / 255.0f;
                         float b = std::clamp(csi_params_[i + 4], 0, 255) / 255.0f;
-                        grid.set_current_fg({r, g, b, 1.0f});
+                        if (is_fg) grid.set_current_fg({r, g, b, 1.0f});
+                        else       grid.set_current_bg({r, g, b, 1.0f});
                         i += 4;
-                    }
-                } else if (param == 48) {
-                    // 48;2;R;G;B (24-bit truecolor background)
-                    if (i + 4 < csi_params_.size() && csi_params_[i + 1] == 2) {
-                        float r = std::clamp(csi_params_[i + 2], 0, 255) / 255.0f;
-                        float g = std::clamp(csi_params_[i + 3], 0, 255) / 255.0f;
-                        float b = std::clamp(csi_params_[i + 4], 0, 255) / 255.0f;
-                        grid.set_current_bg({r, g, b, 1.0f});
-                        i += 4;
+                    } else if (i + 2 < csi_params_.size() && csi_params_[i + 1] == 5) {
+                        SDL_FColor color = xterm_256_color(csi_params_[i + 2]);
+                        if (is_fg) grid.set_current_fg(color);
+                        else       grid.set_current_bg(color);
+                        i += 2;
                     }
                 } else if (param == 39) {
                     // Default foreground color
+                    fg_base_index_ = -1;
                     grid.set_current_fg({0.9f, 0.9f, 0.9f, 1.0f});
                 } else if (param == 49) {
                     // Default background color
                     grid.set_current_bg({0.0f, 0.0f, 0.0f, 0.0f});
                 }
             }
+            grid.set_current_attrs(attrs);
             break;
         }
         case 'G': { // Cursor Horizontal Absolute (CHA)
@@ -339,6 +411,31 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
             grid.set_cursor_col(grid.get_cursor_col() - offset);
             break;
         }
+        case 'r': { // Set Scrolling Region (DECSTBM)
+            int top = get_count_param(0, 1) - 1;
+            int bottom = get_param(1, grid.get_rows()) - 1;
+            grid.set_scroll_region(top, bottom);
+            // DECSTBM homes the cursor
+            grid.set_cursor_row(0);
+            grid.set_cursor_col(0);
+            break;
+        }
+        case 'L': { // Insert Lines (IL)
+            grid.insert_lines(get_count_param(0, 1));
+            break;
+        }
+        case 'M': { // Delete Lines (DL)
+            grid.delete_lines(get_count_param(0, 1));
+            break;
+        }
+        case 'S': { // Scroll Up (SU)
+            grid.scroll_region_up(get_count_param(0, 1));
+            break;
+        }
+        case 'T': { // Scroll Down (SD)
+            grid.scroll_region_down(get_count_param(0, 1));
+            break;
+        }
         case 'P': { // Delete Character (DCH)
             int count = get_count_param(0, 1);
             grid.delete_character(count);
@@ -364,32 +461,50 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
             grid.clear_line(grid.get_cursor_row(), mode);
             break;
         }
-        case 'h': { // Set Mode (SM / DECSET)
-            if (is_private_mode_ && get_param(0, 0) == 25) {
-                grid.set_cursor_visible(true); // DECTCEM
-            } else if (is_private_mode_ && get_param(0, 0) == 1049) {
-                grid.set_alt_screen(true);
-            } else if (is_private_mode_ && get_param(0, 0) == 2004) {
-                grid.set_bracketed_paste(true);
+        case 'h':   // Set Mode (SM / DECSET)
+        case 'l': { // Reset Mode (RM / DECRST)
+            if (!is_private_mode_) break;
+            bool set = (command == 'h');
+            // Apps commonly gang modes into one sequence (CSI ?1002;1006h),
+            // so every parameter gets applied, not just the first.
+            for (int mode : csi_params_) {
+                switch (mode) {
+                    case 1:    grid.set_app_cursor_keys(set); break; // DECCKM
+                    case 25:   grid.set_cursor_visible(set); break;  // DECTCEM
+                    case 1049: // save cursor + switch to alt screen (and back)
+                    case 47:   // older switch-only variants, same handling:
+                    case 1047: // set_alt_screen snapshots/restores the cursor
+                               // itself, deliberately not via DECSC state --
+                               // apps ED-clear right after switching, which
+                               // resets the DECSC slot and would restore 0,0
+                        grid.set_alt_screen(set);
+                        break;
+                    case 1048: // DECSC/DECRC dressed up as a mode
+                        if (set) grid.save_cursor();
+                        else     grid.restore_cursor();
+                        break;
+                    case 2004: grid.set_bracketed_paste(set); break;
+                    case 9:      // X10 press-only reporting
+                    case 1000:   // press + release
+                    case 1002:   // press + release + drag motion
+                    case 1003:   // any motion
+                        grid.set_mouse_mode(set ? mode : 0);
+                        break;
+                    case 1006: grid.set_mouse_sgr(set); break; // SGR encoding
+                    case 1007: grid.set_alternate_scroll(set); break;
+                    default: break;
+                }
             }
             break;
         }
         case 's': { // Save Cursor (ANSI.SYS)
-            grid.save_cursor();
+            // CSI ? Ps s is XTSAVE (save private mode values), which ncurses
+            // emits on every mouse enable -- it must not clobber the cursor
+            if (!is_private_mode_) grid.save_cursor();
             break;
         }
         case 'u': { // Restore Cursor (ANSI.SYS)
-            grid.restore_cursor();
-            break;
-        }
-        case 'l': { // Reset Mode (RM / DECRST)
-            if (is_private_mode_ && get_param(0, 0) == 25) {
-                grid.set_cursor_visible(false); // DECTCEM
-            } else if (is_private_mode_ && get_param(0, 0) == 1049) {
-                grid.set_alt_screen(false);
-            } else if (is_private_mode_ && get_param(0, 0) == 2004) {
-                grid.set_bracketed_paste(false);
-            }
+            if (!is_private_mode_) grid.restore_cursor(); // CSI ? Ps u = XTRESTORE
             break;
         }
         default:

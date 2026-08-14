@@ -28,6 +28,11 @@ private:
     std::string trigger_buffer_;
     bool is_private_mode_ = false;
 
+    // Base-palette (SGR 30-37) foreground index currently in effect, or -1
+    // for default/truecolor/explicit-bright. Needed so bold can brighten the
+    // color whether SGR 1 arrives before or after the color parameter.
+    int fg_base_index_ = -1;
+
     // Character-set designation (SCS). Only G0 via ESC ( affects rendering;
     // designations for the other banks are parsed but ignored.
     char charset_designator_ = 0;

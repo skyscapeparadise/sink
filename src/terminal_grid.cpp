@@ -60,6 +60,8 @@ void TerminalGrid::resize(int cols, int rows) {
         Cell default_cell = { 32, {0.9f, 0.9f, 0.9f, 1.0f}, {0.0f, 0.0f, 0.0f, 0.0f} };
         cells_.resize(cols * rows, default_cell);
         row_wrapped_.resize(rows, false);
+        scroll_top_ = 0;
+        scroll_bottom_ = rows_ - 1;
         return;
     }
 
@@ -236,6 +238,10 @@ void TerminalGrid::resize(int cols, int rows) {
     cursor_col_ = std::clamp(cursor_col_, 0, cols_ - 1);
     cursor_row_ = std::clamp(cursor_row_, 0, rows_ - 1);
     wrap_pending_ = false;
+
+    // Margins are tied to the old geometry; xterm resets them on resize too
+    scroll_top_ = 0;
+    scroll_bottom_ = rows_ - 1;
 }
 
 void TerminalGrid::set_cell(int col, int row, char32_t codepoint, const SDL_FColor& fg, const SDL_FColor& bg) {
@@ -251,16 +257,20 @@ void TerminalGrid::write_character(char32_t codepoint) {
         if (cursor_row_ < static_cast<int>(row_wrapped_.size())) {
             row_wrapped_[cursor_row_] = true;
         }
-        cursor_row_++;
-        if (cursor_row_ >= rows_) {
+        // Same motion as index(): scroll at the bottom margin (which may be
+        // a DECSTBM region bottom, not the last screen row)
+        if (cursor_row_ == get_scroll_bottom()) {
             scroll_up();
-            cursor_row_ = rows_ - 1;
+        } else if (cursor_row_ < rows_ - 1) {
+            cursor_row_++;
         }
         cursor_col_ = 0;
     }
     
-    set_cell(cursor_col_, cursor_row_, codepoint, current_fg_, current_bg_);
-    
+    if (cursor_col_ >= 0 && cursor_col_ < cols_ && cursor_row_ >= 0 && cursor_row_ < rows_) {
+        cells_[cursor_row_ * cols_ + cursor_col_] = { codepoint, current_fg_, current_bg_, current_attrs_ };
+    }
+
     if (cursor_col_ >= cols_ - 1) {
         wrap_pending_ = true;
     } else {
@@ -270,7 +280,17 @@ void TerminalGrid::write_character(char32_t codepoint) {
 
 void TerminalGrid::scroll_up() {
     if (rows_ <= 1) return;
-    
+
+    // With a partial DECSTBM region active, only the rows between the
+    // margins move and nothing enters scrollback -- that's what lets vim
+    // and less scroll a viewport without destroying the shell's history.
+    // The alt screen never feeds scrollback either: its rows are a full
+    // screen app's transient UI, not output the user will want to revisit.
+    if (alt_screen_active_ || scroll_top_ != 0 || get_scroll_bottom() != rows_ - 1) {
+        shift_rows_up(scroll_top_, get_scroll_bottom(), 1);
+        return;
+    }
+
     // Copy top row to scrollback history
     std::vector<Cell> top_row(cols_);
     for (int c = 0; c < cols_; ++c) {
@@ -308,6 +328,172 @@ void TerminalGrid::scroll_up() {
     if (saved_cursor_row_ > 0) {
         saved_cursor_row_--;
     }
+}
+
+void TerminalGrid::set_alt_screen(bool active) {
+    if (active == alt_screen_active_) return; // apps re-send 1049h defensively
+    alt_screen_active_ = active;
+
+    // Margins don't survive the buffer switch: a full-screen app's region
+    // must never keep constraining the shell's scrolling.
+    scroll_top_ = 0;
+    scroll_bottom_ = rows_ - 1;
+
+    // A selection or scrolled-back view of the old buffer is meaningless on
+    // the new one
+    has_selection_ = false;
+    selecting_ = false;
+    scroll_offset_ = 0;
+
+    if (active) {
+        saved_primary_cells_ = cells_;
+        saved_primary_row_wrapped_.assign(row_wrapped_.begin(), row_wrapped_.end());
+        saved_primary_cols_ = cols_;
+        saved_primary_rows_ = rows_;
+        saved_primary_cursor_col_ = cursor_col_;
+        saved_primary_cursor_row_ = cursor_row_;
+        saved_primary_wrap_pending_ = wrap_pending_;
+        wrap_pending_ = false;
+
+        // The alt screen starts blank with the cursor at home
+        Cell empty_cell = { 32, current_fg_, current_bg_ };
+        std::fill(cells_.begin(), cells_.end(), empty_cell);
+        std::fill(row_wrapped_.begin(), row_wrapped_.end(), false);
+        cursor_col_ = 0;
+        cursor_row_ = 0;
+    } else {
+        // Restore whatever still fits the current geometry; a resize while
+        // the app was running leaves the rest blank
+        Cell empty_cell = { 32, {0.9f, 0.9f, 0.9f, 1.0f}, {0.0f, 0.0f, 0.0f, 0.0f} };
+        std::fill(cells_.begin(), cells_.end(), empty_cell);
+        std::fill(row_wrapped_.begin(), row_wrapped_.end(), false);
+        int copy_rows = std::min(rows_, saved_primary_rows_);
+        int copy_cols = std::min(cols_, saved_primary_cols_);
+        for (int r = 0; r < copy_rows; ++r) {
+            for (int c = 0; c < copy_cols; ++c) {
+                cells_[r * cols_ + c] = saved_primary_cells_[r * saved_primary_cols_ + c];
+            }
+            row_wrapped_[r] = saved_primary_row_wrapped_[r];
+        }
+        cursor_col_ = std::clamp(saved_primary_cursor_col_, 0, cols_ - 1);
+        cursor_row_ = std::clamp(saved_primary_cursor_row_, 0, rows_ - 1);
+        wrap_pending_ = saved_primary_wrap_pending_;
+        saved_primary_cells_.clear();
+        saved_primary_row_wrapped_.clear();
+
+        // Crash safety: an app that died without undoing civis or DECRSTing
+        // its mouse mode must not leave the shell cursorless or click-deaf
+        cursor_visible_ = true;
+        mouse_mode_ = 0;
+        mouse_sgr_ = false;
+        app_cursor_keys_ = false;
+    }
+}
+
+int TerminalGrid::get_scroll_bottom() const {
+    return (scroll_bottom_ <= 0 || scroll_bottom_ >= rows_) ? rows_ - 1 : scroll_bottom_;
+}
+
+void TerminalGrid::set_scroll_region(int top, int bottom) {
+    if (top < 0) top = 0;
+    if (bottom < 0 || bottom >= rows_) bottom = rows_ - 1;
+    if (top >= bottom) { // degenerate region resets to full screen
+        top = 0;
+        bottom = rows_ - 1;
+    }
+    scroll_top_ = top;
+    scroll_bottom_ = bottom;
+}
+
+// Shifts rows [top..bottom] up by count, blank-filling at the bottom.
+// Rows shifted past `top` are discarded, never pushed to scrollback:
+// this is the primitive behind partial-region scrolls and DL.
+void TerminalGrid::shift_rows_up(int top, int bottom, int count) {
+    if (count <= 0 || top < 0 || bottom >= rows_ || top >= bottom) return;
+    count = std::min(count, bottom - top + 1);
+
+    Cell empty_cell = { 32, current_fg_, current_bg_ };
+    for (int r = top; r <= bottom; ++r) {
+        int src = r + count;
+        if (src <= bottom) {
+            std::copy(cells_.begin() + src * cols_, cells_.begin() + (src + 1) * cols_,
+                      cells_.begin() + r * cols_);
+            row_wrapped_[r] = row_wrapped_[src];
+        } else {
+            std::fill(cells_.begin() + r * cols_, cells_.begin() + (r + 1) * cols_, empty_cell);
+            row_wrapped_[r] = false;
+        }
+    }
+    wrap_pending_ = false;
+}
+
+// Mirror of shift_rows_up: rows [top..bottom] move down, blank-filling at
+// the top and discarding rows pushed past `bottom`.
+void TerminalGrid::shift_rows_down(int top, int bottom, int count) {
+    if (count <= 0 || top < 0 || bottom >= rows_ || top >= bottom) return;
+    count = std::min(count, bottom - top + 1);
+
+    Cell empty_cell = { 32, current_fg_, current_bg_ };
+    for (int r = bottom; r >= top; --r) {
+        int src = r - count;
+        if (src >= top) {
+            std::copy(cells_.begin() + src * cols_, cells_.begin() + (src + 1) * cols_,
+                      cells_.begin() + r * cols_);
+            row_wrapped_[r] = row_wrapped_[src];
+        } else {
+            std::fill(cells_.begin() + r * cols_, cells_.begin() + (r + 1) * cols_, empty_cell);
+            row_wrapped_[r] = false;
+        }
+    }
+    wrap_pending_ = false;
+}
+
+void TerminalGrid::index() {
+    wrap_pending_ = false;
+    if (cursor_row_ == get_scroll_bottom()) {
+        scroll_up();
+    } else if (cursor_row_ < rows_ - 1) {
+        // Below the bottom margin the cursor still moves down freely; at the
+        // last screen row it stays put.
+        cursor_row_++;
+    }
+}
+
+void TerminalGrid::reverse_index() {
+    wrap_pending_ = false;
+    if (cursor_row_ == scroll_top_) {
+        shift_rows_down(scroll_top_, get_scroll_bottom(), 1);
+    } else if (cursor_row_ > 0) {
+        cursor_row_--;
+    }
+}
+
+void TerminalGrid::scroll_region_up(int count) {
+    if (scroll_top_ == 0 && get_scroll_bottom() == rows_ - 1) {
+        // Full-screen scroll goes through scroll_up so the departing rows
+        // land in scrollback like a normal line feed would put them there.
+        for (int n = 0; n < count; ++n) scroll_up();
+    } else {
+        shift_rows_up(scroll_top_, get_scroll_bottom(), count);
+    }
+}
+
+void TerminalGrid::scroll_region_down(int count) {
+    shift_rows_down(scroll_top_, get_scroll_bottom(), count);
+}
+
+void TerminalGrid::insert_lines(int count) {
+    // IL/DL only act with the cursor inside the region, and home the cursor
+    // to the left margin.
+    if (cursor_row_ < scroll_top_ || cursor_row_ > get_scroll_bottom()) return;
+    shift_rows_down(cursor_row_, get_scroll_bottom(), count);
+    cursor_col_ = 0;
+}
+
+void TerminalGrid::delete_lines(int count) {
+    if (cursor_row_ < scroll_top_ || cursor_row_ > get_scroll_bottom()) return;
+    shift_rows_up(cursor_row_, get_scroll_bottom(), count);
+    cursor_col_ = 0;
 }
 
 void TerminalGrid::clear_screen() {
@@ -580,8 +766,25 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
             float x1 = x0 + cell_w;
             float y1 = y0 + cell_h;
 
+            // Resolve SGR attributes into effective colors. Reverse swaps
+            // the pair (a transparent bg reverses against near-black so the
+            // glyph doesn't vanish); dim darkens the foreground.
+            SDL_FColor cell_fg = cell.fg;
+            SDL_FColor cell_bg = cell.bg;
+            if (cell.attrs & ATTR_REVERSE) {
+                SDL_FColor new_bg = cell_fg;
+                cell_fg = (cell_bg.a > 0.0f) ? cell_bg
+                                             : SDL_FColor{0.05f, 0.05f, 0.05f, 1.0f};
+                cell_bg = new_bg;
+            }
+            if (cell.attrs & ATTR_DIM) {
+                cell_fg.r *= 0.6f;
+                cell_fg.g *= 0.6f;
+                cell_fg.b *= 0.6f;
+            }
+
             // Populate Background Geometry
-            SDL_FColor bg_color = cell.bg;
+            SDL_FColor bg_color = cell_bg;
             bool selected = is_cell_selected(c, r);
             bool search_matched = is_cell_search_matched(c, r);
 
@@ -692,7 +895,7 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
                         float gx1 = gx0 + glyph_w;
                         float gy1 = gy0 + glyph_h;
 
-                        SDL_FColor render_color = cell.fg;
+                        SDL_FColor render_color = cell_fg;
                         if (glyph->is_color) {
                             render_color = {1.0f, 1.0f, 1.0f, 1.0f}; // Don't color-tint color emojis
                         }
@@ -726,6 +929,28 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
                         }
                     }
                 }
+            }
+
+            // Underline / strikethrough decoration rects ride in the bg
+            // batch (drawn beneath glyphs, which is where an underline
+            // belongs -- descenders overlap it just like on paper)
+            if (cell.attrs & (ATTR_UNDERLINE | ATTR_STRIKETHROUGH)) {
+                float thickness = std::max(1.0f * display_scale, cell_h * 0.06f);
+                auto push_line = [&](float ly) {
+                    int base_idx = static_cast<int>(bg_vertices_.size());
+                    bg_vertices_.push_back({ {x0, ly}, cell_fg, {0.0f, 0.0f} });
+                    bg_vertices_.push_back({ {x1, ly}, cell_fg, {0.0f, 0.0f} });
+                    bg_vertices_.push_back({ {x0, ly + thickness}, cell_fg, {0.0f, 0.0f} });
+                    bg_vertices_.push_back({ {x1, ly + thickness}, cell_fg, {0.0f, 0.0f} });
+                    bg_indices_.push_back(base_idx + 0);
+                    bg_indices_.push_back(base_idx + 1);
+                    bg_indices_.push_back(base_idx + 2);
+                    bg_indices_.push_back(base_idx + 2);
+                    bg_indices_.push_back(base_idx + 1);
+                    bg_indices_.push_back(base_idx + 3);
+                };
+                if (cell.attrs & ATTR_UNDERLINE) push_line(y0 + cell_h * 0.88f);
+                if (cell.attrs & ATTR_STRIKETHROUGH) push_line(y0 + cell_h * 0.52f);
             }
         }
     }

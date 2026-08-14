@@ -90,6 +90,15 @@ struct TerminalWindow {
     int mouse_down_col = -1;
     int mouse_down_row = -1;
 
+    // Last cell sent as a mouse motion report; motion inside one cell is
+    // pixel-level noise the app never wants repeated
+    int last_mouse_report_col = -1;
+    int last_mouse_report_row = -1;
+
+    // Fractional wheel ticks carried between events while translating
+    // alt-screen scrolling into arrow keys (trackpads emit tiny deltas)
+    float alt_scroll_accum = 0.0f;
+
     // Debounces the (expensive: PTY SIGWINCH + full grid reflow) resize
     // work so a burst of resize events -- a fast native window-zoom
     // animation firing dozens of intermediate frames in ~200ms is the worst
@@ -856,6 +865,137 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         }
     }
 
+    // ---- Mouse reporting (DECSET 9/1000/1002/1003, SGR 1006 encoding) ----
+    // When the running app has requested mouse events (vim, htop, tmux, ...),
+    // clicks, drags and wheel ticks inside the grid are encoded and written
+    // to the PTY instead of driving sink's native selection. Holding Shift
+    // bypasses reporting so native selection/clipboard stay reachable, the
+    // same escape hatch xterm and every GPU terminal provide.
+    {
+        int mouse_mode = target_tw->terminal.get_mouse_mode();
+        bool is_mouse_event = event->type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
+                              event->type == SDL_EVENT_MOUSE_BUTTON_UP ||
+                              event->type == SDL_EVENT_MOUSE_MOTION ||
+                              event->type == SDL_EVENT_MOUSE_WHEEL;
+        if (mouse_mode != 0 && is_mouse_event &&
+            !(SDL_GetModState() & SDL_KMOD_SHIFT) &&
+            !(state->settings_ui.is_open() && SDL_GetKeyboardFocus() == state->settings_ui.get_window())) {
+
+            float top_offset_pts = target_tw->vibrancy_enabled ? 32.0f : 34.0f;
+            auto cell_of = [&](float mx, float my, int& col, int& row) {
+                col = std::clamp(static_cast<int>((mx - state->padding) / target_tw->cell_w),
+                                 0, target_tw->terminal.get_cols() - 1);
+                row = std::clamp(static_cast<int>((my - (state->padding + top_offset_pts)) / target_tw->cell_h),
+                                 0, target_tw->terminal.get_rows() - 1);
+            };
+            auto send_report = [&](int button_code, int col, int row, bool release) {
+                char buf[40];
+                int len;
+                if (target_tw->terminal.is_mouse_sgr()) {
+                    len = std::snprintf(buf, sizeof(buf), "\x1b[<%d;%d;%d%c",
+                                        button_code, col + 1, row + 1, release ? 'm' : 'M');
+                } else {
+                    // Legacy X10 byte encoding: coordinates saturate at 223
+                    if (release) button_code = 3;
+                    len = std::snprintf(buf, sizeof(buf), "\x1b[M%c%c%c",
+                                        static_cast<char>(32 + button_code),
+                                        static_cast<char>(32 + std::min(col + 1, 223)),
+                                        static_cast<char>(32 + std::min(row + 1, 223)));
+                }
+                if (len > 0) target_tw->pty.write_to_pty(buf, static_cast<size_t>(len));
+            };
+            SDL_Keymod mods = SDL_GetModState();
+            // X10 mode (9) is press-only and predates modifier reporting
+            int mod_bits = (mouse_mode == 9) ? 0
+                : ((mods & SDL_KMOD_ALT) ? 8 : 0) | ((mods & SDL_KMOD_CTRL) ? 16 : 0);
+            auto sdl_button_code = [](Uint8 b) {
+                return b == SDL_BUTTON_MIDDLE ? 1 : (b == SDL_BUTTON_RIGHT ? 2 : 0);
+            };
+
+            if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
+                event->button.windowID == SDL_GetWindowID(target_tw->window)) {
+                if (event->button.y >= top_offset_pts) { // title bar clicks stay native
+                    int col, row;
+                    cell_of(event->button.x, event->button.y, col, row);
+                    send_report(sdl_button_code(event->button.button) + mod_bits, col, row, false);
+                    target_tw->last_mouse_report_col = col;
+                    target_tw->last_mouse_report_row = row;
+                    return SDL_APP_CONTINUE;
+                }
+            } else if (event->type == SDL_EVENT_MOUSE_BUTTON_UP &&
+                       event->button.windowID == SDL_GetWindowID(target_tw->window)) {
+                if (mouse_mode != 9 && event->button.y >= top_offset_pts) {
+                    int col, row;
+                    cell_of(event->button.x, event->button.y, col, row);
+                    send_report(sdl_button_code(event->button.button) + mod_bits, col, row, true);
+                    return SDL_APP_CONTINUE;
+                }
+            } else if (event->type == SDL_EVENT_MOUSE_MOTION &&
+                       event->motion.windowID == SDL_GetWindowID(target_tw->window)) {
+                Uint32 held = event->motion.state;
+                bool report_motion = (mouse_mode == 1003) ||
+                                     (mouse_mode == 1002 && held != 0);
+                if (report_motion && event->motion.y >= top_offset_pts) {
+                    int col, row;
+                    cell_of(event->motion.x, event->motion.y, col, row);
+                    if (col != target_tw->last_mouse_report_col ||
+                        row != target_tw->last_mouse_report_row) {
+                        int base = 3; // "no button" for pure hover in 1003
+                        if (held & SDL_BUTTON_LMASK)      base = 0;
+                        else if (held & SDL_BUTTON_MMASK) base = 1;
+                        else if (held & SDL_BUTTON_RMASK) base = 2;
+                        send_report(base + 32 + mod_bits, col, row, false);
+                        target_tw->last_mouse_report_col = col;
+                        target_tw->last_mouse_report_row = row;
+                    }
+                }
+                // Motion never falls through to native drag-selection while
+                // reporting is active
+                if (mouse_mode == 1002 || mouse_mode == 1003) return SDL_APP_CONTINUE;
+            } else if (event->type == SDL_EVENT_MOUSE_WHEEL &&
+                       event->wheel.windowID == SDL_GetWindowID(target_tw->window) &&
+                       mouse_mode != 9) {
+                // Same sign normalization as the inertial scrollback handler
+                // below: positive wy = view up (button 64 / arrow up)
+                float wy = -event->wheel.y;
+                if (event->wheel.direction == SDL_MOUSEWHEEL_FLIPPED) wy = -wy;
+                if (wy != 0.0f && event->wheel.mouse_y >= top_offset_pts) {
+                    int col, row;
+                    cell_of(event->wheel.mouse_x, event->wheel.mouse_y, col, row);
+                    send_report((wy > 0.0f ? 64 : 65) + mod_bits, col, row, false);
+                }
+                return SDL_APP_CONTINUE;
+            }
+        }
+    }
+
+    // Alternate scroll: a pager or editor on the alt screen without mouse
+    // reporting still expects the wheel to work -- every macOS terminal
+    // translates wheel ticks into arrow keys there, so sink does too.
+    // (Scrollback is invisible on the alt screen anyway; inertial-scrolling
+    // it would just drag stale shell history over the app's UI.)
+    if (event->type == SDL_EVENT_MOUSE_WHEEL &&
+        target_tw->terminal.is_alt_screen_active() &&
+        target_tw->terminal.get_mouse_mode() == 0 &&
+        target_tw->terminal.is_alternate_scroll() &&
+        event->wheel.windowID == SDL_GetWindowID(target_tw->window) &&
+        !(state->settings_ui.is_open() && SDL_GetKeyboardFocus() == state->settings_ui.get_window())) {
+        float wy = -event->wheel.y;
+        if (event->wheel.direction == SDL_MOUSEWHEEL_FLIPPED) wy = -wy;
+        target_tw->alt_scroll_accum += wy * 3.0f; // ~3 lines per wheel notch
+        int lines = static_cast<int>(target_tw->alt_scroll_accum);
+        if (lines != 0) {
+            target_tw->alt_scroll_accum -= static_cast<float>(lines);
+            bool app_keys = target_tw->terminal.is_app_cursor_keys();
+            const char* seq = (lines > 0) ? (app_keys ? "\x1bOA" : "\x1b[A")
+                                          : (app_keys ? "\x1bOB" : "\x1b[B");
+            for (int n = std::abs(lines); n > 0; --n) {
+                target_tw->pty.write_to_pty(seq, 3);
+            }
+        }
+        return SDL_APP_CONTINUE;
+    }
+
     if (event->type == SDL_EVENT_MOUSE_WHEEL) {
         if (state->settings_ui.is_open() && SDL_GetKeyboardFocus() == state->settings_ui.get_window()) {
             return SDL_APP_CONTINUE;
@@ -1191,14 +1331,15 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             } else if (sym == SDLK_ESCAPE) {
                 const char c = '\x1b';
                 tw->pty.write_to_pty(&c, 1);
-            } else if (sym == SDLK_UP) {
-                tw->pty.write_to_pty("\x1b[A", 3);
-            } else if (sym == SDLK_DOWN) {
-                tw->pty.write_to_pty("\x1b[B", 3);
-            } else if (sym == SDLK_RIGHT) {
-                tw->pty.write_to_pty("\x1b[C", 3);
-            } else if (sym == SDLK_LEFT) {
-                tw->pty.write_to_pty("\x1b[D", 3);
+            } else if (sym == SDLK_UP || sym == SDLK_DOWN ||
+                       sym == SDLK_RIGHT || sym == SDLK_LEFT) {
+                // DECCKM: full-screen apps ask for the SS3 (ESC O x) form
+                bool app_keys = tw->terminal.is_app_cursor_keys();
+                char final_byte = (sym == SDLK_UP)    ? 'A'
+                                : (sym == SDLK_DOWN)  ? 'B'
+                                : (sym == SDLK_RIGHT) ? 'C' : 'D';
+                char seq[3] = { '\x1b', app_keys ? 'O' : '[', final_byte };
+                tw->pty.write_to_pty(seq, 3);
             } else if (mod & SDL_KMOD_CTRL) {
                 if (sym >= SDLK_A && sym <= SDLK_Z) {
                     char control_char = static_cast<char>(sym - SDLK_A + 1);

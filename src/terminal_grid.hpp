@@ -5,10 +5,23 @@
 #include <string>
 #include "font_manager.hpp"
 
+// Per-cell SGR attribute flags. Bold is also folded into the color at parse
+// time (base palette -> bright variant); the flag is kept for a future bold
+// font face. Italic is parsed but not yet rendered.
+enum CellAttr : uint8_t {
+    ATTR_BOLD          = 1 << 0,
+    ATTR_DIM           = 1 << 1,
+    ATTR_ITALIC        = 1 << 2,
+    ATTR_UNDERLINE     = 1 << 3,
+    ATTR_REVERSE       = 1 << 4,
+    ATTR_STRIKETHROUGH = 1 << 5,
+};
+
 struct Cell {
     char32_t codepoint;
     SDL_FColor fg;
     SDL_FColor bg;
+    uint8_t attrs = 0;
 };
 
 struct ScrollbackRow {
@@ -29,6 +42,18 @@ public:
     
     void scroll_up();
     void clear_screen();
+
+    // Scroll region (DECSTBM) API. Rows are 0-based and inclusive; anything
+    // out of range or degenerate resets to the full screen.
+    void set_scroll_region(int top, int bottom);
+    int get_scroll_top() const { return scroll_top_; }
+    int get_scroll_bottom() const;
+    void index();                       // IND / LF: down one, scrolling at the bottom margin
+    void reverse_index();               // RI: up one, scrolling at the top margin
+    void scroll_region_up(int count);   // SU (CSI S)
+    void scroll_region_down(int count); // SD (CSI T)
+    void insert_lines(int count);       // IL (CSI L)
+    void delete_lines(int count);       // DL (CSI M)
     void clear_scrollback();
     void clear_line(int row, int mode); // 0 = cursor to end, 1 = start to cursor, 2 = entire line
     void delete_character(int count);
@@ -49,6 +74,8 @@ public:
     void set_current_bg(const SDL_FColor& bg) { current_bg_ = bg; }
     const SDL_FColor& get_current_fg() const { return current_fg_; }
     const SDL_FColor& get_current_bg() const { return current_bg_; }
+    void set_current_attrs(uint8_t attrs) { current_attrs_ = attrs; }
+    uint8_t get_current_attrs() const { return current_attrs_; }
 
     // Scrollback view control helpers
     void scroll_view(int delta);
@@ -70,13 +97,10 @@ public:
     void trigger_error_flash() { error_glow_opacity_ = 1.0f; }
     void update_timers(float dt);
 
-    // Leaving the alt screen restores cursor visibility, so a full-screen app
-    // that hid the cursor (or crashed before civis was undone) doesn't leave
-    // the shell without one.
-    void set_alt_screen(bool active) {
-        alt_screen_active_ = active;
-        if (!active) cursor_visible_ = true;
-    }
+    // Switches to/from the alternate screen buffer (DECSET/DECRST 1049 and
+    // friends): the primary screen and cursor are saved on entry and restored
+    // on exit, so quitting a full-screen app brings the shell contents back.
+    void set_alt_screen(bool active);
     bool is_alt_screen_active() const { return alt_screen_active_; }
 
     void set_cursor_visible(bool visible) { cursor_visible_ = visible; }
@@ -84,6 +108,25 @@ public:
 
     void set_bracketed_paste(bool active) { bracketed_paste_active_ = active; }
     bool is_bracketed_paste_active() const { return bracketed_paste_active_; }
+
+    // Mouse reporting state, set via DECSET/DECRST by the running app.
+    // mode: 0 = off, 9 = X10 press-only, 1000 = press/release,
+    // 1002 = press/release + drag motion, 1003 = all motion.
+    // SGR (1006) selects the extended encoding for whichever mode is active.
+    void set_mouse_mode(int mode) { mouse_mode_ = mode; }
+    int get_mouse_mode() const { return mouse_mode_; }
+    void set_mouse_sgr(bool sgr) { mouse_sgr_ = sgr; }
+    bool is_mouse_sgr() const { return mouse_sgr_; }
+
+    // DECCKM (?1): arrows send ESC O A style when the app asked for it
+    void set_app_cursor_keys(bool app) { app_cursor_keys_ = app; }
+    bool is_app_cursor_keys() const { return app_cursor_keys_; }
+
+    // Alternate scroll (?1007): on the alt screen with no mouse mode, wheel
+    // ticks are delivered as arrow keys so pagers scroll naturally. On by
+    // default, matching Terminal.app and iTerm2.
+    void set_alternate_scroll(bool on) { alternate_scroll_ = on; }
+    bool is_alternate_scroll() const { return alternate_scroll_; }
     
     void set_prompt_boundary(int col) { prompt_boundary_col_ = col; }
     int get_prompt_boundary() const { return prompt_boundary_col_; }
@@ -136,6 +179,25 @@ private:
     bool wrap_pending_ = false;
     int saved_cursor_col_ = 0;
     int saved_cursor_row_ = 0;
+
+    // DECSTBM margins (0-based inclusive). scroll_bottom_ is re-anchored to
+    // rows_-1 on every resize; helpers that never touch scrollback do the
+    // actual row movement for partial-region scrolls, IL and DL.
+    int scroll_top_ = 0;
+    int scroll_bottom_ = 0;
+    void shift_rows_up(int top, int bottom, int count);
+    void shift_rows_down(int top, int bottom, int count);
+
+    // Primary screen contents stashed while the alternate screen is active.
+    // Saved with its own geometry: if the window is resized mid-app, restore
+    // clamp-copies whatever still fits rather than reflowing.
+    std::vector<Cell> saved_primary_cells_;
+    std::vector<bool> saved_primary_row_wrapped_;
+    int saved_primary_cols_ = 0;
+    int saved_primary_rows_ = 0;
+    int saved_primary_cursor_col_ = 0;
+    int saved_primary_cursor_row_ = 0;
+    bool saved_primary_wrap_pending_ = false;
     
     // Scrollback history buffers
     std::vector<ScrollbackRow> scrollback_history_;
@@ -160,6 +222,10 @@ private:
     bool alt_screen_active_ = false;
     bool cursor_visible_ = true;
     bool bracketed_paste_active_ = false;
+    int mouse_mode_ = 0;
+    bool mouse_sgr_ = false;
+    bool app_cursor_keys_ = false;
+    bool alternate_scroll_ = true;
     int prompt_boundary_col_ = -1;
 
     // Cursor position & formatting attributes
@@ -170,6 +236,7 @@ private:
     float error_glow_opacity_ = 0.0f;
     SDL_FColor current_fg_ = {0.9f, 0.9f, 0.9f, 1.0f};
     SDL_FColor current_bg_ = {0.0f, 0.0f, 0.0f, 0.0f};
+    uint8_t current_attrs_ = 0;
     
     // Batch rendering buffers
     std::vector<SDL_Vertex> bg_vertices_;
