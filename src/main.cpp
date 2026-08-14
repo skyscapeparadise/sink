@@ -1404,7 +1404,9 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             return SDL_APP_CONTINUE;
         }
         if ((mod & SDL_KMOD_GUI) && (mod & SDL_KMOD_SHIFT) && sym == SDLK_W) {
-            close_focused_pane(state, target_tw);
+            if (!close_focused_pane(state, target_tw)) {
+                set_close_window_requested(true); // last pane: close the window
+            }
             return SDL_APP_CONTINUE;
         }
         if ((mod & SDL_KMOD_GUI) && (mod & SDL_KMOD_ALT) &&
@@ -1851,6 +1853,31 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             state->active_window = tw;
         }
     }
+    // Split-pane menu actions (Shell menu). The menu's key equivalents
+    // consume Cmd+D & co. before SDL sees them, so this is the live code
+    // path for those shortcuts; the SDL key handlers remain as fallback for
+    // builds without the native menu.
+    if (state->active_window) {
+        if (get_split_pane_right_requested()) {
+            split_focused_pane(state, state->active_window, true);
+        }
+        if (get_split_pane_down_requested()) {
+            split_focused_pane(state, state->active_window, false);
+        }
+        if (get_close_pane_requested()) {
+            // Closing the last pane closes the window (iTerm2 semantics);
+            // the close-window flag is polled right below this block
+            if (!close_focused_pane(state, state->active_window)) {
+                set_close_window_requested(true);
+            }
+        }
+        if (int dir = get_pane_focus_requested()) {
+            int dx = (dir == 1) ? -1 : (dir == 2) ? 1 : 0;
+            int dy = (dir == 3) ? -1 : (dir == 4) ? 1 : 0;
+            focus_pane_directional(state->active_window, dx, dy);
+        }
+    }
+
     if (get_close_window_requested()) {
         if (state->active_window) {
             TerminalWindow* tw = state->active_window;
