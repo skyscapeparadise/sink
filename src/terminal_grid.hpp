@@ -50,6 +50,13 @@ public:
     void set_scroll_region(int top, int bottom);
     int get_scroll_top() const { return scroll_top_; }
     int get_scroll_bottom() const;
+
+    // DECOM (CSI ?6h/l): while set, CUP/HVP row 1 means the scroll region's
+    // top margin rather than the screen's top, and cursor positioning is
+    // confined to the region. Toggling it, like DECSTBM, homes the cursor.
+    void set_origin_mode(bool on) { origin_mode_ = on; }
+    bool is_origin_mode() const { return origin_mode_; }
+    void cursor_home(); // (scroll_top_, 0) if origin mode is set, else (0, 0)
     void index();                       // IND / LF: down one, scrolling at the bottom margin
     void reverse_index();               // RI: up one, scrolling at the top margin
     void scroll_region_up(int count);   // SU (CSI S)
@@ -193,6 +200,22 @@ public:
         return window_title_;
     }
 
+    // OSC 52 clipboard write (decoded by the parser), polled by the frame
+    // loop the same way the window title is. Write-only by design: this
+    // grid never reports clipboard *contents* back to the app -- OSC 52
+    // read-back is a known escape-sequence abuse vector (untrusted output,
+    // e.g. from `cat`ing a file or a compromised remote SSH session, could
+    // otherwise silently exfiltrate whatever's on the system clipboard).
+    void set_clipboard_text(const std::string& text) {
+        pending_clipboard_text_ = text;
+        clipboard_dirty_ = true;
+    }
+    bool has_pending_clipboard_text() const { return clipboard_dirty_; }
+    std::string take_clipboard_text() {
+        clipboard_dirty_ = false;
+        return pending_clipboard_text_;
+    }
+
     // OSC 133 shell-integration prompt marks and jump navigation
     void mark_prompt_row();
     bool is_prompt_row(int row) const {
@@ -216,6 +239,7 @@ private:
     // actual row movement for partial-region scrolls, IL and DL.
     int scroll_top_ = 0;
     int scroll_bottom_ = 0;
+    bool origin_mode_ = false;
     void shift_rows_up(int top, int bottom, int count);
     void shift_rows_down(int top, int bottom, int count);
 
@@ -240,6 +264,10 @@ private:
     // Window title state (OSC 0/2)
     std::string window_title_;
     bool title_dirty_ = false;
+
+    // Clipboard state (OSC 52)
+    std::string pending_clipboard_text_;
+    bool clipboard_dirty_ = false;
 
     // Search state
     std::string search_query_;

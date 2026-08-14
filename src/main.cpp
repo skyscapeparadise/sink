@@ -2235,6 +2235,14 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             SDL_SetWindowTitle(tw->window, title.empty() ? "sink" : title.c_str());
         }
 
+        // Apply any OSC 52 clipboard write -- unlike the title, this isn't
+        // gated to the focused pane: a background pane's tmux/script
+        // finishing a copy is a legitimate, common case
+        if (pane.terminal.has_pending_clipboard_text()) {
+            std::string text = pane.terminal.take_clipboard_text();
+            SDL_SetClipboardText(text.c_str());
+        }
+
         // Process retro animated typing ticks
         if (tw->animated_typing && !pane.animation_buffer.empty()) {
             std::lock_guard<std::mutex> lock(pane.grid_mutex);

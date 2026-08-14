@@ -118,6 +118,35 @@ static void test_sgr_truecolor() {
     CHECK(color_near(g.get_cell_at(0, 0).fg, 10/255.0f, 20/255.0f, 30/255.0f));
 }
 
+static void test_decom_origin_mode() {
+    TerminalGrid g; g.resize(20, 6);
+    ANSIParser p;
+    // Region rows 2-4 (1-based); enable DECOM
+    feed(p, g, "\x1b[2;4r\x1b[?6h");
+    CHECK(g.is_origin_mode());
+    // Enabling DECOM homes the cursor to the region's top margin, not (0,0)
+    CHECK(g.get_cursor_row() == 1);
+    CHECK(g.get_cursor_col() == 0);
+
+    // CUP row 1 now means the region's top margin (absolute row 1), not
+    // the screen's top (absolute row 0)
+    feed(p, g, "\x1b[1;3H");
+    CHECK(g.get_cursor_row() == 1);
+    CHECK(g.get_cursor_col() == 2);
+
+    // CUP can't be positioned outside the region while DECOM is set
+    feed(p, g, "\x1b[10;1H");
+    CHECK(g.get_cursor_row() == 3); // clamped to scroll_bottom (absolute row 3)
+
+    // Disabling DECOM: CUP row 1 is the screen's top again, and disabling
+    // itself homes the cursor back to absolute (0,0)
+    feed(p, g, "\x1b[?6l");
+    CHECK(!g.is_origin_mode());
+    CHECK(g.get_cursor_row() == 0);
+    feed(p, g, "\x1b[1;1H");
+    CHECK(g.get_cursor_row() == 0);
+}
+
 static void test_decstbm_basic_scroll() {
     TerminalGrid g; g.resize(20, 6);
     ANSIParser p;
@@ -366,6 +395,24 @@ static void test_osc_title() {
     CHECK(g.take_window_title() == "caf\xc3\xa9");
 }
 
+static void test_osc_52_clipboard() {
+    TerminalGrid g; g.resize(20, 5);
+    ANSIParser p;
+    // base64("hello") == "aGVsbG8="
+    feed(p, g, "\x1b]52;c;aGVsbG8=" "\x07");
+    CHECK(g.has_pending_clipboard_text());
+    CHECK(g.take_clipboard_text() == "hello");
+    CHECK(!g.has_pending_clipboard_text());
+
+    // A query ("?") must not be answered -- no pending write, no crash
+    feed(p, g, "\x1b]52;c;?" "\x07");
+    CHECK(!g.has_pending_clipboard_text());
+
+    // Selection-agnostic: "p" (primary) still just writes the one clipboard
+    feed(p, g, "\x1b]52;p;d29ybGQ=" "\x07");
+    CHECK(g.take_clipboard_text() == "world");
+}
+
 static void test_osc_8_hyperlinks() {
     TerminalGrid g; g.resize(30, 5);
     ANSIParser p;
@@ -437,6 +484,7 @@ int main() {
     test_sgr_256_color();
     test_sgr_256_colon_form();
     test_sgr_truecolor();
+    test_decom_origin_mode();
     test_decstbm_basic_scroll();
     test_decstbm_reset();
     test_reverse_index();
@@ -454,6 +502,7 @@ int main() {
     test_osc_consumed();
     test_ed_el();
     test_osc_title();
+    test_osc_52_clipboard();
     test_osc_8_hyperlinks();
     test_osc_133_prompt_marks();
     test_utf8();

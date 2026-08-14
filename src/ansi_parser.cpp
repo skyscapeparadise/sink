@@ -282,6 +282,38 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
     }
 }
 
+// Standard base64 decode (RFC 4648, no URL-safe alphabet). Malformed input
+// (bad characters, truncated padding) just stops decoding at that point and
+// returns whatever was successfully decoded so far rather than failing the
+// whole payload -- OSC 52 senders occasionally get padding slightly wrong,
+// and a partial clipboard write is a much better failure mode than none.
+static std::string base64_decode(const std::string& in) {
+    static int8_t decode_table[256];
+    static bool initialized = false;
+    if (!initialized) {
+        std::fill(std::begin(decode_table), std::end(decode_table), -1);
+        const char* alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        for (int i = 0; i < 64; ++i) decode_table[static_cast<uint8_t>(alphabet[i])] = static_cast<int8_t>(i);
+        initialized = true;
+    }
+
+    std::string out;
+    out.reserve(in.size() * 3 / 4 + 3);
+    int val = 0, bits = -8;
+    for (unsigned char c : in) {
+        if (c == '=') break;
+        int8_t d = decode_table[c];
+        if (d < 0) continue; // skip whitespace/newlines some senders wrap at
+        val = (val << 6) | d;
+        bits += 6;
+        if (bits >= 0) {
+            out += static_cast<char>((val >> bits) & 0xFF);
+            bits -= 8;
+        }
+    }
+    return out;
+}
+
 void ANSIParser::dispatch_osc(TerminalGrid& grid) {
     // Payload shape: "Ps;Pt" -- numeric selector, then text
     size_t semi = osc_buffer_.find(';');
@@ -313,6 +345,19 @@ void ANSIParser::dispatch_osc(TerminalGrid& grid) {
             size_t inner_semi = pt.find(';');
             std::string uri = (inner_semi != std::string::npos) ? pt.substr(inner_semi + 1) : "";
             grid.set_current_hyperlink(uri);
+            break;
+        }
+        case 52: {
+            // Clipboard: OSC 52;Pc;Pd. Pc selects which selection (c =
+            // clipboard, p = primary, s = selection, ...) -- sink only has
+            // one system clipboard, so it's ignored; Pd is base64, or the
+            // literal string "?" to *query* the current clipboard, which
+            // this deliberately does not answer (see set_clipboard_text).
+            size_t inner_semi = pt.find(';');
+            std::string pd = (inner_semi != std::string::npos) ? pt.substr(inner_semi + 1) : "";
+            if (!pd.empty() && pd != "?") {
+                grid.set_clipboard_text(base64_decode(pd));
+            }
             break;
         }
         case 133:
@@ -454,6 +499,11 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
         case 'f': { // Cursor Position (CUP)
             int row = get_count_param(0, 1) - 1;
             int col = get_count_param(1, 1) - 1;
+            if (grid.is_origin_mode()) {
+                // Row 1 means the scroll region's top margin, not the
+                // screen's; also can't be positioned outside the region.
+                row = std::clamp(row + grid.get_scroll_top(), grid.get_scroll_top(), grid.get_scroll_bottom());
+            }
             grid.set_cursor_row(row);
             grid.set_cursor_col(col);
             break;
@@ -482,9 +532,7 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
             int top = get_count_param(0, 1) - 1;
             int bottom = get_param(1, grid.get_rows()) - 1;
             grid.set_scroll_region(top, bottom);
-            // DECSTBM homes the cursor
-            grid.set_cursor_row(0);
-            grid.set_cursor_col(0);
+            grid.cursor_home(); // DECSTBM homes the cursor (to the origin if DECOM is set)
             break;
         }
         case 'L': { // Insert Lines (IL)
@@ -537,6 +585,10 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
             for (int mode : csi_params_) {
                 switch (mode) {
                     case 1:    grid.set_app_cursor_keys(set); break; // DECCKM
+                    case 6:    // DECOM: like DECSTBM, toggling it homes the cursor
+                        grid.set_origin_mode(set);
+                        grid.cursor_home();
+                        break;
                     case 25:   grid.set_cursor_visible(set); break;  // DECTCEM
                     case 1049: // save cursor + switch to alt screen (and back)
                     case 47:   // older switch-only variants, same handling:

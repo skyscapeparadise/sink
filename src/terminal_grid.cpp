@@ -63,6 +63,7 @@ void TerminalGrid::resize(int cols, int rows) {
         row_prompt_.resize(rows, false);
         scroll_top_ = 0;
         scroll_bottom_ = rows_ - 1;
+        origin_mode_ = false;
         return;
     }
 
@@ -258,6 +259,7 @@ void TerminalGrid::resize(int cols, int rows) {
     // Margins are tied to the old geometry; xterm resets them on resize too
     scroll_top_ = 0;
     scroll_bottom_ = rows_ - 1;
+    origin_mode_ = false;
 }
 
 void TerminalGrid::set_cell(int col, int row, char32_t codepoint, const SDL_FColor& fg, const SDL_FColor& bg) {
@@ -386,6 +388,7 @@ void TerminalGrid::set_alt_screen(bool active) {
     // must never keep constraining the shell's scrolling.
     scroll_top_ = 0;
     scroll_bottom_ = rows_ - 1;
+    origin_mode_ = false;
 
     // A selection or scrolled-back view of the old buffer is meaningless on
     // the new one
@@ -442,6 +445,12 @@ void TerminalGrid::set_alt_screen(bool active) {
         app_cursor_keys_ = false;
         current_hyperlink_id_ = 0;
     }
+}
+
+void TerminalGrid::cursor_home() {
+    cursor_row_ = origin_mode_ ? scroll_top_ : 0;
+    cursor_col_ = 0;
+    wrap_pending_ = false;
 }
 
 int TerminalGrid::get_scroll_bottom() const {
