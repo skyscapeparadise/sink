@@ -47,6 +47,21 @@ bool get_find_requested();
 void set_crt_mode_requested(bool requested);
 bool get_crt_mode_requested();
 
+// Split-pane commands (Shell menu)
+void set_split_pane_right_requested(bool requested);
+bool get_split_pane_right_requested();
+
+void set_split_pane_down_requested(bool requested);
+bool get_split_pane_down_requested();
+
+void set_close_pane_requested(bool requested);
+bool get_close_pane_requested();
+
+// Directional pane-focus request: 0 = none, 1 = left, 2 = right, 3 = up,
+// 4 = down. The getter consumes the pending request.
+void set_pane_focus_requested(int direction);
+int get_pane_focus_requested();
+
 // Enable or disable macOS native translucent window vibrancy / acrylic blur
 void enable_macos_window_vibrancy(SDL_Window* sdl_win, bool enable);
 

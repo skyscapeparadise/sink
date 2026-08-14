@@ -106,6 +106,43 @@ bool get_crt_mode_requested() {
     return g_crt_mode_requested.exchange(false);
 }
 
+static std::atomic<bool> g_split_pane_right_requested{false};
+static std::atomic<bool> g_split_pane_down_requested{false};
+static std::atomic<bool> g_close_pane_requested{false};
+static std::atomic<int> g_pane_focus_requested{0};
+
+void set_split_pane_right_requested(bool req) {
+    g_split_pane_right_requested = req;
+}
+
+bool get_split_pane_right_requested() {
+    return g_split_pane_right_requested.exchange(false);
+}
+
+void set_split_pane_down_requested(bool req) {
+    g_split_pane_down_requested = req;
+}
+
+bool get_split_pane_down_requested() {
+    return g_split_pane_down_requested.exchange(false);
+}
+
+void set_close_pane_requested(bool req) {
+    g_close_pane_requested = req;
+}
+
+bool get_close_pane_requested() {
+    return g_close_pane_requested.exchange(false);
+}
+
+void set_pane_focus_requested(int direction) {
+    g_pane_focus_requested = direction;
+}
+
+int get_pane_focus_requested() {
+    return g_pane_focus_requested.exchange(0);
+}
+
 // C-linkage trigger to invoke the iteration loop frame update
 extern "C" void trigger_menu_render_tick();
 
@@ -121,6 +158,10 @@ extern "C" void trigger_menu_render_tick();
 - (void)newTabWithPreset:(id)sender;
 - (void)closeWindow:(id)sender;
 - (void)print:(id)sender;
+- (void)splitPaneRight:(id)sender;
+- (void)splitPaneDown:(id)sender;
+- (void)closePane:(id)sender;
+- (void)selectPaneInDirection:(id)sender;
 - (void)onMenuTimer:(NSTimer*)timer;
 @end
 
@@ -207,6 +248,23 @@ extern "C" void trigger_menu_render_tick();
 
 - (void)closeWindow:(id)sender {
     set_close_window_requested(true);
+}
+
+- (void)splitPaneRight:(id)sender {
+    set_split_pane_right_requested(true);
+}
+
+- (void)splitPaneDown:(id)sender {
+    set_split_pane_down_requested(true);
+}
+
+- (void)closePane:(id)sender {
+    set_close_pane_requested(true);
+}
+
+// Direction is carried in the menu item's tag (1=left 2=right 3=up 4=down)
+- (void)selectPaneInDirection:(id)sender {
+    set_pane_focus_requested((int)[sender tag]);
 }
 
 - (void)print:(id)sender {
@@ -399,6 +457,76 @@ void setup_macos_menu() {
         [editMenu addItem:selectAllItem];
         [editMenu addItem:[NSMenuItem separatorItem]];
         [editMenu addItem:findItem];
+
+        // Setup the Shell Menu (after Edit), holding the split-pane
+        // commands. The key equivalents shown here are the same shortcuts
+        // main.cpp's SDL key handler implements; AppKit consumes a matching
+        // keystroke before SDL sees it, so both paths route through the
+        // same request flags / split helpers and never double-fire.
+        NSMenuItem* shellItem = nil;
+        for (NSMenuItem* item in [mainMenu itemArray]) {
+            if ([[item title] isEqualToString:@"Shell"]) {
+                shellItem = item;
+                break;
+            }
+        }
+
+        if (!shellItem) {
+            shellItem = [[NSMenuItem alloc] initWithTitle:@"Shell" action:nil keyEquivalent:@""];
+            NSMenu* newShellMenu = [[NSMenu alloc] initWithTitle:@"Shell"];
+            [shellItem setSubmenu:newShellMenu];
+            NSInteger editIndex = [mainMenu indexOfItem:editItem];
+            [mainMenu insertItem:shellItem atIndex:editIndex + 1];
+        }
+
+        NSMenu* shellMenu = [shellItem submenu];
+        [shellMenu removeAllItems];
+        [shellMenu setAutoenablesItems:NO];
+
+        NSMenuItem* splitRightItem = [[NSMenuItem alloc] initWithTitle:@"Split Pane Right"
+                                                                action:@selector(splitPaneRight:)
+                                                         keyEquivalent:@"d"];
+        [splitRightItem setTarget:g_menu_handler];
+        [splitRightItem setEnabled:YES];
+
+        NSMenuItem* splitDownItem = [[NSMenuItem alloc] initWithTitle:@"Split Pane Down"
+                                                               action:@selector(splitPaneDown:)
+                                                        keyEquivalent:@"d"];
+        [splitDownItem setKeyEquivalentModifierMask:(NSEventModifierFlagCommand | NSEventModifierFlagShift)];
+        [splitDownItem setTarget:g_menu_handler];
+        [splitDownItem setEnabled:YES];
+
+        NSMenuItem* closePaneItem = [[NSMenuItem alloc] initWithTitle:@"Close Pane"
+                                                               action:@selector(closePane:)
+                                                        keyEquivalent:@"w"];
+        [closePaneItem setKeyEquivalentModifierMask:(NSEventModifierFlagCommand | NSEventModifierFlagShift)];
+        [closePaneItem setTarget:g_menu_handler];
+        [closePaneItem setEnabled:YES];
+
+        struct PaneDir { NSString* title; unichar key; int tag; };
+        PaneDir dirs[] = {
+            { @"Select Pane on Left",  NSLeftArrowFunctionKey,  1 },
+            { @"Select Pane on Right", NSRightArrowFunctionKey, 2 },
+            { @"Select Pane Above",    NSUpArrowFunctionKey,    3 },
+            { @"Select Pane Below",    NSDownArrowFunctionKey,  4 },
+        };
+
+        [shellMenu addItem:splitRightItem];
+        [shellMenu addItem:splitDownItem];
+        [shellMenu addItem:[NSMenuItem separatorItem]];
+        for (const PaneDir& dir : dirs) {
+            NSString* key = [NSString stringWithCharacters:&dir.key length:1];
+            NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:dir.title
+                                                          action:@selector(selectPaneInDirection:)
+                                                   keyEquivalent:key];
+            [item setKeyEquivalentModifierMask:(NSEventModifierFlagCommand | NSEventModifierFlagOption)];
+            [item setTarget:g_menu_handler];
+            [item setEnabled:YES];
+            [item setTag:dir.tag];
+            [shellMenu addItem:item];
+        }
+        [shellMenu addItem:[NSMenuItem separatorItem]];
+        [shellMenu addItem:closePaneItem];
     }
 }
 
