@@ -25,26 +25,7 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
-// Forward struct definitions
-struct TerminalWindow {
-    SDL_Window* window = nullptr;
-    SDL_Renderer* renderer = nullptr;
-    FontManager font_manager;
-    TerminalGrid terminal;
-    PTYBridge pty;
-    ANSIParser parser;
-    VideoEngine video_engine;
-    std::mutex grid_mutex;
-    std::atomic<bool> demo_running{false};
-    std::atomic<bool> demo_skip_requested{false};
-    std::atomic<bool> demo_abort{false};
-};
-
-struct AppState {
-    std::vector<TerminalWindow*> windows;
-    TerminalWindow* active_window = nullptr;
-    std::string video_path;
-};
+#include "app_state.hpp"
 
 namespace SinkDemo {
 
@@ -316,8 +297,8 @@ are as beautiful as we can be
 )";
 
 static void feed_to_terminal(TerminalWindow* tw, const std::string& data) {
-    std::lock_guard<std::mutex> lock(tw->grid_mutex);
-    tw->parser.parse(tw->terminal, data.c_str(), data.length());
+    std::lock_guard<std::mutex> lock(tw->demo_target().grid_mutex);
+    tw->demo_target().parser.parse(tw->demo_target().terminal, data.c_str(), data.length());
 }
 
 std::string get_song_lyrics(const std::string& song_name) {
@@ -349,7 +330,7 @@ void run_sing(TerminalWindow* tw, const std::string& song_name) {
         tw->demo_running.store(false);
         tw->demo_skip_requested.store(false);
         const char c = '\r';
-        tw->pty.write_to_pty(&c, 1);
+        tw->demo_target().pty.write_to_pty(&c, 1);
         return;
     }
 
@@ -386,7 +367,7 @@ void run_sing(TerminalWindow* tw, const std::string& song_name) {
     if (tw->demo_abort.load()) return;
 
     const char c = '\r';
-    tw->pty.write_to_pty(&c, 1);
+    tw->demo_target().pty.write_to_pty(&c, 1);
 }
 
 static void type_simulated_text(TerminalWindow* tw, const std::string& text) {
@@ -504,8 +485,8 @@ static void play_cpp_video_as_text(TerminalWindow* tw, const std::string& dat_pa
         return;
     }
 
-    int cols = tw->terminal.get_cols();
-    int rows = tw->terminal.get_rows();
+    int cols = tw->demo_target().terminal.get_cols();
+    int rows = tw->demo_target().terminal.get_rows();
     if (cols <= 0) cols = 80;
     if (rows <= 0) rows = 24;
 
@@ -536,8 +517,8 @@ static void play_cpp_video_as_text(TerminalWindow* tw, const std::string& dat_pa
     auto render_frame_lambda = [&]() {
         if (frame->width <= 0 || frame->height <= 0) return;
 
-        int cur_cols = tw->terminal.get_cols();
-        int cur_rows = tw->terminal.get_rows();
+        int cur_cols = tw->demo_target().terminal.get_cols();
+        int cur_rows = tw->demo_target().terminal.get_rows();
         if (cur_cols <= 0) cur_cols = 80;
         if (cur_rows <= 0) cur_rows = 24;
 
@@ -723,7 +704,7 @@ void run_demo(TerminalWindow* tw, AppState* state) {
 
     // Return to the user's interactive shell prompt at row 0 (top of window)
     const char c = '\x0c'; // Ctrl+L clears terminal and redraws prompt at row 0
-    tw->pty.write_to_pty(&c, 1);
+    tw->demo_target().pty.write_to_pty(&c, 1);
 }
 
 } // namespace SinkDemo
