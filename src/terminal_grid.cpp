@@ -284,7 +284,8 @@ void TerminalGrid::write_character(char32_t codepoint) {
     }
     
     if (cursor_col_ >= 0 && cursor_col_ < cols_ && cursor_row_ >= 0 && cursor_row_ < rows_) {
-        cells_[cursor_row_ * cols_ + cursor_col_] = { codepoint, current_fg_, current_bg_, current_attrs_ };
+        cells_[cursor_row_ * cols_ + cursor_col_] =
+            { codepoint, current_fg_, current_bg_, current_attrs_, current_hyperlink_id_ };
     }
 
     if (cursor_col_ >= cols_ - 1) {
@@ -349,6 +350,34 @@ void TerminalGrid::scroll_up() {
     }
 }
 
+void TerminalGrid::set_current_hyperlink(const std::string& uri) {
+    if (uri.empty()) {
+        current_hyperlink_id_ = 0;
+        return;
+    }
+    auto it = hyperlink_id_by_uri_.find(uri);
+    if (it != hyperlink_id_by_uri_.end()) {
+        current_hyperlink_id_ = it->second;
+        return;
+    }
+    if (hyperlink_uris_.size() >= kMaxHyperlinkTableSize) {
+        // Same amortized-reset the font atlas uses when it fills up: cells
+        // already on screen/in scrollback referencing old ids just degrade
+        // to "no URI" rather than the table growing without bound.
+        hyperlink_uris_.clear();
+        hyperlink_id_by_uri_.clear();
+    }
+    hyperlink_uris_.push_back(uri);
+    current_hyperlink_id_ = static_cast<uint32_t>(hyperlink_uris_.size()); // 1-based
+    hyperlink_id_by_uri_[uri] = current_hyperlink_id_;
+}
+
+const std::string& TerminalGrid::get_hyperlink_uri(uint32_t id) const {
+    static const std::string empty;
+    if (id == 0 || id > hyperlink_uris_.size()) return empty;
+    return hyperlink_uris_[id - 1];
+}
+
 void TerminalGrid::set_alt_screen(bool active) {
     if (active == alt_screen_active_) return; // apps re-send 1049h defensively
     alt_screen_active_ = active;
@@ -411,6 +440,7 @@ void TerminalGrid::set_alt_screen(bool active) {
         mouse_mode_ = 0;
         mouse_sgr_ = false;
         app_cursor_keys_ = false;
+        current_hyperlink_id_ = 0;
     }
 }
 
@@ -939,9 +969,22 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
                 // upscale -- see FontManager::get_ligature_glyph().
                 const GlyphInfo* glyph = is_ligature
                     ? font_manager.get_ligature_glyph(renderer, render_cp)
-                    : font_manager.get_glyph(renderer, render_cp);
+                    : font_manager.get_glyph(renderer, render_cp,
+                                             (cell.attrs & ATTR_BOLD) != 0,
+                                             (cell.attrs & ATTR_ITALIC) != 0);
                 if (glyph && glyph->src_rect.w > 0.0f && glyph->src_rect.h > 0.0f) {
-                    bool is_dynamic = (render_cp < 32 || render_cp > 126);
+                    // Only *unstyled* ASCII glyphs live in the static atlas
+                    // (FontManager::build_atlas only ever rasterizes the
+                    // regular face). Bold/italic ASCII -- and everything
+                    // non-ASCII, any style -- comes from the dynamic atlas;
+                    // src_rect is coordinates *within whichever texture the
+                    // glyph actually landed in*, so getting this wrong means
+                    // sampling the static atlas at dynamic-atlas coordinates
+                    // (or vice versa) -- i.e. reading whatever unrelated
+                    // glyph happens to sit there, not a missing/blank glyph.
+                    bool is_ascii_regular = render_cp >= 32 && render_cp <= 126 &&
+                                            !(cell.attrs & (ATTR_BOLD | ATTR_ITALIC));
+                    bool is_dynamic = !is_ascii_regular;
                     float tex_w = is_dynamic ? dyn_atlas_w : atlas_w;
                     float tex_h = is_dynamic ? dyn_atlas_h : atlas_h;
 
@@ -1022,8 +1065,13 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
 
             // Underline / strikethrough decoration rects ride in the bg
             // batch (drawn beneath glyphs, which is where an underline
-            // belongs -- descenders overlap it just like on paper)
-            if (cell.attrs & (ATTR_UNDERLINE | ATTR_STRIKETHROUGH)) {
+            // belongs -- descenders overlap it just like on paper). A
+            // hyperlinked cell (OSC 8) is always underlined regardless of
+            // its own SGR attrs -- the same "it's a link" affordance every
+            // browser and editor uses, independent of whatever styling the
+            // app around it applied.
+            bool has_underline = (cell.attrs & ATTR_UNDERLINE) || cell.hyperlink_id != 0;
+            if (has_underline || (cell.attrs & ATTR_STRIKETHROUGH)) {
                 float thickness = std::max(1.0f * display_scale, cell_h * 0.06f);
                 auto push_line = [&](float ly) {
                     int base_idx = static_cast<int>(bg_vertices_.size());
@@ -1038,7 +1086,7 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
                     bg_indices_.push_back(base_idx + 1);
                     bg_indices_.push_back(base_idx + 3);
                 };
-                if (cell.attrs & ATTR_UNDERLINE) push_line(y0 + cell_h * 0.88f);
+                if (has_underline) push_line(y0 + cell_h * 0.88f);
                 if (cell.attrs & ATTR_STRIKETHROUGH) push_line(y0 + cell_h * 0.52f);
             }
         }

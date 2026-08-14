@@ -366,6 +366,34 @@ static void test_osc_title() {
     CHECK(g.take_window_title() == "caf\xc3\xa9");
 }
 
+static void test_osc_8_hyperlinks() {
+    TerminalGrid g; g.resize(30, 5);
+    ANSIParser p;
+    // "\x07" is followed by a hex-digit char ('l' isn't one, so this pair is
+    // safe, but later ones deliberately use "\x07" "x" concatenation since
+    // \x escapes are unbounded and would otherwise swallow a following
+    // hex-digit char (e.g. "\x07a" parses as the single byte 0x7A = 'z')
+    feed(p, g, "\x1b]8;;https://example.com\x07link\x1b]8;;\x07plain");
+    CHECK(g.get_cell_at(0, 0).codepoint == 'l');
+    uint32_t link_id = g.get_cell_at(0, 0).hyperlink_id;
+    CHECK(link_id != 0);
+    CHECK(g.get_hyperlink_uri(link_id) == "https://example.com");
+    // "link" is 4 chars; the 5th cell ('p' of "plain") must not carry it
+    CHECK(g.get_cell_at(3, 0).hyperlink_id == link_id);
+    CHECK(g.get_cell_at(4, 0).hyperlink_id == 0);
+
+    // Params before the URI (id=xxx) are skipped, not treated as the URI
+    feed(p, g, "\r\n\x1b]8;id=abc;https://x.com" "\x07" "a");
+    uint32_t link2 = g.get_cell_at(0, 1).hyperlink_id;
+    CHECK(link2 != 0 && link2 != link_id);
+    CHECK(g.get_hyperlink_uri(link2) == "https://x.com");
+
+    // Same URI seen again dedupes to the same id ('b' lands at col 1: 'a'
+    // from the previous feed left the cursor there)
+    feed(p, g, "\x1b]8;;https://example.com\x1b\\b");
+    CHECK(g.get_cell_at(1, 1).hyperlink_id == link_id);
+}
+
 static void test_osc_133_prompt_marks() {
     TerminalGrid g; g.resize(20, 4);
     ANSIParser p;
@@ -426,6 +454,7 @@ int main() {
     test_osc_consumed();
     test_ed_el();
     test_osc_title();
+    test_osc_8_hyperlinks();
     test_osc_133_prompt_marks();
     test_utf8();
 

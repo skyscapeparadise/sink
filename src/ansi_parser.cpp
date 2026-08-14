@@ -304,6 +304,17 @@ void ANSIParser::dispatch_osc(TerminalGrid& grid) {
         case 2: // set window title
             grid.set_window_title(pt);
             break;
+        case 8: {
+            // Hyperlink: OSC 8;params;URI ST. `pt` is "params;URI" -- params
+            // (e.g. id=xxx, used to group multiple spans as one link) are
+            // parsed by real terminals for hover-highlighting a link's other
+            // spans; sink doesn't do that yet, so they're just skipped past.
+            // OSC 8;;ST (empty URI) closes the link.
+            size_t inner_semi = pt.find(';');
+            std::string uri = (inner_semi != std::string::npos) ? pt.substr(inner_semi + 1) : "";
+            grid.set_current_hyperlink(uri);
+            break;
+        }
         case 133:
             // Shell integration prompt marks (FinalTerm/iTerm2 protocol).
             // 'A' = prompt start -- the anchor Cmd+Up/Down jump between.

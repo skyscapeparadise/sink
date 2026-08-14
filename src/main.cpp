@@ -1314,6 +1314,21 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 int col = static_cast<int>((mx - target_tw->fpane().rect.x - state->padding) / target_tw->cell_w);
                 int row = static_cast<int>((my - target_tw->fpane().rect.y - state->padding) / target_tw->cell_h);
 
+                // Cmd+Click opens an OSC 8 hyperlink instead of starting a
+                // selection -- the same modifier-gated affordance VS Code,
+                // iTerm2, and Kitty all use so a plain click still just
+                // places the cursor/selects.
+                if ((SDL_GetModState() & SDL_KMOD_GUI) && event->button.clicks == 1) {
+                    uint32_t link_id = target_tw->fpane().terminal.get_cell_at(col, row).hyperlink_id;
+                    if (link_id != 0) {
+                        const std::string& uri = target_tw->fpane().terminal.get_hyperlink_uri(link_id);
+#if defined(__APPLE__)
+                        open_url_if_safe(uri.c_str());
+#endif
+                        return SDL_APP_CONTINUE;
+                    }
+                }
+
                 int clicks = event->button.clicks;
                 if (clicks == 1) {
                     target_tw->fpane().mouse_down_col = col;

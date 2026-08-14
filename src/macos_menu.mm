@@ -726,6 +726,23 @@ float get_native_content_top_inset(SDL_Window* sdl_win) {
     }
 }
 
+void open_url_if_safe(const char* uri) {
+    @autoreleasepool {
+        if (!uri) return;
+        NSString* uriStr = [NSString stringWithUTF8String:uri];
+        if (!uriStr) return; // invalid UTF-8
+
+        NSURL* url = [NSURL URLWithString:uriStr];
+        if (!url || !url.scheme) return;
+
+        NSString* scheme = [url.scheme lowercaseString];
+        static NSSet<NSString*>* allowedSchemes = [NSSet setWithArray:@[@"http", @"https", @"mailto"]];
+        if (![allowedSchemes containsObject:scheme]) return;
+
+        [[NSWorkspace sharedWorkspace] openURL:url];
+    }
+}
+
 void trigger_print_dialog(const char* text_utf8) {
     @autoreleasepool {
         NSString* textStr = [NSString stringWithUTF8String:text_utf8];

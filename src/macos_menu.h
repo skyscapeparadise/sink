@@ -19,6 +19,14 @@ void add_window_as_tab(SDL_Window* parent_sdl_win, SDL_Window* child_sdl_win);
 // non-Apple build wouldn't call this at all).
 float get_native_content_top_inset(SDL_Window* sdl_win);
 
+// Opens a URI via NSWorkspace (no shell involved -- terminal output is
+// attacker-controlled, e.g. `cat`'d files or a compromised remote SSH
+// session, so this must never go through system()/popen()). Only
+// http/https/mailto are opened; anything else (including file:, which
+// would expose arbitrary local file access to a hyperlink in untrusted
+// output) is silently ignored.
+void open_url_if_safe(const char* uri);
+
 // Thread-safe flags to request menu commands
 void set_settings_requested(bool requested);
 bool get_settings_requested();
