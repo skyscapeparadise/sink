@@ -3,11 +3,11 @@
 #include <SDL3/SDL.h>
 #include <vector>
 #include <string>
+#include <unordered_map>
 #include "font_manager.hpp"
 
 // Per-cell SGR attribute flags. Bold is also folded into the color at parse
-// time (base palette -> bright variant); the flag is kept for a future bold
-// font face. Italic is parsed but not yet rendered.
+// time (base palette -> bright variant).
 enum CellAttr : uint8_t {
     ATTR_BOLD          = 1 << 0,
     ATTR_DIM           = 1 << 1,
@@ -22,6 +22,7 @@ struct Cell {
     SDL_FColor fg;
     SDL_FColor bg;
     uint8_t attrs = 0;
+    uint32_t hyperlink_id = 0; // 0 = no link; see TerminalGrid::get_hyperlink_uri
 };
 
 struct ScrollbackRow {
@@ -77,6 +78,13 @@ public:
     const SDL_FColor& get_current_bg() const { return current_bg_; }
     void set_current_attrs(uint8_t attrs) { current_attrs_ = attrs; }
     uint8_t get_current_attrs() const { return current_attrs_; }
+
+    // OSC 8 hyperlinks. set_current_hyperlink("") clears (the OSC 8;;ST
+    // close form); a non-empty URI is deduped against previously-seen URIs
+    // so repeated links (e.g. every row of an `ls --hyperlink` listing
+    // pointing at the same directory) don't grow the table per-cell.
+    void set_current_hyperlink(const std::string& uri);
+    const std::string& get_hyperlink_uri(uint32_t id) const;
 
     // Scrollback view control helpers
     void scroll_view(int delta);
@@ -265,6 +273,18 @@ private:
     SDL_FColor current_fg_ = {0.9f, 0.9f, 0.9f, 1.0f};
     SDL_FColor current_bg_ = {0.0f, 0.0f, 0.0f, 0.0f};
     uint8_t current_attrs_ = 0;
+    uint32_t current_hyperlink_id_ = 0;
+
+    // Hyperlink dedup table. hyperlink_uris_[id - 1] is the URI for `id`
+    // (id 0 reserved to mean "no link"). Capped so a session that streams
+    // an unbounded number of distinct URIs over hours/days can't grow this
+    // forever -- same amortized-reset pattern the font atlas already uses
+    // when it fills up. Cells referencing an id from a cleared generation
+    // just resolve to "no URI" (get_hyperlink_uri returns empty), which is
+    // a harmless degrade, not a crash.
+    std::vector<std::string> hyperlink_uris_;
+    std::unordered_map<std::string, uint32_t> hyperlink_id_by_uri_;
+    static constexpr size_t kMaxHyperlinkTableSize = 100000;
     
     // Batch rendering buffers
     std::vector<SDL_Vertex> bg_vertices_;

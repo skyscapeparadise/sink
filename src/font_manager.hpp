@@ -23,7 +23,13 @@ public:
 
     SDL_Texture* get_atlas_texture() const { return atlas_texture_; }
     SDL_Texture* get_dynamic_atlas_texture() const { return dynamic_atlas_texture_; }
-    const GlyphInfo* get_glyph(SDL_Renderer* renderer, char32_t codepoint) const;
+
+    // `cell_bold`/`cell_italic` select which of the 4 synthetic style
+    // variants (regular/bold/italic/bold-italic) to rasterize from -- all
+    // opened from the same font file the user configured, styled via
+    // TTF_SetFontStyle, since sink only takes one font path rather than a
+    // family of weight-specific files.
+    const GlyphInfo* get_glyph(SDL_Renderer* renderer, char32_t codepoint, bool cell_bold = false, bool cell_italic = false) const;
 
     // Same codepoint, rasterized from a font instance loaded at ~2x point
     // size, for ligature substitute glyphs (e.g. "->" drawn as a single
@@ -38,22 +44,52 @@ public:
     float get_cell_height() const { return cell_height_; }
 
 private:
+    // 4 style variants, all opened from the same font file/size the user
+    // configured (styled via TTF_SetFontStyle) since sink takes one font
+    // path rather than a family of weight-specific files. font_ (regular)
+    // is what cell metrics, the emoji fallback, and the ligature companion
+    // instance are all still keyed off of.
     TTF_Font* font_ = nullptr;
+    TTF_Font* font_bold_ = nullptr;
+    TTF_Font* font_italic_ = nullptr;
+    TTF_Font* font_bold_italic_ = nullptr;
     TTF_Font* emoji_font_ = nullptr;
     TTF_Font* ligature_font_ = nullptr; // same face as font_, ~2x point size
     SDL_Texture* atlas_texture_ = nullptr;
     SDL_Texture* dynamic_atlas_texture_ = nullptr;
     std::unordered_map<char32_t, GlyphInfo> glyph_cache_;
-    mutable std::unordered_map<char32_t, GlyphInfo> dynamic_glyph_cache_;
+    // One dynamic cache per style, since a bold/italic glyph rasterizes to
+    // different pixels than its regular counterpart and both must be able
+    // to live in the atlas at once (e.g. mixed bold/regular text on
+    // screen). Styles 1-3 (anything with bold and/or italic) always go
+    // through here, even for ASCII -- only plain regular text gets the
+    // static-atlas fast path below, since it's the overwhelmingly common
+    // case and the dynamic path (already handling arbitrary non-ASCII
+    // content) generalizes to the rest without a second bespoke atlas
+    // builder. Indexed by style_index(bold, italic); index 0 unused here
+    // since regular goes through dynamic_glyph_cache_[0] only as a
+    // non-ASCII fallback, same as before this feature existed.
+    mutable std::unordered_map<char32_t, GlyphInfo> dynamic_glyph_cache_[4];
     // Separate from dynamic_glyph_cache_ (though they share the same atlas
     // texture/packer) since a ligature symbol could in principle also want
     // its normal-size rendering, and the two must not collide under the
-    // same codepoint key.
+    // same codepoint key. Ligatures are only ever rasterized from the
+    // regular face (see get_ligature_glyph).
     mutable std::unordered_map<char32_t, GlyphInfo> ligature_glyph_cache_;
-    
-    // Fast O(1) ASCII glyph cache
+
+    // Fast O(1) ASCII glyph cache -- regular style only (see above)
     GlyphInfo ascii_cache_[128];
     bool has_ascii_cache_[128] = {false};
+
+    static int style_index(bool bold, bool italic) { return (bold ? 1 : 0) | (italic ? 2 : 0); }
+    TTF_Font* font_for_style(int idx) const {
+        switch (idx) {
+            case 1: return font_bold_ ? font_bold_ : font_;
+            case 2: return font_italic_ ? font_italic_ : font_;
+            case 3: return font_bold_italic_ ? font_bold_italic_ : font_;
+            default: return font_;
+        }
+    }
     
     float cell_width_ = 0.0f;
     float cell_height_ = 0.0f;

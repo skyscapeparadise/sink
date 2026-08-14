@@ -29,9 +29,11 @@ void FontManager::cleanup() {
         SDL_DestroyTexture(dynamic_atlas_texture_);
         dynamic_atlas_texture_ = nullptr;
     }
-    if (font_) {
-        TTF_CloseFont(font_);
-        font_ = nullptr;
+    for (TTF_Font** f : { &font_, &font_bold_, &font_italic_, &font_bold_italic_ }) {
+        if (*f) {
+            TTF_CloseFont(*f);
+            *f = nullptr;
+        }
     }
     if (emoji_font_) {
         TTF_CloseFont(emoji_font_);
@@ -46,7 +48,7 @@ void FontManager::cleanup() {
         is_ttf_initialized_ = false;
     }
     glyph_cache_.clear();
-    dynamic_glyph_cache_.clear();
+    for (auto& cache : dynamic_glyph_cache_) cache.clear();
     ligature_glyph_cache_.clear();
     std::fill_n(has_ascii_cache_, 128, false);
     dynamic_x_ = 0;
@@ -59,9 +61,11 @@ bool FontManager::load_font(SDL_Renderer* renderer, const std::string& font_path
         return false;
     }
 
-    if (font_) {
-        TTF_CloseFont(font_);
-        font_ = nullptr;
+    for (TTF_Font** f : { &font_, &font_bold_, &font_italic_, &font_bold_italic_ }) {
+        if (*f) {
+            TTF_CloseFont(*f);
+            *f = nullptr;
+        }
     }
     if (emoji_font_) {
         TTF_CloseFont(emoji_font_);
@@ -80,7 +84,7 @@ bool FontManager::load_font(SDL_Renderer* renderer, const std::string& font_path
         dynamic_atlas_texture_ = nullptr;
     }
     glyph_cache_.clear();
-    dynamic_glyph_cache_.clear();
+    for (auto& cache : dynamic_glyph_cache_) cache.clear();
     ligature_glyph_cache_.clear();
     dynamic_x_ = 0;
     dynamic_y_ = 0;
@@ -95,6 +99,22 @@ bool FontManager::load_font(SDL_Renderer* renderer, const std::string& font_path
     if (bold) {
         TTF_SetFontStyle(font_, TTF_STYLE_BOLD);
     }
+
+    // Bold/italic/bold-italic variants for per-cell SGR attribute
+    // rendering. Opened from the same file: sink takes one font path, not
+    // a family of weight-specific files, so these rely on SDL_ttf/FreeType
+    // synthesizing the style (embolden strokes, apply an oblique skew) when
+    // the font itself doesn't carry a dedicated bold/italic face. A failed
+    // open here just means that style falls back to the regular face (see
+    // font_for_style) -- not fatal, unlike the regular face failing above.
+    font_bold_ = TTF_OpenFont(font_path.c_str(), font_size);
+    if (font_bold_) TTF_SetFontStyle(font_bold_, TTF_STYLE_BOLD);
+
+    font_italic_ = TTF_OpenFont(font_path.c_str(), font_size);
+    if (font_italic_) TTF_SetFontStyle(font_italic_, TTF_STYLE_ITALIC);
+
+    font_bold_italic_ = TTF_OpenFont(font_path.c_str(), font_size);
+    if (font_bold_italic_) TTF_SetFontStyle(font_bold_italic_, TTF_STYLE_BOLD | TTF_STYLE_ITALIC);
 
     // Load fallback emoji font
     emoji_font_ = TTF_OpenFont("/System/Library/Fonts/Apple Color Emoji.ttc", font_size);
@@ -289,15 +309,17 @@ static bool is_emoji_codepoint(char32_t cp) {
     return false;
 }
 
-const GlyphInfo* FontManager::get_glyph(SDL_Renderer* renderer, char32_t codepoint) const {
-    // 1. Fast O(1) ASCII Cache Lookup
-    if (codepoint < 128 && has_ascii_cache_[codepoint]) {
+const GlyphInfo* FontManager::get_glyph(SDL_Renderer* renderer, char32_t codepoint, bool cell_bold, bool cell_italic) const {
+    int style = style_index(cell_bold, cell_italic);
+
+    // 1. Fast O(1) ASCII Cache Lookup -- regular style only
+    if (style == 0 && codepoint < 128 && has_ascii_cache_[codepoint]) {
         return &ascii_cache_[codepoint];
     }
 
     // 2. Dynamic Cache Lookup
-    auto dyn_it = dynamic_glyph_cache_.find(codepoint);
-    if (dyn_it != dynamic_glyph_cache_.end()) {
+    auto dyn_it = dynamic_glyph_cache_[style].find(codepoint);
+    if (dyn_it != dynamic_glyph_cache_[style].end()) {
         return &dyn_it->second;
     }
 
@@ -318,10 +340,13 @@ const GlyphInfo* FontManager::get_glyph(SDL_Renderer* renderer, char32_t codepoi
         return nullptr;
     }
 
-    // 4. Determine font source & render
+    // 4. Determine font source & render. Emoji are never styled (no
+    // bold/italic Apple Color Emoji face to speak of); everything else
+    // uses whichever style face is available, falling back to regular.
     bool is_color = false;
     SDL_Surface* glyph_surf = nullptr;
     SDL_Color white = {255, 255, 255, 255};
+    TTF_Font* styled_font = font_for_style(style);
 
     if (is_emoji_codepoint(codepoint)) {
         if (emoji_font_ && TTF_FontHasGlyph(emoji_font_, codepoint)) {
@@ -329,8 +354,8 @@ const GlyphInfo* FontManager::get_glyph(SDL_Renderer* renderer, char32_t codepoi
             is_color = true;
         }
     } else {
-        if (font_ && TTF_FontHasGlyph(font_, codepoint)) {
-            glyph_surf = TTF_RenderGlyph_Blended(font_, codepoint, white);
+        if (styled_font && TTF_FontHasGlyph(styled_font, codepoint)) {
+            glyph_surf = TTF_RenderGlyph_Blended(styled_font, codepoint, white);
         } else if (emoji_font_ && TTF_FontHasGlyph(emoji_font_, codepoint)) {
             glyph_surf = TTF_RenderGlyph_Blended(emoji_font_, codepoint, white);
             is_color = true;
@@ -358,12 +383,13 @@ const GlyphInfo* FontManager::get_glyph(SDL_Renderer* renderer, char32_t codepoi
 
     // Check if atlas is full
     if (dynamic_y_ + h + 4 > 1024) {
-        // Reset packer coordinates & clear cache. Both dynamic caches share
-        // this one atlas texture/packer, so both go stale together.
+        // Reset packer coordinates & clear cache. All dynamic caches (every
+        // style, plus ligatures) share this one atlas texture/packer, so
+        // they all go stale together.
         dynamic_x_ = 0;
         dynamic_y_ = 0;
         dynamic_row_h_ = 0;
-        dynamic_glyph_cache_.clear();
+        for (auto& cache : dynamic_glyph_cache_) cache.clear();
         ligature_glyph_cache_.clear();
 
         // Clear dynamic texture
@@ -390,7 +416,7 @@ const GlyphInfo* FontManager::get_glyph(SDL_Renderer* renderer, char32_t codepoi
     if (is_color) {
         TTF_GetGlyphMetrics(emoji_font_, codepoint, nullptr, nullptr, nullptr, nullptr, &adv);
     } else {
-        TTF_GetGlyphMetrics(font_, codepoint, nullptr, nullptr, nullptr, nullptr, &adv);
+        TTF_GetGlyphMetrics(styled_font, codepoint, nullptr, nullptr, nullptr, nullptr, &adv);
     }
     float actual_advance = adv > 0 ? static_cast<float>(adv) : static_cast<float>(w);
 
@@ -406,7 +432,7 @@ const GlyphInfo* FontManager::get_glyph(SDL_Renderer* renderer, char32_t codepoi
     info.is_color = is_color;
 
     // Cache it
-    dynamic_glyph_cache_[codepoint] = info;
+    dynamic_glyph_cache_[style][codepoint] = info;
 
     // Advance packer coordinates
     dynamic_x_ += w + 4;
@@ -414,7 +440,7 @@ const GlyphInfo* FontManager::get_glyph(SDL_Renderer* renderer, char32_t codepoi
 
     SDL_DestroySurface(glyph_surf);
 
-    return &dynamic_glyph_cache_[codepoint];
+    return &dynamic_glyph_cache_[style][codepoint];
 }
 
 const GlyphInfo* FontManager::get_ligature_glyph(SDL_Renderer* renderer, char32_t codepoint) const {
@@ -450,7 +476,7 @@ const GlyphInfo* FontManager::get_ligature_glyph(SDL_Renderer* renderer, char32_
         dynamic_x_ = 0;
         dynamic_y_ = 0;
         dynamic_row_h_ = 0;
-        dynamic_glyph_cache_.clear();
+        for (auto& cache : dynamic_glyph_cache_) cache.clear();
         ligature_glyph_cache_.clear();
 
         std::vector<uint32_t> empty_pixels(1024 * 1024, 0);
