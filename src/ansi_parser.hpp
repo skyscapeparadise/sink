@@ -38,6 +38,14 @@ private:
     char charset_designator_ = 0;
     bool g0_dec_graphics_ = false;
 
+    // OSC payload accumulation. Only OSC strings are kept (DCS/APC/PM/SOS
+    // are still consumed and discarded); the buffer is capped so a hostile
+    // stream can't grow it without bound.
+    bool str_is_osc_ = false;
+    std::string osc_buffer_;
+    static constexpr size_t kOscMaxLen = 4096;
+    void dispatch_osc(TerminalGrid& grid);
+
     // UTF-8 state variables to parse multi-byte characters
     int utf8_bytes_needed_ = 0;
     char32_t utf8_codepoint_ = 0;

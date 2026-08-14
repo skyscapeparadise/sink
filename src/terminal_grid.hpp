@@ -27,6 +27,7 @@ struct Cell {
 struct ScrollbackRow {
     std::vector<Cell> cells;
     bool wrapped = false;
+    bool prompt = false; // OSC 133;A fired on this row (shell prompt start)
 };
 
 class TerminalGrid {
@@ -138,6 +139,8 @@ public:
     std::string get_current_line_text() const;
 
     size_t get_scrollback_size() const { return scrollback_history_.size(); }
+    void set_max_scrollback(size_t lines);
+    size_t get_max_scrollback() const { return max_scrollback_size_; }
     int get_select_start_col() const { return select_start_col_; }
     int get_select_start_row() const { return select_start_row_; }
     int get_select_end_col() const { return select_end_col_; }
@@ -171,11 +174,31 @@ public:
     void set_enable_ligatures(bool enable) { enable_ligatures_ = enable; }
     bool get_enable_ligatures() const { return enable_ligatures_; }
 
+    // Window title, set by OSC 0/2 and polled by the frame loop
+    void set_window_title(const std::string& title) {
+        window_title_ = title;
+        title_dirty_ = true;
+    }
+    bool has_pending_title() const { return title_dirty_; }
+    std::string take_window_title() {
+        title_dirty_ = false;
+        return window_title_;
+    }
+
+    // OSC 133 shell-integration prompt marks and jump navigation
+    void mark_prompt_row();
+    bool is_prompt_row(int row) const {
+        return row >= 0 && row < static_cast<int>(row_prompt_.size()) && row_prompt_[row];
+    }
+    void scroll_to_prev_prompt();
+    void scroll_to_next_prompt();
+
 private:
     int cols_ = 0;
     int rows_ = 0;
     std::vector<Cell> cells_;
     std::vector<bool> row_wrapped_;
+    std::vector<bool> row_prompt_; // per active row, parallel to row_wrapped_
     bool wrap_pending_ = false;
     int saved_cursor_col_ = 0;
     int saved_cursor_row_ = 0;
@@ -193,6 +216,7 @@ private:
     // clamp-copies whatever still fits rather than reflowing.
     std::vector<Cell> saved_primary_cells_;
     std::vector<bool> saved_primary_row_wrapped_;
+    std::vector<bool> saved_primary_row_prompt_;
     int saved_primary_cols_ = 0;
     int saved_primary_rows_ = 0;
     int saved_primary_cursor_col_ = 0;
@@ -203,8 +227,12 @@ private:
     std::vector<ScrollbackRow> scrollback_history_;
     int scroll_offset_ = 0;
     float display_scroll_offset_ = 0.0f; // Smooth sub-pixel interpolated scroll offset
-    const size_t max_scrollback_size_ = 2000; // Store up to 2000 lines of scrollback history
+    size_t max_scrollback_size_ = 10000; // Configurable via preset scrollback_lines
     
+    // Window title state (OSC 0/2)
+    std::string window_title_;
+    bool title_dirty_ = false;
+
     // Search state
     std::string search_query_;
     std::vector<SearchResult> search_matches_;

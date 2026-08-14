@@ -60,6 +60,7 @@ void TerminalGrid::resize(int cols, int rows) {
         Cell default_cell = { 32, {0.9f, 0.9f, 0.9f, 1.0f}, {0.0f, 0.0f, 0.0f, 0.0f} };
         cells_.resize(cols * rows, default_cell);
         row_wrapped_.resize(rows, false);
+        row_prompt_.resize(rows, false);
         scroll_top_ = 0;
         scroll_bottom_ = rows_ - 1;
         return;
@@ -69,10 +70,11 @@ void TerminalGrid::resize(int cols, int rows) {
     struct RawRow {
         std::vector<Cell> cells;
         bool wrapped = false;
+        bool prompt = false;
     };
     std::vector<RawRow> raw_rows;
     for (const auto& hist : scrollback_history_) {
-        raw_rows.push_back({ hist.cells, hist.wrapped });
+        raw_rows.push_back({ hist.cells, hist.wrapped, hist.prompt });
     }
     for (int r = 0; r < rows_; ++r) {
         std::vector<Cell> row_cells(cols_);
@@ -80,7 +82,8 @@ void TerminalGrid::resize(int cols, int rows) {
             row_cells[c] = cells_[r * cols_ + c];
         }
         bool is_wrapped = (r < static_cast<int>(row_wrapped_.size())) ? row_wrapped_[r] : false;
-        raw_rows.push_back({ std::move(row_cells), is_wrapped });
+        bool is_prompt = (r < static_cast<int>(row_prompt_.size())) ? row_prompt_[r] : false;
+        raw_rows.push_back({ std::move(row_cells), is_wrapped, is_prompt });
     }
 
     // Track the 1D index of the cursor cell in the raw rows stream
@@ -90,9 +93,12 @@ void TerminalGrid::resize(int cols, int rows) {
 
     // 2. Reconstruct logical lines by joining soft-wrapped rows
     std::vector<std::vector<Cell>> logical_lines;
+    std::vector<bool> logical_prompt; // parallel: line began at a prompt mark
     std::vector<Cell> current_line;
+    bool current_line_prompt = false;
     for (size_t row_idx = 0; row_idx < raw_rows.size(); ++row_idx) {
         const auto& rr = raw_rows[row_idx];
+        if (current_line.empty()) current_line_prompt = rr.prompt;
         for (size_t col_idx = 0; col_idx < rr.cells.size(); ++col_idx) {
             size_t cell_1d = row_idx * cols_ + col_idx;
             if (cell_1d == cursor_1d_index) {
@@ -113,7 +119,9 @@ void TerminalGrid::resize(int cols, int rows) {
                 }
             }
             logical_lines.push_back(std::move(current_line));
+            logical_prompt.push_back(current_line_prompt);
             current_line.clear();
+            current_line_prompt = false;
         }
     }
     if (!current_line.empty()) {
@@ -123,6 +131,7 @@ void TerminalGrid::resize(int cols, int rows) {
             }
         }
         logical_lines.push_back(std::move(current_line));
+        logical_prompt.push_back(current_line_prompt);
     }
 
     // Trailing blank lines with nothing on them -- and not holding the
@@ -137,6 +146,7 @@ void TerminalGrid::resize(int cols, int rows) {
     while (!logical_lines.empty() && logical_lines.back().empty() &&
            cursor_line_idx != static_cast<int>(logical_lines.size()) - 1) {
         logical_lines.pop_back();
+        logical_prompt.pop_back();
     }
 
     // 3. Re-wrap all logical lines to the new width `cols`
@@ -155,7 +165,7 @@ void TerminalGrid::resize(int cols, int rows) {
                 new_cursor_col_wrapped = 0;
             }
             std::vector<Cell> empty_cells(cols, space_cell);
-            wrapped_rows.push_back({ std::move(empty_cells), false });
+            wrapped_rows.push_back({ std::move(empty_cells), false, logical_prompt[line_idx] });
             current_wrapped_row_idx++;
             continue;
         }
@@ -177,9 +187,11 @@ void TerminalGrid::resize(int cols, int rows) {
                 }
             }
             
+            bool first_chunk = (idx == 0);
             idx += chunk_size;
             bool is_wrapped = (idx < line.size());
-            wrapped_rows.push_back({ std::move(row_cells), is_wrapped });
+            wrapped_rows.push_back({ std::move(row_cells), is_wrapped,
+                                     first_chunk && logical_prompt[line_idx] });
             current_wrapped_row_idx++;
         }
     }
@@ -188,6 +200,7 @@ void TerminalGrid::resize(int cols, int rows) {
     std::vector<ScrollbackRow> new_history;
     std::vector<Cell> new_cells(cols * rows, space_cell);
     std::vector<bool> new_row_wrapped(rows, false);
+    std::vector<bool> new_row_prompt(rows, false);
 
     int active_start_idx = 0;
     if (static_cast<int>(wrapped_rows.size()) > rows) {
@@ -195,7 +208,8 @@ void TerminalGrid::resize(int cols, int rows) {
     }
 
     for (int i = 0; i < active_start_idx; ++i) {
-        new_history.push_back({ std::move(wrapped_rows[i].cells), wrapped_rows[i].wrapped });
+        new_history.push_back({ std::move(wrapped_rows[i].cells), wrapped_rows[i].wrapped,
+                                wrapped_rows[i].prompt });
     }
     if (new_history.size() > max_scrollback_size_) {
         size_t prune_cnt = new_history.size() - max_scrollback_size_;
@@ -209,6 +223,7 @@ void TerminalGrid::resize(int cols, int rows) {
                 new_cells[r * cols + c] = wrapped_rows[idx].cells[c];
             }
             new_row_wrapped[r] = wrapped_rows[idx].wrapped;
+            new_row_prompt[r] = wrapped_rows[idx].prompt;
         }
     }
 
@@ -223,6 +238,7 @@ void TerminalGrid::resize(int cols, int rows) {
 
     cells_ = std::move(new_cells);
     row_wrapped_ = std::move(new_row_wrapped);
+    row_prompt_ = std::move(new_row_prompt);
     scrollback_history_ = std::move(new_history);
     cols_ = cols;
     rows_ = rows;
@@ -298,7 +314,8 @@ void TerminalGrid::scroll_up() {
     }
     
     bool top_wrapped = (!row_wrapped_.empty()) ? row_wrapped_[0] : false;
-    scrollback_history_.push_back({ std::move(top_row), top_wrapped });
+    bool top_prompt = (!row_prompt_.empty()) ? row_prompt_[0] : false;
+    scrollback_history_.push_back({ std::move(top_row), top_wrapped, top_prompt });
     
     // Keep viewport locked to the same historical lines if we are scrolled up
     if (scroll_offset_ > 0) {
@@ -315,11 +332,13 @@ void TerminalGrid::scroll_up() {
     // Shift row data up by one row
     std::copy(cells_.begin() + cols_, cells_.end(), cells_.begin());
     
-    // Shift wrapped flags up by one row
+    // Shift wrapped/prompt flags up by one row
     for (int r = 1; r < rows_; ++r) {
         row_wrapped_[r - 1] = row_wrapped_[r];
+        row_prompt_[r - 1] = row_prompt_[r];
     }
     row_wrapped_[rows_ - 1] = false;
+    row_prompt_[rows_ - 1] = false;
     
     // Fill the new last row with spaces using current style
     Cell empty_cell = { 32, current_fg_, current_bg_ };
@@ -348,6 +367,7 @@ void TerminalGrid::set_alt_screen(bool active) {
     if (active) {
         saved_primary_cells_ = cells_;
         saved_primary_row_wrapped_.assign(row_wrapped_.begin(), row_wrapped_.end());
+        saved_primary_row_prompt_.assign(row_prompt_.begin(), row_prompt_.end());
         saved_primary_cols_ = cols_;
         saved_primary_rows_ = rows_;
         saved_primary_cursor_col_ = cursor_col_;
@@ -359,6 +379,7 @@ void TerminalGrid::set_alt_screen(bool active) {
         Cell empty_cell = { 32, current_fg_, current_bg_ };
         std::fill(cells_.begin(), cells_.end(), empty_cell);
         std::fill(row_wrapped_.begin(), row_wrapped_.end(), false);
+        std::fill(row_prompt_.begin(), row_prompt_.end(), false);
         cursor_col_ = 0;
         cursor_row_ = 0;
     } else {
@@ -367,6 +388,7 @@ void TerminalGrid::set_alt_screen(bool active) {
         Cell empty_cell = { 32, {0.9f, 0.9f, 0.9f, 1.0f}, {0.0f, 0.0f, 0.0f, 0.0f} };
         std::fill(cells_.begin(), cells_.end(), empty_cell);
         std::fill(row_wrapped_.begin(), row_wrapped_.end(), false);
+        std::fill(row_prompt_.begin(), row_prompt_.end(), false);
         int copy_rows = std::min(rows_, saved_primary_rows_);
         int copy_cols = std::min(cols_, saved_primary_cols_);
         for (int r = 0; r < copy_rows; ++r) {
@@ -374,12 +396,14 @@ void TerminalGrid::set_alt_screen(bool active) {
                 cells_[r * cols_ + c] = saved_primary_cells_[r * saved_primary_cols_ + c];
             }
             row_wrapped_[r] = saved_primary_row_wrapped_[r];
+            row_prompt_[r] = saved_primary_row_prompt_[r];
         }
         cursor_col_ = std::clamp(saved_primary_cursor_col_, 0, cols_ - 1);
         cursor_row_ = std::clamp(saved_primary_cursor_row_, 0, rows_ - 1);
         wrap_pending_ = saved_primary_wrap_pending_;
         saved_primary_cells_.clear();
         saved_primary_row_wrapped_.clear();
+        saved_primary_row_prompt_.clear();
 
         // Crash safety: an app that died without undoing civis or DECRSTing
         // its mouse mode must not leave the shell cursorless or click-deaf
@@ -419,9 +443,11 @@ void TerminalGrid::shift_rows_up(int top, int bottom, int count) {
             std::copy(cells_.begin() + src * cols_, cells_.begin() + (src + 1) * cols_,
                       cells_.begin() + r * cols_);
             row_wrapped_[r] = row_wrapped_[src];
+            row_prompt_[r] = row_prompt_[src];
         } else {
             std::fill(cells_.begin() + r * cols_, cells_.begin() + (r + 1) * cols_, empty_cell);
             row_wrapped_[r] = false;
+            row_prompt_[r] = false;
         }
     }
     wrap_pending_ = false;
@@ -440,9 +466,11 @@ void TerminalGrid::shift_rows_down(int top, int bottom, int count) {
             std::copy(cells_.begin() + src * cols_, cells_.begin() + (src + 1) * cols_,
                       cells_.begin() + r * cols_);
             row_wrapped_[r] = row_wrapped_[src];
+            row_prompt_[r] = row_prompt_[src];
         } else {
             std::fill(cells_.begin() + r * cols_, cells_.begin() + (r + 1) * cols_, empty_cell);
             row_wrapped_[r] = false;
+            row_prompt_[r] = false;
         }
     }
     wrap_pending_ = false;
@@ -500,11 +528,24 @@ void TerminalGrid::clear_screen() {
     Cell empty_cell = { 32, current_fg_, current_bg_ };
     std::fill(cells_.begin(), cells_.end(), empty_cell);
     std::fill(row_wrapped_.begin(), row_wrapped_.end(), false);
+    std::fill(row_prompt_.begin(), row_prompt_.end(), false);
     cursor_col_ = 0;
     cursor_row_ = 0;
     wrap_pending_ = false;
     saved_cursor_col_ = 0;
     saved_cursor_row_ = 0;
+}
+
+void TerminalGrid::set_max_scrollback(size_t lines) {
+    max_scrollback_size_ = lines;
+    if (scrollback_history_.size() > max_scrollback_size_) {
+        size_t prune = scrollback_history_.size() - max_scrollback_size_;
+        scrollback_history_.erase(scrollback_history_.begin(),
+                                  scrollback_history_.begin() + prune);
+        // Keep the view anchored to the same lines if scrolled back
+        scroll_offset_ = std::min(scroll_offset_,
+                                  static_cast<int>(scrollback_history_.size()));
+    }
 }
 
 void TerminalGrid::clear_scrollback() {
@@ -590,6 +631,54 @@ void TerminalGrid::erase_characters(int count) {
     for (int i = cursor_col_; i < cursor_col_ + to_erase; ++i) {
         cells_[row_start + i] = empty_cell;
     }
+}
+
+void TerminalGrid::mark_prompt_row() {
+    if (cursor_row_ >= 0 && cursor_row_ < static_cast<int>(row_prompt_.size())) {
+        row_prompt_[cursor_row_] = true;
+    }
+}
+
+// Prompt navigation works in "absolute rows": scrollback rows first, then
+// the active grid. The view's top row sits at absolute index
+// (history_size - scroll_offset_); jumping puts the target prompt there.
+void TerminalGrid::scroll_to_prev_prompt() {
+    int history_size = static_cast<int>(scrollback_history_.size());
+    int view_top = history_size - scroll_offset_;
+    int best = -1;
+    for (int i = 0; i < history_size && i < view_top; ++i) {
+        if (scrollback_history_[i].prompt) best = i;
+    }
+    for (int r = 0; r < rows_; ++r) {
+        int abs_row = history_size + r;
+        if (abs_row >= view_top) break;
+        if (r < static_cast<int>(row_prompt_.size()) && row_prompt_[r]) best = abs_row;
+    }
+    if (best >= 0) {
+        scroll_offset_ = std::clamp(history_size - best, 0, history_size);
+    }
+}
+
+void TerminalGrid::scroll_to_next_prompt() {
+    int history_size = static_cast<int>(scrollback_history_.size());
+    int view_top = history_size - scroll_offset_;
+    for (int i = std::max(0, view_top + 1); i < history_size; ++i) {
+        if (scrollback_history_[i].prompt) {
+            scroll_offset_ = history_size - i;
+            return;
+        }
+    }
+    for (int r = 0; r < rows_; ++r) {
+        int abs_row = history_size + r;
+        if (abs_row <= view_top) continue;
+        if (r < static_cast<int>(row_prompt_.size()) && row_prompt_[r]) {
+            // Active-screen prompts can't be brought above the live view;
+            // snapping to the live bottom is the closest match
+            scroll_offset_ = 0;
+            return;
+        }
+    }
+    scroll_offset_ = 0; // no prompt below: rejoin the live view
 }
 
 void TerminalGrid::scroll_view(int delta) {

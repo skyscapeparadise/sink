@@ -179,10 +179,12 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
             if (c == '[') {
                 state_ = STATE_CSI;
             } else if (c == ']' || c == 'P' || c == '_' || c == '^' || c == 'X') {
-                // OSC / DCS / APC / PM / SOS: a string payload terminated by BEL or
-                // ST (ESC \). We don't act on any of these (e.g. OSC window-title
-                // sets), but must consume the whole sequence so its payload isn't
-                // printed to the screen as literal text.
+                // OSC / DCS / APC / PM / SOS: a string payload terminated by
+                // BEL or ST (ESC \). OSC payloads are accumulated and acted
+                // on (titles, prompt marks); the rest are consumed so their
+                // payload isn't printed to the screen as literal text.
+                str_is_osc_ = (c == ']');
+                osc_buffer_.clear();
                 state_ = STATE_STR;
             } else if (c == '7') { // DECSC: Save Cursor
                 grid.save_cursor();
@@ -212,15 +214,33 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
         }
         case STATE_STR: {
             if (c == 0x07 || c == 0x9C) { // BEL, or single-byte ST (C1)
+                if (str_is_osc_) dispatch_osc(grid);
                 state_ = STATE_NORMAL;
             } else if (c == 0x1b) { // possible start of two-byte ST (ESC \)
                 state_ = STATE_STR_ESC;
+            } else if (str_is_osc_ && osc_buffer_.size() < kOscMaxLen) {
+                // Payload is re-encoded as UTF-8 (titles can be non-ASCII)
+                if (c < 0x80) {
+                    osc_buffer_ += static_cast<char>(c);
+                } else if (c < 0x800) {
+                    osc_buffer_ += static_cast<char>(0xC0 | (c >> 6));
+                    osc_buffer_ += static_cast<char>(0x80 | (c & 0x3F));
+                } else if (c < 0x10000) {
+                    osc_buffer_ += static_cast<char>(0xE0 | (c >> 12));
+                    osc_buffer_ += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
+                    osc_buffer_ += static_cast<char>(0x80 | (c & 0x3F));
+                } else {
+                    osc_buffer_ += static_cast<char>(0xF0 | (c >> 18));
+                    osc_buffer_ += static_cast<char>(0x80 | ((c >> 12) & 0x3F));
+                    osc_buffer_ += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
+                    osc_buffer_ += static_cast<char>(0x80 | (c & 0x3F));
+                }
             }
-            // else: part of the string payload, discard
             break;
         }
         case STATE_STR_ESC: {
             if (c == '\\') {
+                if (str_is_osc_) dispatch_osc(grid);
                 state_ = STATE_NORMAL; // ST: sequence complete
             } else {
                 // Not a valid ST -- the string was implicitly aborted by a new
@@ -259,6 +279,42 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
             }
             break;
         }
+    }
+}
+
+void ANSIParser::dispatch_osc(TerminalGrid& grid) {
+    // Payload shape: "Ps;Pt" -- numeric selector, then text
+    size_t semi = osc_buffer_.find(';');
+    if (semi == std::string::npos) {
+        osc_buffer_.clear();
+        return;
+    }
+    int ps = 0;
+    try {
+        ps = std::stoi(osc_buffer_.substr(0, semi));
+    } catch (...) {
+        osc_buffer_.clear();
+        return;
+    }
+    std::string pt = osc_buffer_.substr(semi + 1);
+    osc_buffer_.clear();
+
+    switch (ps) {
+        case 0: // set icon name + window title
+        case 2: // set window title
+            grid.set_window_title(pt);
+            break;
+        case 133:
+            // Shell integration prompt marks (FinalTerm/iTerm2 protocol).
+            // 'A' = prompt start -- the anchor Cmd+Up/Down jump between.
+            // B/C/D (command start/output start/command end) are accepted
+            // but unused for now.
+            if (!pt.empty() && pt[0] == 'A') {
+                grid.mark_prompt_row();
+            }
+            break;
+        default:
+            break;
     }
 }
 
