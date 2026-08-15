@@ -17,3 +17,6 @@ icon.psd
 
 # Release build scripts & artifacts
 releases/
+
+# Rust build artifacts (bench/vte_bench)
+bench/vte_bench/target/

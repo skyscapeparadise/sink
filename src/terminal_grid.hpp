@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 #include <vector>
+#include <deque>
 #include <string>
 #include <unordered_map>
 #include "font_manager.hpp"
@@ -256,7 +257,13 @@ private:
     bool saved_primary_wrap_pending_ = false;
     
     // Scrollback history buffers
-    std::vector<ScrollbackRow> scrollback_history_;
+    // deque, not vector: scroll_up()/set_max_scrollback() trim from the
+    // *front* every time history exceeds the cap, which is an O(elements
+    // remaining) shift on a vector -- meaning heavy scroll volume (a big
+    // `cat`, a noisy build log) degrades quadratically. deque's random
+    // access (every other use here: get_cell_at, search, resize's reflow)
+    // stays O(1); front-erase drops to O(elements removed) instead.
+    std::deque<ScrollbackRow> scrollback_history_;
     int scroll_offset_ = 0;
     float display_scroll_offset_ = 0.0f; // Smooth sub-pixel interpolated scroll offset
     size_t max_scrollback_size_ = 10000; // Configurable via preset scrollback_lines

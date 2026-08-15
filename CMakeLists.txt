@@ -92,3 +92,18 @@ add_executable(preset_manager_tests
 )
 target_include_directories(preset_manager_tests PRIVATE src vendor/tomlplusplus)
 add_test(NAME preset_manager COMMAND preset_manager_tests)
+
+# Headless parser/grid throughput benchmark (see bench/README.md). Not part
+# of `ctest` -- it prints a timing table for humans, not pass/fail checks.
+add_executable(sink_bench
+    bench/sink_bench.cpp
+    src/ansi_parser.cpp
+    src/terminal_grid.cpp
+    src/font_manager.cpp
+)
+target_include_directories(sink_bench PRIVATE src)
+target_link_libraries(sink_bench PRIVATE
+    SDL3::SDL3
+    SDL3_ttf::SDL3_ttf
+    SDL3_image::SDL3_image
+)
