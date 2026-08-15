@@ -25,7 +25,16 @@ private:
     ParserState state_ = STATE_NORMAL;
     std::vector<int> csi_params_;
     std::string csi_buffer_;
-    std::string trigger_buffer_;
+    // Sliding window of the last kTriggerBufSize printable chars, scanned
+    // for "error"/"failed" to trigger the error-flash effect. A fixed
+    // array shifted via memmove, not std::string: this runs on literally
+    // every printable character parsed, and std::string::substr() here
+    // was heap-allocating + copying on almost every call once the window
+    // filled -- by far the hottest allocation in the whole parse path.
+    static constexpr int kTriggerBufSize = 32;
+    char trigger_buffer_[kTriggerBufSize] = {};
+    int trigger_len_ = 0;
+
     bool is_private_mode_ = false;
 
     // Base-palette (SGR 30-37) foreground index currently in effect, or -1

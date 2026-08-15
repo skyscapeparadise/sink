@@ -2,7 +2,18 @@
 #include <iostream>
 #include <sstream>
 #include <algorithm>
+#include <cstring>
 #include <limits>
+
+// Plain byte-buffer substring search (no std::string involved) for the
+// error/failed trigger scan -- see trigger_buffer_'s declaration.
+static bool buf_contains(const char* buf, int len, const char* pat, int pat_len) {
+    if (len < pat_len) return false;
+    for (int i = 0; i <= len - pat_len; ++i) {
+        if (std::memcmp(buf + i, pat, static_cast<size_t>(pat_len)) == 0) return true;
+    }
+    return false;
+}
 
 ANSIParser::ANSIParser() {}
 
@@ -160,15 +171,18 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                     grid.write_character(out);
 
                     if (c >= 32 && c < 127) {
-                        trigger_buffer_ += std::tolower(static_cast<char>(c));
-                        if (trigger_buffer_.length() > 32) {
-                            trigger_buffer_ = trigger_buffer_.substr(trigger_buffer_.length() - 32);
+                        char lc = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                        if (trigger_len_ < kTriggerBufSize) {
+                            trigger_buffer_[trigger_len_++] = lc;
+                        } else {
+                            std::memmove(trigger_buffer_, trigger_buffer_ + 1, kTriggerBufSize - 1);
+                            trigger_buffer_[kTriggerBufSize - 1] = lc;
                         }
-                        
-                        if (trigger_buffer_.find("error") != std::string::npos ||
-                            trigger_buffer_.find("failed") != std::string::npos) {
+
+                        if (buf_contains(trigger_buffer_, trigger_len_, "error", 5) ||
+                            buf_contains(trigger_buffer_, trigger_len_, "failed", 6)) {
                             grid.trigger_error_flash();
-                            trigger_buffer_.clear();
+                            trigger_len_ = 0;
                         }
                     }
                 }

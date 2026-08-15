@@ -198,7 +198,7 @@ void TerminalGrid::resize(int cols, int rows) {
     }
 
     // 4. Distribute wrapped rows into new active cells and scrollback history
-    std::vector<ScrollbackRow> new_history;
+    std::deque<ScrollbackRow> new_history;
     std::vector<Cell> new_cells(cols * rows, space_cell);
     std::vector<bool> new_row_wrapped(rows, false);
     std::vector<bool> new_row_prompt(rows, false);
