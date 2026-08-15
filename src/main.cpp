@@ -95,15 +95,11 @@ static std::string resolve_default_font_path() {
     return "Courier New.ttf";
 }
 
-// Persists the live settings as the active preset (presets/<name>.txt), plus
-// a small config.txt pointing at which preset is active. This is called
-// after every settings tweak, same as the old flat-config version was.
+// Persists the live settings into the active preset's [presets.<name>]
+// table in sink.toml, and updates the top-level active_preset pointer to
+// match. Called after every settings tweak, same as before the config
+// format changed.
 static void save_config(AppState* state) {
-    const char* home = getenv("HOME");
-    if (!home) return;
-    std::string config_dir = std::string(home) + "/.config/sink";
-    mkdir(config_dir.c_str(), 0755); // Ensure folder exists
-
     Preset p;
     p.name = state->active_preset_name;
     p.video_path = state->video_path;
@@ -123,77 +119,30 @@ static void save_config(AppState* state) {
     p.hdr_console_enabled = state->hdr_console_enabled;
     p.scrollback_lines = state->scrollback_lines;
     presets::save(p);
-
-    std::ofstream f(config_dir + "/config.txt");
-    if (f.is_open()) {
-        f << "active_preset=" << state->active_preset_name << "\n";
-    }
+    presets::set_active_preset_name(state->active_preset_name);
 }
 
-// Loads the active preset (following config.txt's active_preset pointer)
-// into `state`. On a pre-presets install, migrates the old flat config.txt
-// fields into a "pool" preset instead of discarding them; on a fresh
-// install, seeds "pool" with hardcoded baseline defaults. Either way,
-// "pool" always ends up present on disk so there's a permanent fallback.
+// Loads the active preset (following sink.toml's active_preset pointer)
+// into `state`. Migrates a pre-TOML install once, on first run after
+// upgrading, so nothing a user had saved is lost -- see
+// presets::migrate_legacy_config_if_needed(). "pool" always ends up present
+// either way, so there's always a known-good fallback.
 static void load_config(AppState* state) {
-    const char* home = getenv("HOME");
-    if (!home) return;
+    presets::migrate_legacy_config_if_needed();
 
-    std::string requested_preset;
-    bool has_active_preset_key = false;
-    Preset legacy;
-    bool has_legacy_fields = false;
-
-    std::ifstream f(std::string(home) + "/.config/sink/config.txt");
-    if (f.is_open()) {
-        std::string line;
-        while (std::getline(f, line)) {
-            size_t eq = line.find('=');
-            if (eq == std::string::npos) continue;
-            std::string key = line.substr(0, eq);
-            std::string val = line.substr(eq + 1);
-
-            if (key == "active_preset") {
-                requested_preset = val.empty() ? "pool" : val;
-                has_active_preset_key = true;
-            } else if (key == "video_path") {
-                legacy.video_path = val;
-                has_legacy_fields = true;
-            } else if (key == "font_path") {
-                legacy.font_path = val;
-                has_legacy_fields = true;
-            } else if (key == "exposure") {
-                try { legacy.exposure = std::stof(val); } catch (...) {}
-            } else if (key == "animated_typing") {
-                legacy.animated_typing = (val == "true");
-            } else if (key == "vibrancy_enabled") {
-                legacy.vibrancy_enabled = (val == "true");
-            } else if (key == "crt_mode_enabled") {
-                legacy.crt_mode_enabled = (val == "true");
-            } else if (key == "ligatures_enabled") {
-                legacy.ligatures_enabled = (val == "true");
-            }
-        }
-        f.close();
-    }
+    std::string requested_preset = presets::get_active_preset_name();
 
     Preset active;
-    if (has_active_preset_key && presets::exists(requested_preset)) {
+    if (presets::exists(requested_preset)) {
         active = presets::load(requested_preset);
-    } else if (has_legacy_fields && !presets::exists("pool")) {
-        legacy.name = "pool";
-        presets::save(legacy);
-        active = legacy;
     } else if (presets::exists("pool")) {
         active = presets::load("pool");
     } else {
         active = Preset{}; // hardcoded baseline: name="pool" with default look
-    }
-
-    if (!presets::exists(active.name)) {
         presets::save(active);
     }
 
+    presets::set_active_preset_name(active.name);
     state->active_preset_name = active.name;
     state->video_path = (active.video_path.empty() || active.video_path == "default")
         ? resolve_default_video_path() : active.video_path;
