@@ -108,6 +108,12 @@ struct TerminalWindow {
     enum FadeState { FADE_HOLD_BLACK, FADE_OUT, FADE_DONE };
     FadeState fade_state = FADE_HOLD_BLACK;
     float fade_opacity = 1.0f;
+    // When the current FADE_HOLD_BLACK started (0 = not yet stamped). The
+    // hold waits on the video's first decoded frame, and that frame can
+    // legitimately never arrive (decode failure, a file that stopped being
+    // readable) -- without a deadline the full-window black overlay in
+    // stage E just stays up forever over an otherwise live terminal.
+    Uint64 fade_hold_start_time = 0;
 
     // Feature states
     bool search_drawer_open = false;

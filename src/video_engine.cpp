@@ -209,6 +209,13 @@ void VideoEngine::close_video() {
 
 void VideoEngine::start() {
     if (running_) return;
+    // decode_loop() can clear running_ on its own (the software-decoder
+    // fallback path below), which leaves the thread finished but still
+    // joinable. Move-assigning onto a joinable std::thread calls
+    // std::terminate(), so reap any such leftover before starting a new one.
+    if (decode_thread_.joinable()) {
+        decode_thread_.join();
+    }
     running_ = true;
     eof_ = false;
     playback_clock_ = 0.0;
@@ -217,7 +224,9 @@ void VideoEngine::start() {
 }
 
 void VideoEngine::stop() {
-    if (!running_) return;
+    // Not gated on running_: decode_loop() can clear it itself (see the
+    // software-decoder fallback), and an early return here would skip the
+    // join and leak a joinable thread into the next start().
     running_ = false;
     if (decode_thread_.joinable()) {
         decode_thread_.join();

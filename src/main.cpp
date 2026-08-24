@@ -33,6 +33,12 @@ SDL_AppResult SDL_AppIterate(void* appstate);
 // Global AppState reference for menu timer callbacks
 static void* g_app_state = nullptr;
 
+// How long the black dissolve overlay will wait on the video background's
+// first decoded frame before giving up and revealing the terminal anyway.
+// See the FADE_HOLD_BLACK handling in SDL_AppIterate for why this deadline
+// exists at all.
+static constexpr Uint64 kFadeHoldTimeoutMs = 3000;
+
 // How much brighter than normal (1.0) "hdr console" text renders. Values
 // above 1.0 only actually look brighter than SDR white -- rather than just
 // clamping to white -- because every renderer is created with the
@@ -625,6 +631,7 @@ static void render_pane_dividers(TerminalWindow* tw, PaneNode* node, float scale
 // reopened from the same path/position-0 rather than migrated -- a brief
 // restart to frame 0, traded for the toggle actually being live.
 static bool recreate_renderer_for_hdr_console(AppState* state, TerminalWindow* tw, bool want_linear_colorspace) {
+    bool degraded = false; // set if the requested colorspace had to be dropped
     bool had_video = tw->has_video;
     std::string video_path_to_reopen = state->video_path;
 
@@ -650,6 +657,23 @@ static bool recreate_renderer_for_hdr_console(AppState* state, TerminalWindow* t
         tw->renderer = SDL_CreateRendererWithProperties(props);
         SDL_DestroyProperties(props);
     } else {
+        tw->renderer = SDL_CreateRenderer(tw->window, SDL_GPU_RENDERER);
+    }
+
+    // Returning here with tw->renderer left null would be fatal in a way
+    // that doesn't look fatal: every SDL_Render* call in the frame loop
+    // silently no-ops on a null renderer, so the app keeps running, keeps
+    // reading the shell, and keeps handling input behind a window that
+    // never draws again. The extended-colorspace renderer is the one that
+    // can plausibly fail (see create_terminal_window's colorspace
+    // comment), so fall back to the plain one and report the toggle as
+    // failed rather than leave the window unable to present at all.
+    if (!tw->renderer && want_linear_colorspace) {
+        std::cerr << "recreate_renderer_for_hdr_console: extended-colorspace SDL_CreateRenderer failed: "
+                  << SDL_GetError() << " -- falling back to the standard colorspace (hdr console off)" << std::endl;
+        want_linear_colorspace = false;
+        tw->hdr_console_enabled = false;
+        degraded = true;
         tw->renderer = SDL_CreateRenderer(tw->window, SDL_GPU_RENDERER);
     }
 
@@ -682,7 +706,9 @@ static bool recreate_renderer_for_hdr_console(AppState* state, TerminalWindow* t
     enable_macos_window_vibrancy(tw->window, tw->vibrancy_enabled);
 #endif
 
-    return true;
+    // False if the fallback above had to drop the requested colorspace --
+    // the window is drawable, but hdr console is not actually on.
+    return !degraded;
 }
 
 // Applies a preset's background/font/exposure/toggles to `state` and every
@@ -1915,7 +1941,22 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             }
         }
         if (get_crt_mode_requested()) {
-            tw->crt_mode_enabled = !tw->crt_mode_enabled;
+            // Route this through the same path the Settings toggle uses
+            // rather than flipping the active window's flag directly.
+            // crt mode is a global, persisted (preset-level) setting --
+            // create_terminal_window seeds every new window/tab from
+            // state->crt_mode_enabled, so a value living only on one
+            // window can't survive anyway. Skipping the state/UI update
+            // also left the settings panel's own toggle comparing against
+            // a stale value, so its next click could compute a no-op and
+            // read as a dead button.
+            bool crt = !state->crt_mode_enabled;
+            state->crt_mode_enabled = crt;
+            for (auto* w : state->windows) {
+                w->crt_mode_enabled = crt;
+            }
+            state->settings_ui.set_crt_effect_enabled(crt);
+            save_config(state);
         }
     }
 
@@ -2041,9 +2082,21 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         bool hdr_console = state->settings_ui.get_hdr_console_enabled();
         if (state->hdr_console_enabled != hdr_console) {
             state->hdr_console_enabled = hdr_console;
+            bool all_applied = true;
             for (auto* tw : state->windows) {
                 tw->hdr_console_enabled = hdr_console;
-                recreate_renderer_for_hdr_console(state, tw, hdr_console);
+                if (!recreate_renderer_for_hdr_console(state, tw, hdr_console)) {
+                    all_applied = false;
+                }
+            }
+            // A window that couldn't get the extended colorspace fell back
+            // to the standard one, so hdr console isn't actually on for it.
+            // Snap the toggle back to what's really in effect instead of
+            // leaving the UI claiming a state no window is in -- otherwise
+            // the next toggle compares against a lie and skips the work.
+            if (!all_applied && hdr_console) {
+                state->hdr_console_enabled = false;
+                state->settings_ui.set_hdr_console_enabled(false);
             }
             save_config(state);
         }
@@ -2117,7 +2170,25 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         }
         if (tw->has_video) {
             if (tw->fade_state == TerminalWindow::FADE_HOLD_BLACK) {
-                if (tw->video_engine.has_rendered_first_frame()) {
+                if (tw->fade_hold_start_time == 0) {
+                    tw->fade_hold_start_time = current_tick;
+                }
+                // Normally the hold ends the moment the video has something
+                // to show. But this overlay covers the *entire window*, so a
+                // first frame that never arrives (decode failure, an
+                // unreadable file, a decode thread that stopped) hides a
+                // perfectly live terminal behind solid black indefinitely --
+                // with no way out but restarting. Give up after a deadline
+                // and reveal the terminal without the background instead.
+                bool ready = tw->video_engine.has_rendered_first_frame();
+                if (!ready && (current_tick - tw->fade_hold_start_time) >= kFadeHoldTimeoutMs) {
+                    std::cerr << "Video background: no frame decoded within "
+                              << kFadeHoldTimeoutMs << "ms -- revealing the terminal without it" << std::endl;
+                    tw->has_video = false;
+                    ready = true;
+                }
+                if (ready) {
+                    tw->fade_hold_start_time = 0;
                     tw->fade_state = TerminalWindow::FADE_OUT;
                 }
             } else if (tw->fade_state == TerminalWindow::FADE_OUT) {
@@ -2130,6 +2201,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         } else {
             tw->fade_state = TerminalWindow::FADE_DONE;
             tw->fade_opacity = 0.0f;
+            tw->fade_hold_start_time = 0;
         }
 
         // Process incoming shell data per pane (suppressed for the pane a
@@ -2214,6 +2286,12 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             }
         }
         } // end per-pane read/parse loop
+
+        // Defence in depth against a window whose renderer teardown/recreate
+        // (see recreate_renderer_for_hdr_console) left it without one: every
+        // SDL_Render* call below would silently no-op, presenting nothing and
+        // leaving a black window that looks like a hang.
+        if (!tw->renderer) continue;
 
         int draw_w = 0, draw_h = 0;
         SDL_GetRenderOutputSize(tw->renderer, &draw_w, &draw_h);
