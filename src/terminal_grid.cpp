@@ -312,11 +312,22 @@ void TerminalGrid::scroll_up() {
         return;
     }
 
-    // Copy top row to scrollback history
-    std::vector<Cell> top_row(cols_);
-    for (int c = 0; c < cols_; ++c) {
-        top_row[c] = row_data(0)[c];
+    // Copy top row to scrollback history.
+    //
+    // At steady state history sits at its cap, so every scroll pushes one row
+    // and drops one -- meaning the allocation being freed is the same size as
+    // the one being requested, once per line of output. Steal the outgoing
+    // row's storage up front and reuse it instead of round-tripping the
+    // allocator on every newline. The element it was taken from is popped a
+    // few lines below, before anything can observe its emptied vector.
+    std::vector<Cell> top_row;
+    bool at_cap = scrollback_history_.size() >= max_scrollback_size_;
+    if (at_cap && !scrollback_history_.empty()) {
+        top_row = std::move(scrollback_history_.front().cells);
     }
+    top_row.resize(cols_);
+    const Cell* top_src = row_data(0);
+    std::copy(top_src, top_src + cols_, top_row.begin());
     
     bool top_wrapped = (!row_wrapped_.empty()) ? row_wrapped_[0] : false;
     bool top_prompt = (!row_prompt_.empty()) ? row_prompt_[0] : false;
@@ -328,7 +339,7 @@ void TerminalGrid::scroll_up() {
     }
     
     if (scrollback_history_.size() > max_scrollback_size_) {
-        scrollback_history_.erase(scrollback_history_.begin());
+        scrollback_history_.pop_front();
         if (scroll_offset_ > 0) {
             scroll_offset_--;
         }
@@ -579,7 +590,16 @@ void TerminalGrid::delete_lines(int count) {
 
 void TerminalGrid::clear_screen() {
     Cell empty_cell = { 32, current_fg_packed_, current_bg_packed_ };
-    std::fill(cells_.begin(), cells_.end(), empty_cell);
+    // Fill one row, then copy that row across the rest. std::fill over a
+    // 20-byte element cannot become a memset, but the row-to-row copies are
+    // plain memmove, which is considerably faster over a whole screen.
+    if (!cells_.empty() && cols_ > 0) {
+        std::fill(cells_.begin(), cells_.begin() + cols_, empty_cell);
+        for (int r = 1; r < rows_; ++r) {
+            std::copy(cells_.begin(), cells_.begin() + cols_,
+                      cells_.begin() + static_cast<size_t>(r) * cols_);
+        }
+    }
     std::fill(row_wrapped_.begin(), row_wrapped_.end(), false);
     std::fill(row_prompt_.begin(), row_prompt_.end(), false);
     cursor_col_ = 0;

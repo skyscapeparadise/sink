@@ -94,6 +94,41 @@ static void test_scroll_ring_wraparound() {
     CHECK(row_text(g, 3) == "line20");
 }
 
+// scroll_up() steals the outgoing scrollback row's buffer to avoid allocating
+// on every newline, which only happens once history is at its cap. The tests
+// above all run with the default 10000-line cap and so never reach that path;
+// this one caps history at 3 and scrolls well past it, then scrolls the view
+// back into history to confirm the recycled rows hold the right contents and
+// not a stale or emptied buffer.
+static void test_scrollback_cap_recycles_rows() {
+    TerminalGrid g; g.resize(20, 2);
+    ANSIParser p;
+    g.set_max_scrollback(3);
+
+    std::string feed_str;
+    for (int i = 1; i <= 12; ++i) {
+        feed_str += "L" + std::to_string(i);
+        if (i != 12) feed_str += "\r\n";
+    }
+    feed(p, g, feed_str);
+
+    CHECK(g.get_scrollback_size() == 3);
+    CHECK(row_text(g, 0) == "L11");
+    CHECK(row_text(g, 1) == "L12");
+
+    // Scroll the view back through all three retained history rows: they must
+    // be L8, L9, L10 -- the three immediately preceding the visible pair.
+    g.scroll_view(3);
+    CHECK(g.get_scroll_offset() == 3);
+    CHECK(row_text(g, 0) == "L8");
+    CHECK(row_text(g, 1) == "L9");
+    g.scroll_view(-1);
+    CHECK(row_text(g, 0) == "L9");
+    CHECK(row_text(g, 1) == "L10");
+    g.reset_scroll();
+    CHECK(row_text(g, 0) == "L11");
+}
+
 static void test_cup_and_relative_motion() {
     TerminalGrid g; g.resize(20, 5);
     ANSIParser p;
@@ -516,6 +551,7 @@ int main() {
     test_plain_text();
     test_crlf_and_scroll();
     test_scroll_ring_wraparound();
+    test_scrollback_cap_recycles_rows();
     test_cup_and_relative_motion();
     test_sgr_16_color();
     test_sgr_256_color();
