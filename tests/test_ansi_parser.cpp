@@ -24,7 +24,11 @@ static void feed(ANSIParser& p, TerminalGrid& g, const std::string& bytes) {
     p.parse(g, bytes.data(), bytes.size());
 }
 
-static bool color_near(const SDL_FColor& c, float r, float g, float b) {
+// Cell colours are stored packed to 8 bits per channel (see PackedColor in
+// terminal_grid.hpp), so unpack before comparing. Quantisation error is at
+// most 0.5/255 ~= 0.002, comfortably inside the tolerance below.
+static bool color_near(const PackedColor& pc, float r, float g, float b) {
+    SDL_FColor c = unpack_color(pc);
     return std::fabs(c.r - r) < 0.005f && std::fabs(c.g - g) < 0.005f &&
            std::fabs(c.b - b) < 0.005f;
 }

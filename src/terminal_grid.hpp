@@ -18,10 +18,42 @@ enum CellAttr : uint8_t {
     ATTR_STRIKETHROUGH = 1 << 5,
 };
 
+// Cell colours packed to 8 bits per channel.
+//
+// Every source of a terminal colour is already 8-bit -- the 16-colour and
+// xterm-256 palettes are byte triples, and truecolor SGR (38;2;r;g;b) parses
+// three 0-255 values -- so storing them as four floats each cost 24 bytes per
+// cell and bought no precision. Cell is the hottest structure in the program:
+// scroll_up() memmoves the entire grid one row on every newline, which
+// profiled at ~70% of parse time, and the cost is directly proportional to
+// sizeof(Cell). 44 bytes -> 20.
+struct PackedColor {
+    uint8_t r = 0, g = 0, b = 0, a = 0;
+};
+
+inline PackedColor pack_color(const SDL_FColor& c) {
+    auto q = [](float v) -> uint8_t {
+        float s = v * 255.0f + 0.5f;
+        if (s <= 0.0f) return 0;
+        if (s >= 255.0f) return 255;
+        return static_cast<uint8_t>(s);
+    };
+    return { q(c.r), q(c.g), q(c.b), q(c.a) };
+}
+
+inline SDL_FColor unpack_color(const PackedColor& c) {
+    constexpr float k = 1.0f / 255.0f;
+    return { c.r * k, c.g * k, c.b * k, c.a * k };
+}
+
+// Field order is unchanged from when fg/bg were SDL_FColor: with 4-byte
+// alignment, moving hyperlink_id ahead of attrs would not shrink this any
+// further, and keeping the order means the aggregate initialisers throughout
+// terminal_grid.cpp stay correct.
 struct Cell {
     char32_t codepoint;
-    SDL_FColor fg;
-    SDL_FColor bg;
+    PackedColor fg;
+    PackedColor bg;
     uint8_t attrs = 0;
     uint32_t hyperlink_id = 0; // 0 = no link; see TerminalGrid::get_hyperlink_uri
 };
@@ -80,8 +112,8 @@ public:
     void set_cursor_col(int col);
     void set_cursor_row(int row);
 
-    void set_current_fg(const SDL_FColor& fg) { current_fg_ = fg; }
-    void set_current_bg(const SDL_FColor& bg) { current_bg_ = bg; }
+    void set_current_fg(const SDL_FColor& fg) { current_fg_ = fg; current_fg_packed_ = pack_color(fg); }
+    void set_current_bg(const SDL_FColor& bg) { current_bg_ = bg; current_bg_packed_ = pack_color(bg); }
     const SDL_FColor& get_current_fg() const { return current_fg_; }
     const SDL_FColor& get_current_bg() const { return current_bg_; }
     void set_current_attrs(uint8_t attrs) { current_attrs_ = attrs; }
@@ -305,8 +337,13 @@ private:
     float visual_cursor_col_ = 0.0f;
     float visual_cursor_row_ = 0.0f;
     float error_glow_opacity_ = 0.0f;
+    // The SDL_FColor pair stays for the public getters and the render path;
+    // the packed mirror is what actually goes into cells, kept in sync by the
+    // setters above so the hot write path never converts.
     SDL_FColor current_fg_ = {0.9f, 0.9f, 0.9f, 1.0f};
     SDL_FColor current_bg_ = {0.0f, 0.0f, 0.0f, 0.0f};
+    PackedColor current_fg_packed_ = {230, 230, 230, 255};
+    PackedColor current_bg_packed_ = {0, 0, 0, 0};
     uint8_t current_attrs_ = 0;
     uint32_t current_hyperlink_id_ = 0;
 

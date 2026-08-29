@@ -57,7 +57,7 @@ void TerminalGrid::resize(int cols, int rows) {
     if (cols_ == 0 || rows_ == 0 || cells_.empty()) {
         cols_ = cols;
         rows_ = rows;
-        Cell default_cell = { 32, {0.9f, 0.9f, 0.9f, 1.0f}, {0.0f, 0.0f, 0.0f, 0.0f} };
+        Cell default_cell = { 32, pack_color({0.9f, 0.9f, 0.9f, 1.0f}), pack_color({0.0f, 0.0f, 0.0f, 0.0f}) };
         cells_.resize(cols * rows, default_cell);
         row_wrapped_.resize(rows, false);
         row_prompt_.resize(rows, false);
@@ -110,7 +110,7 @@ void TerminalGrid::resize(int cols, int rows) {
         current_line.insert(current_line.end(), rr.cells.begin(), rr.cells.end());
         if (!rr.wrapped) {
             // Hard break: strip trailing spaces to make wrapping/unwrapping cleaner
-            while (!current_line.empty() && current_line.back().codepoint == 32 && current_line.back().bg.a == 0.0f) {
+            while (!current_line.empty() && current_line.back().codepoint == 32 && current_line.back().bg.a == 0) {
                 current_line.pop_back();
             }
             // Clamp cursor position if it fell into the stripped area
@@ -152,7 +152,7 @@ void TerminalGrid::resize(int cols, int rows) {
 
     // 3. Re-wrap all logical lines to the new width `cols`
     std::vector<RawRow> wrapped_rows;
-    Cell space_cell = { 32, current_fg_, current_bg_ };
+    Cell space_cell = { 32, current_fg_packed_, current_bg_packed_ };
     
     int new_cursor_row_wrapped = -1;
     int new_cursor_col_wrapped = -1;
@@ -264,7 +264,7 @@ void TerminalGrid::resize(int cols, int rows) {
 
 void TerminalGrid::set_cell(int col, int row, char32_t codepoint, const SDL_FColor& fg, const SDL_FColor& bg) {
     if (col >= 0 && col < cols_ && row >= 0 && row < rows_) {
-        cells_[row * cols_ + col] = { codepoint, fg, bg };
+        cells_[row * cols_ + col] = { codepoint, pack_color(fg), pack_color(bg) };
     }
 }
 
@@ -287,7 +287,7 @@ void TerminalGrid::write_character(char32_t codepoint) {
     
     if (cursor_col_ >= 0 && cursor_col_ < cols_ && cursor_row_ >= 0 && cursor_row_ < rows_) {
         cells_[cursor_row_ * cols_ + cursor_col_] =
-            { codepoint, current_fg_, current_bg_, current_attrs_, current_hyperlink_id_ };
+            { codepoint, current_fg_packed_, current_bg_packed_, current_attrs_, current_hyperlink_id_ };
     }
 
     if (cursor_col_ >= cols_ - 1) {
@@ -344,7 +344,7 @@ void TerminalGrid::scroll_up() {
     row_prompt_[rows_ - 1] = false;
     
     // Fill the new last row with spaces using current style
-    Cell empty_cell = { 32, current_fg_, current_bg_ };
+    Cell empty_cell = { 32, current_fg_packed_, current_bg_packed_ };
     std::fill(cells_.begin() + (rows_ - 1) * cols_, cells_.end(), empty_cell);
 
     if (saved_cursor_row_ > 0) {
@@ -408,7 +408,7 @@ void TerminalGrid::set_alt_screen(bool active) {
         wrap_pending_ = false;
 
         // The alt screen starts blank with the cursor at home
-        Cell empty_cell = { 32, current_fg_, current_bg_ };
+        Cell empty_cell = { 32, current_fg_packed_, current_bg_packed_ };
         std::fill(cells_.begin(), cells_.end(), empty_cell);
         std::fill(row_wrapped_.begin(), row_wrapped_.end(), false);
         std::fill(row_prompt_.begin(), row_prompt_.end(), false);
@@ -417,7 +417,7 @@ void TerminalGrid::set_alt_screen(bool active) {
     } else {
         // Restore whatever still fits the current geometry; a resize while
         // the app was running leaves the rest blank
-        Cell empty_cell = { 32, {0.9f, 0.9f, 0.9f, 1.0f}, {0.0f, 0.0f, 0.0f, 0.0f} };
+        Cell empty_cell = { 32, pack_color({0.9f, 0.9f, 0.9f, 1.0f}), pack_color({0.0f, 0.0f, 0.0f, 0.0f}) };
         std::fill(cells_.begin(), cells_.end(), empty_cell);
         std::fill(row_wrapped_.begin(), row_wrapped_.end(), false);
         std::fill(row_prompt_.begin(), row_prompt_.end(), false);
@@ -475,7 +475,7 @@ void TerminalGrid::shift_rows_up(int top, int bottom, int count) {
     if (count <= 0 || top < 0 || bottom >= rows_ || top >= bottom) return;
     count = std::min(count, bottom - top + 1);
 
-    Cell empty_cell = { 32, current_fg_, current_bg_ };
+    Cell empty_cell = { 32, current_fg_packed_, current_bg_packed_ };
     for (int r = top; r <= bottom; ++r) {
         int src = r + count;
         if (src <= bottom) {
@@ -498,7 +498,7 @@ void TerminalGrid::shift_rows_down(int top, int bottom, int count) {
     if (count <= 0 || top < 0 || bottom >= rows_ || top >= bottom) return;
     count = std::min(count, bottom - top + 1);
 
-    Cell empty_cell = { 32, current_fg_, current_bg_ };
+    Cell empty_cell = { 32, current_fg_packed_, current_bg_packed_ };
     for (int r = bottom; r >= top; --r) {
         int src = r - count;
         if (src >= top) {
@@ -564,7 +564,7 @@ void TerminalGrid::delete_lines(int count) {
 }
 
 void TerminalGrid::clear_screen() {
-    Cell empty_cell = { 32, current_fg_, current_bg_ };
+    Cell empty_cell = { 32, current_fg_packed_, current_bg_packed_ };
     std::fill(cells_.begin(), cells_.end(), empty_cell);
     std::fill(row_wrapped_.begin(), row_wrapped_.end(), false);
     std::fill(row_prompt_.begin(), row_prompt_.end(), false);
@@ -604,7 +604,7 @@ void TerminalGrid::clear_line(int row, int mode) {
         end_col = std::clamp(cursor_col_ + 1, 0, cols_);
     }
     
-    Cell empty_cell = { 32, current_fg_, current_bg_ };
+    Cell empty_cell = { 32, current_fg_packed_, current_bg_packed_ };
     std::fill(cells_.begin() + row * cols_ + start_col, cells_.begin() + row * cols_ + end_col, empty_cell);
     wrap_pending_ = false;
 }
@@ -646,7 +646,7 @@ void TerminalGrid::delete_character(int count) {
     }
     
     // Fill the end of the row with empty cells
-    Cell empty_cell = { 32, current_fg_, current_bg_ };
+    Cell empty_cell = { 32, current_fg_packed_, current_bg_packed_ };
     for (int i = cols_ - to_delete; i < cols_; ++i) {
         cells_[row_start + i] = empty_cell;
     }
@@ -666,7 +666,7 @@ void TerminalGrid::erase_characters(int count) {
     int remaining = cols_ - cursor_col_;
     int to_erase = std::min(count, remaining);
 
-    Cell empty_cell = { 32, current_fg_, current_bg_ };
+    Cell empty_cell = { 32, current_fg_packed_, current_bg_packed_ };
     for (int i = cursor_col_; i < cursor_col_ + to_erase; ++i) {
         cells_[row_start + i] = empty_cell;
     }
@@ -740,13 +740,13 @@ Cell TerminalGrid::get_cell_at(int col, int row) const {
         if (col >= 0 && col < static_cast<int>(hist_row.size())) {
             return hist_row[col];
         }
-        return Cell{ 32, current_fg_, current_bg_ };
+        return Cell{ 32, current_fg_packed_, current_bg_packed_ };
     } else {
         int active_row = line_idx - total_history;
         if (col >= 0 && col < cols_ && active_row >= 0 && active_row < rows_) {
             return cells_[active_row * cols_ + col];
         }
-        return Cell{ 32, current_fg_, current_bg_ };
+        return Cell{ 32, current_fg_packed_, current_bg_packed_ };
     }
 }
 
@@ -897,8 +897,8 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
             // Resolve SGR attributes into effective colors. Reverse swaps
             // the pair (a transparent bg reverses against near-black so the
             // glyph doesn't vanish); dim darkens the foreground.
-            SDL_FColor cell_fg = cell.fg;
-            SDL_FColor cell_bg = cell.bg;
+            SDL_FColor cell_fg = unpack_color(cell.fg);
+            SDL_FColor cell_bg = unpack_color(cell.bg);
             if (cell.attrs & ATTR_REVERSE) {
                 SDL_FColor new_bg = cell_fg;
                 cell_fg = (cell_bg.a > 0.0f) ? cell_bg
@@ -1108,10 +1108,10 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
         float end_x = start_x + grid_w;
         float end_y = start_y + grid_h;
 
-        SDL_FColor tl_color = get_cell_at(0, 0).bg;
-        SDL_FColor tr_color = get_cell_at(cols_ - 1, 0).bg;
-        SDL_FColor bl_color = get_cell_at(0, rows_ - 1).bg;
-        SDL_FColor br_color = get_cell_at(cols_ - 1, rows_ - 1).bg;
+        SDL_FColor tl_color = unpack_color(get_cell_at(0, 0).bg);
+        SDL_FColor tr_color = unpack_color(get_cell_at(cols_ - 1, 0).bg);
+        SDL_FColor bl_color = unpack_color(get_cell_at(0, rows_ - 1).bg);
+        SDL_FColor br_color = unpack_color(get_cell_at(cols_ - 1, rows_ - 1).bg);
 
         // Top Margin (fills full width, from y=0 to y=start_y)
         if (tl_color.a > 0.0f) {
@@ -1483,7 +1483,7 @@ std::string TerminalGrid::get_selected_text() const {
             // Strip trailing spaces on last row if it has a hard newline
             int limit_col = ec;
             if (!is_wrapped && r == r1) {
-                while (limit_col >= sc && row_cells[limit_col].codepoint == 32 && row_cells[limit_col].bg.a == 0.0f) {
+                while (limit_col >= sc && row_cells[limit_col].codepoint == 32 && row_cells[limit_col].bg.a == 0) {
                     limit_col--;
                 }
             }
@@ -1536,7 +1536,7 @@ std::string TerminalGrid::get_all_text() const {
             int limit_col = cols_ - 1;
             // Trim trailing spaces if the row has a hard newline
             if (!is_wrapped) {
-                while (limit_col >= 0 && row_cells[limit_col].codepoint == 32 && row_cells[limit_col].bg.a == 0.0f) {
+                while (limit_col >= 0 && row_cells[limit_col].codepoint == 32 && row_cells[limit_col].bg.a == 0) {
                     limit_col--;
                 }
             }
