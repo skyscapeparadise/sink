@@ -15,8 +15,14 @@ sink.app/
 icon.iconset/
 icon.psd
 
-# Release build scripts & artifacts
-releases/
+# Release scripts. signapp.sh, makedmg.sh and updatepassword.sh stay out of
+# the repo (notarization credentials); package.sh and the entitlements plist
+# carry no secrets and are tracked. Note the releases/* form -- a bare
+# "releases/" makes git skip the directory entirely and the negations below
+# would never be considered.
+releases/*
+!releases/package.sh
+!releases/sink.entitlements
 
 # Rust build artifacts (bench/vte_bench)
 bench/vte_bench/target/

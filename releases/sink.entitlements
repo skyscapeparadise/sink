@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- 1. Disable Sandboxing (CRITICAL: Sandboxing blocks PTY forks and running shells) -->
+    <key>com.apple.security.app-sandbox</key>
+    <false/>
+
+    <!-- 2. Disable Library Validation (Allows loading homebrew/user dynamic libraries) -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- 3. Unsigned Executable Memory (Required if users run Node/Python/JIT compilers in the terminal) -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-executable-page-protection</key>
+    <true/>
+
+    <!-- 4. Task Attach Allow (Allows developers to run debuggers like lldb inside the terminal) -->
+    <key>com.apple.security.get-task-allow</key>
+    <true/>
+</dict>
+</plist>
