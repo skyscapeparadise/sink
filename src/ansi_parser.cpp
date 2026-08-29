@@ -5,14 +5,19 @@
 #include <cstring>
 #include <limits>
 
-// Plain byte-buffer substring search (no std::string involved) for the
-// error/failed trigger scan -- see trigger_buffer_'s declaration.
-static bool buf_contains(const char* buf, int len, const char* pat, int pat_len) {
+// Suffix test for the error/failed trigger scan -- see trigger_buffer_'s
+// declaration.
+//
+// This used to scan the whole rolling window on every printable character,
+// which profiled at ~25% of total parse time. Rescanning is redundant: the
+// window only ever changes by appending one character (and dropping one from
+// the front, which cannot create a match), so any newly-formed match must end
+// at the character just appended. Every earlier suffix was already tested when
+// it was the tail. Checking only the tail is therefore equivalent, and turns an
+// O(window x pattern) scan into one memcmp.
+static bool buf_ends_with(const char* buf, int len, const char* pat, int pat_len) {
     if (len < pat_len) return false;
-    for (int i = 0; i <= len - pat_len; ++i) {
-        if (std::memcmp(buf + i, pat, static_cast<size_t>(pat_len)) == 0) return true;
-    }
-    return false;
+    return std::memcmp(buf + len - pat_len, pat, static_cast<size_t>(pat_len)) == 0;
 }
 
 ANSIParser::ANSIParser() {}
@@ -171,7 +176,11 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                     grid.write_character(out);
 
                     if (c >= 32 && c < 127) {
-                        char lc = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                        // Not std::tolower: it is locale-aware, so it stays a
+                        // real libsystem_c call per character (~3% of parse
+                        // time). The guard above already restricts c to ASCII.
+                        char lc = (c >= 'A' && c <= 'Z') ? static_cast<char>(c + 32)
+                                                         : static_cast<char>(c);
                         if (trigger_len_ < kTriggerBufSize) {
                             trigger_buffer_[trigger_len_++] = lc;
                         } else {
@@ -179,8 +188,12 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                             trigger_buffer_[kTriggerBufSize - 1] = lc;
                         }
 
-                        if (buf_contains(trigger_buffer_, trigger_len_, "error", 5) ||
-                            buf_contains(trigger_buffer_, trigger_len_, "failed", 6)) {
+                        // Gate on the last letter first: only 'r' can finish
+                        // "error" and only 'd' can finish "failed", so almost
+                        // every character costs one comparison instead of a
+                        // memcmp.
+                        if ((lc == 'r' && buf_ends_with(trigger_buffer_, trigger_len_, "error", 5)) ||
+                            (lc == 'd' && buf_ends_with(trigger_buffer_, trigger_len_, "failed", 6))) {
                             grid.trigger_error_flash();
                             trigger_len_ = 0;
                         }
