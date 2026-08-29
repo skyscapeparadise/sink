@@ -12,12 +12,36 @@ the CPU-bound half of "how fast is this terminal." Glyph rasterization and
 compositing (GPU/display-bound, and not something Alacritty exposes as a
 standalone library either) isn't covered here.
 
-The Rust side's `Perform` implementation deliberately mirrors sink's
-current grid *architecture* (a flat cell buffer that gets fully shifted on
-scroll) rather than an optimized ring buffer, even though real Alacritty
-uses one. Giving only one side a smarter grid would measure grid
-architecture, not parser speed, and conflate the two. Both sides do
-comparable work per character.
+It also is **not** a terminal-vs-terminal benchmark. `vte_bench` links the
+`vte` crate and drives it with a hand-written `Perform` impl; it is not
+Alacritty, and a result here does not translate into "sink is faster than
+Alacritty." What people experience as terminal speed is dominated by things
+excluded here -- rasterization, damage tracking, PTY read chunking, and
+whether a terminal coalesces output between frames. For an end-to-end
+number, use Alacritty's `vtebench`, which drives real terminals through a
+PTY.
+
+## Keeping the two sides comparable
+
+Both sides deliberately do the same shape of work per character: a flat
+cell buffer, cursor tracking, SGR colour state, and a **row ring**, so a
+full-screen scroll rotates a base index instead of moving the buffer.
+
+That parity is the whole point, and it is easy to break. It *was* broken:
+both sides originally shifted the entire grid on scroll, and when sink
+moved to a ring the Rust side was left behind. For a while the benchmark
+reported sink as faster than `vte` on every workload, which was an
+artifact -- sink had O(1) scrolls and the thing it was being compared
+against did not. The ring was mirrored into `vte_bench` to fix it. Real
+Alacritty uses a ring too, so this is also closer to it than the original.
+
+**If you change the grid architecture on one side, change it on the other,
+or the numbers below stop meaning anything.**
+
+One asymmetry is left in deliberately, and it favours `vte`: its `Cell` is
+12 bytes against sink's 20, because sink's cells also carry SGR attribute
+bits and a hyperlink id. That is a real cost of sink's feature set rather
+than a benchmark artifact, so it is not padded away.
 
 ## Methodology
 
@@ -33,6 +57,9 @@ comparable work per character.
 - Both binaries are built with optimizations on (`-DCMAKE_BUILD_TYPE=Release`
   for sink, `cargo build --release` with LTO for vte) -- comparing an
   optimized build against a debug build would be meaningless.
+- Re-measure **both** sides in the same session. Cross-session comparisons
+  on this machine drifted by ~10% from thermal and background load alone,
+  which is larger than several of the differences below.
 
 ## Running it
 
@@ -47,51 +74,66 @@ cd bench/vte_bench && cargo build --release
 ./target/release/vte_bench ../workloads
 ```
 
-## Results (Apple Silicon, 2026-08-14)
+## Results (Apple Silicon, 2026-08-29, both sides with a row ring)
 
-| workload | sink (MB/s) | vte (MB/s) | vte / sink |
+| workload | sink (MB/s) | vte (MB/s) | faster |
 |---|---|---|---|
-| plain text (cat-like) | 9.0 | 49.1 | 5.5x |
-| SGR-heavy (colorized ls-like) | 16.0 | 74.4 | 4.7x |
-| cursor-heavy (TUI redraw-like) | 27.1 | 86.5 | 3.2x |
-| UTF-8 heavy (emoji/CJK/box-drawing) | 15.1 | 71.2 | 4.7x |
+| plain text (cat-like) | 92.7 | 119.8 | vte, 1.29x |
+| SGR-heavy (colorized ls-like) | 126.7 | 145.6 | vte, 1.15x |
+| cursor-heavy (TUI redraw-like) | 104.9 | 86.4 | **sink, 1.21x** |
+| UTF-8 heavy (emoji/CJK/box-drawing) | 160.9 | 211.5 | vte, 1.31x |
+
+sink was 2.6-6.1 MB/s across these workloads before the 2026-08-28/29
+optimization pass, so this is a 15-25x improvement -- but `vte` is still
+ahead on three of four. sink leads on cursor-heavy, which is TUI redraw
+(vim, htop): dense CSI sequences and line clears rather than bulk text.
+
+Both sides now repeat within ~1% run to run. Before the ring went into
+`vte_bench` its numbers swung 12-21%, which is worth knowing if you compare
+against any older figures.
 
 ## What this surfaced
 
-Running this found two real, fixed bugs in sink, not just comparison
-numbers:
+Running this found real bugs in sink, not just comparison numbers:
 
-1. **O(n²) scrollback trimming.** `TerminalGrid::scrollback_history_` was a
-   `std::vector`, trimmed from the front one line at a time once it hit the
-   cap -- an O(elements remaining) shift on every single trim. Heavy
-   scroll volume (a big `cat`, a noisy build log) degraded quadratically.
-   Fixed by switching to `std::deque`, whose front-erase is O(elements
-   removed) instead. (~3.5x improvement on the plain-text workload alone.)
+1. **The whole app was compiled at `-O0`.** `CMAKE_BUILD_TYPE` was never
+   set, so CMake passed no `-O` flag at all -- including for the binary
+   `releases/package.sh` puts into `sink.app`. Every shipped build up to
+   0.7 was unoptimized. Worth 2.5-7x on its own, and the single largest
+   win in the entire pass.
 
-2. **Per-character heap allocation.** The "flash red on error/failed"
-   trigger scanned a sliding window of the last 32 printable characters --
-   implemented as a `std::string` that got `substr()`'d (heap allocation +
-   copy) on almost every single printable character once the window
-   filled, regardless of whether that feature was even relevant to the
-   output. Fixed by switching to a fixed-size stack buffer with a plain
-   byte-compare scan, no allocation. (~60% throughput improvement on the
-   plain-text workload.)
+2. **O(n^2) scrollback trimming.** `scrollback_history_` was a
+   `std::vector` trimmed from the front one line at a time once it hit the
+   cap. Switched to `std::deque`.
 
-## What's still open
+3. **Per-character heap allocation** in the error/failed trigger scan, and
+   later a redundant full-window rescan on every printable character
+   (~25% of parse time) that only ever needed to test the tail.
 
-The remaining ~3-5.5x gap is not a bug in the same sense as the two above
--- it's the difference between `vte` (a mature, widely-used, aggressively
-optimized state-machine parser purpose-built for this) and sink's more
-straightforward branch-based parser. Closing it further would mean a
-genuine parser rewrite (a table-driven state machine, roughly what `vte`
-itself and the classic Paul Williams VT100 state machine design are), which
-is a real, scoped project of its own -- not something to take on
-incidentally while benchmarking.
+4. **CSI parameters parsed via `std::stoi`** inside a try/catch -- ~12% of
+   parse time in locale-aware `strtol` and exception machinery, for input
+   that is only ever ASCII digits.
 
-Separately: both benchmarks here deliberately use a full-grid-shift-per-scroll
-model to isolate parser throughput. In the *real* app, replacing that with
-a ring buffer (advancing a "top of buffer" index instead of physically
-moving cell data on every scrolled line) would be a substantial additional
-win for scroll-heavy workloads specifically -- and is exactly what
-Alacritty/Kitty do. That's a bigger architectural change than anything in
-this benchmark and is its own future project, not attempted here.
+5. **44-byte cells.** `fg`/`bg` were `SDL_FColor` (four floats each) storing
+   values that are only ever 8-bit. Packed to 20 bytes.
+
+6. **A grid memmove per newline.** `scroll_up()` moved the entire grid up
+   one row on every line of output -- ~70% of parse time. Now a ring.
+
+7. **A heap allocation per newline**, for the row pushed into scrollback.
+   Now recycled from the row being evicted.
+
+## What'''s still open
+
+The remaining gap on three of four workloads is the difference between
+`vte` -- a mature, aggressively optimized table-driven state machine -- and
+sink's parser, which is table-driven only in `STATE_NORMAL` and remains a
+branch chain elsewhere. Extending the table across the CSI/escape states is
+the obvious next step, and is a scoped project rather than an incidental
+fix.
+
+The bigger unmeasured cost is the **render path**, which this benchmark is
+structurally unable to see. `TerminalGrid::render()` calls `get_cell_at()`
+per cell per frame, redoing scrollback index math ~1900 times a frame and
+returning a 20-byte `Cell` by value. Measuring that needs a frame-time
+harness, not this one.

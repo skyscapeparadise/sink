@@ -3,12 +3,23 @@
 // bench/sink_bench.cpp does and times vte::Parser::advance() over them.
 //
 // The Perform impl below deliberately does *comparable* bookkeeping to
-// sink's TerminalGrid (a flat cell buffer, cursor tracking, SGR color
-// state, full-buffer shift on scroll) rather than an optimized ring
-// buffer, even though real Alacritty uses one. The point of this
-// benchmark is to isolate "parsing + basic cell-write cost" as fairly as
-// possible -- giving only the Rust side a smarter grid would measure grid
-// architecture, not parser speed, and conflate the two.
+// sink's TerminalGrid: a flat cell buffer, cursor tracking, SGR colour
+// state, and a row ring so that a full-screen scroll rotates a base index
+// instead of moving the buffer. The point of this benchmark is to isolate
+// "parsing + basic cell-write cost" as fairly as possible -- giving either
+// side a smarter grid would measure grid architecture, not parser speed,
+// and conflate the two.
+//
+// This originally shifted the whole buffer on scroll, matching what sink's
+// grid did at the time. When sink moved to a ring, that parity broke and
+// the comparison silently started flattering sink on scroll-heavy
+// workloads, so the ring was mirrored here too. Real Alacritty also uses a
+// ring, so this is closer to it than the original was.
+//
+// One difference remains and it favours this side: Cell here is 12 bytes
+// against sink's 20, because sink's cells also carry SGR attribute bits and
+// a hyperlink id. That is a real cost of sink's feature set rather than a
+// benchmark artifact, so it is left alone rather than padded to match.
 use std::env;
 use std::fs;
 use std::time::Instant;
@@ -25,6 +36,9 @@ struct Grid {
     cols: usize,
     rows: usize,
     cells: Vec<Cell>,
+    /// Ring base: logical row r lives at physical row phys_row(r). Mirrors
+    /// TerminalGrid::row_base_ on the C++ side.
+    row_base: usize,
     cursor_row: usize,
     cursor_col: usize,
     cur_fg: (u8, u8, u8),
@@ -37,6 +51,7 @@ impl Grid {
             cols,
             rows,
             cells: vec![Cell::default(); cols * rows],
+            row_base: 0,
             cursor_row: 0,
             cursor_col: 0,
             cur_fg: (230, 230, 230),
@@ -44,23 +59,35 @@ impl Grid {
         }
     }
 
+    /// row_base and r are both < rows, so their sum is below 2 * rows and a
+    /// conditional subtract replaces the modulo.
+    #[inline]
+    fn phys_row(&self, r: usize) -> usize {
+        let p = r + self.row_base;
+        if p >= self.rows { p - self.rows } else { p }
+    }
+
+    #[inline]
+    fn row_start(&self, r: usize) -> usize {
+        self.phys_row(r) * self.cols
+    }
+
     fn write_char(&mut self, c: char) {
         if self.cursor_col >= self.cols {
             self.newline();
         }
-        let idx = self.cursor_row * self.cols + self.cursor_col;
+        let idx = self.row_start(self.cursor_row) + self.cursor_col;
         self.cells[idx] = Cell { ch: c, fg: self.cur_fg, bg: self.cur_bg };
         self.cursor_col += 1;
     }
 
-    // Same cost shape as TerminalGrid::scroll_up(): shifts the *entire*
-    // buffer up by one row (not a ring-buffer index rotation), since
-    // that's what the C++ side being compared against actually does.
+    // Same cost shape as TerminalGrid::scroll_up(): rotate the ring base and
+    // blank the row that falls off, rather than moving the buffer.
     fn scroll_up(&mut self) {
+        self.row_base = self.phys_row(1);
+        let start = self.row_start(self.rows - 1);
         let cols = self.cols;
-        self.cells.copy_within(cols.., 0);
-        let last_row_start = (self.rows - 1) * cols;
-        for c in &mut self.cells[last_row_start..] {
+        for c in &mut self.cells[start..start + cols] {
             *c = Cell::default();
         }
     }
@@ -81,7 +108,7 @@ impl Grid {
     }
 
     fn clear_line_from_cursor(&mut self) {
-        let row_start = self.cursor_row * self.cols;
+        let row_start = self.row_start(self.cursor_row);
         for c in &mut self.cells[row_start + self.cursor_col..row_start + self.cols] {
             *c = Cell::default();
         }
