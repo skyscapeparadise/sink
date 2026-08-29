@@ -69,8 +69,10 @@ int main(int argc, char** argv) {
         { "UTF-8 heavy",             "unicode_heavy.bin" },
     };
 
-    std::printf("\n%-26s %10s %10s %12s\n", "scene", "ms/frame", "fps", "cells/frame");
-    std::printf("%-26s %10s %10s %12s\n", "-----", "--------", "---", "-----------");
+    std::printf("\n%-26s %10s %10s %10s %12s\n",
+                "scene", "ms/frame", "fps", "avg ms", "cells/frame");
+    std::printf("%-26s %10s %10s %10s %12s\n",
+                "-----", "--------", "---", "------", "-----------");
 
     for (const Scene& s : scenes) {
         TerminalGrid grid;
@@ -103,9 +105,12 @@ int main(int argc, char** argv) {
             best = std::min(best, ms);
             total += ms;
         }
+        // Best-of, like sink_bench: this contends with the GPU driver and the
+        // compositor, and averaging folds their scheduling into the number.
+        // Back-to-back averages here varied by 2x; the minimum is stable.
         double avg = total / kFrames;
-        std::printf("%-26s %10.3f %10.0f %12d\n", s.label, avg, 1000.0 / avg, cols * rows);
-        (void)best;
+        std::printf("%-26s %10.3f %10.0f %10.3f %12d\n",
+                    s.label, best, 1000.0 / best, avg, cols * rows);
     }
 
     fm.cleanup();

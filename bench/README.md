@@ -82,19 +82,24 @@ cd bench/vte_bench && cargo build --release
 
 | workload | sink (MB/s) | vte (MB/s) | faster |
 |---|---|---|---|
-| plain text (cat-like) | 92.7 | 119.8 | vte, 1.29x |
-| SGR-heavy (colorized ls-like) | 126.7 | 145.6 | vte, 1.15x |
-| cursor-heavy (TUI redraw-like) | 104.9 | 86.4 | **sink, 1.21x** |
-| UTF-8 heavy (emoji/CJK/box-drawing) | 160.9 | 211.5 | vte, 1.31x |
+| plain text (cat-like) | 185.7 | 119.5 | sink, 1.55x |
+| SGR-heavy (colorized ls-like) | 187.5 | 145.1 | sink, 1.29x |
+| cursor-heavy (TUI redraw-like) | 186.5 | 86.2 | sink, 2.16x |
+| UTF-8 heavy (emoji/CJK/box-drawing) | 227.5 | 210.7 | sink, 1.08x |
 
 sink was 2.6-6.1 MB/s across these workloads before the 2026-08-28/29
-optimization pass, so this is a 15-25x improvement -- but `vte` is still
-ahead on three of four. sink leads on cursor-heavy, which is TUI redraw
-(vim, htop): dense CSI sequences and line clears rather than bulk text.
+optimization pass, so this is a 25-45x improvement. Both sides repeat within
+~1% run to run; before the ring went into `vte_bench` its numbers swung
+12-21%, which is worth knowing against any older figures.
 
-Both sides now repeat within ~1% run to run. Before the ring went into
-`vte_bench` its numbers swung 12-21%, which is worth knowing if you compare
-against any older figures.
+**Read the plain-text and cursor-heavy margins with the API difference in
+mind.** sink batches runs of printable ASCII into a single grid write, which
+is worth a lot on text-heavy input. `vte` cannot: its `Perform` trait hands
+back one character at a time, so this benchmark's Rust side -- and Alacritty
+itself -- pays a per-character callback no matter what. That is a real
+architectural difference rather than a benchmark artifact, unlike the row-ring
+mismatch described above, which *was* one and got fixed. But it does mean the
+gap is partly about interface shape, not only parser quality.
 
 ## What this surfaced
 
@@ -152,14 +157,20 @@ cmake --build build --target render_bench
 # optional third argument: frames per scene (raise it to attach a profiler)
 ```
 
+Best-of is reported, like `sink_bench`. This contends with the GPU driver and
+the compositor, and averaging folds their scheduling into the result:
+back-to-back *averages* here varied by 2x, while the minima are stable to
+within a few percent. The average is printed alongside as a sanity check, but
+compare on the minimum.
+
 Results (Apple Silicon, 2026-08-29, Metal renderer, 200x50 = 10,000 cells):
 
 | scene | ms/frame | implied ceiling |
 |---|---|---|
-| blank grid | 0.127 | ~7800 fps |
-| plain text | 0.295 | ~3400 fps |
-| SGR-heavy | 0.532 | ~1900 fps |
-| UTF-8 heavy | 0.627 | ~1600 fps |
+| blank grid | 0.113 | ~8900 fps |
+| plain text | 0.292 | ~3400 fps |
+| SGR-heavy | 0.213 | ~4700 fps |
+| UTF-8 heavy | 0.245 | ~4100 fps |
 
 **The render path is not a bottleneck.** At 120Hz the frame budget is 8.3ms
 and the worst case here uses 0.63ms of it -- under 8%, on a grid larger than
