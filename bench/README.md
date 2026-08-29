@@ -4,13 +4,17 @@ Measures how fast sink's ANSI parser + grid (`ANSIParser` + `TerminalGrid`)
 processes representative terminal output, and compares it against `vte` --
 the actual VT parser crate Alacritty is built on.
 
-## What this measures (and what it doesn't)
+There are two benchmarks here: `sink_bench` (parser throughput, compared
+against `vte`) and `render_bench` (frame time, sink only -- there is nothing
+to compare it against, since `vte` is a parser and draws nothing).
+
+## What sink_bench measures (and what it doesn't)
 
 This is a **headless** benchmark: no window, no renderer, no GPU work on
 either side. It measures parsing + cell/cursor bookkeeping throughput --
 the CPU-bound half of "how fast is this terminal." Glyph rasterization and
 compositing (GPU/display-bound, and not something Alacritty exposes as a
-standalone library either) isn't covered here.
+standalone library either) isn't covered here -- see `render_bench` below.
 
 It also is **not** a terminal-vs-terminal benchmark. `vte_bench` links the
 `vte` crate and drives it with a hand-written `Perform` impl; it is not
@@ -132,8 +136,37 @@ branch chain elsewhere. Extending the table across the CSI/escape states is
 the obvious next step, and is a scoped project rather than an incidental
 fix.
 
-The bigger unmeasured cost is the **render path**, which this benchmark is
-structurally unable to see. `TerminalGrid::render()` calls `get_cell_at()`
-per cell per frame, redoing scrollback index math ~1900 times a frame and
-returning a 20-byte `Cell` by value. Measuring that needs a frame-time
-harness, not this one.
+## render_bench: frame time
+
+`sink_bench` cannot see `TerminalGrid::render()`, so `render_bench` measures
+it directly. It opens a hidden window and a real renderer (render() needs a
+live `SDL_Renderer` and a glyph atlas), disables vsync, fills a 200x50 grid
+from the same workload files, and times the render call. GPU execution is
+asynchronous, so what it reports is **CPU time spent building a frame**, not
+time to pixels -- that is the part worth optimizing and the part that decides
+how much headroom the main thread has.
+
+```sh
+cmake --build build --target render_bench
+./build/render_bench bench/workloads fonts/MonaspaceNeon-Regular.otf
+# optional third argument: frames per scene (raise it to attach a profiler)
+```
+
+Results (Apple Silicon, 2026-08-29, Metal renderer, 200x50 = 10,000 cells):
+
+| scene | ms/frame | implied ceiling |
+|---|---|---|
+| blank grid | 0.127 | ~7800 fps |
+| plain text | 0.295 | ~3400 fps |
+| SGR-heavy | 0.532 | ~1900 fps |
+| UTF-8 heavy | 0.627 | ~1600 fps |
+
+**The render path is not a bottleneck.** At 120Hz the frame budget is 8.3ms
+and the worst case here uses 0.63ms of it -- under 8%, on a grid larger than
+most windows. Sampling agrees: `render()` accounts for ~6% of the harness's
+own main-thread time, with the rest in `SDL_RenderPresent` and the event loop.
+
+Within render(), the biggest single cost is the ligature scan (~44%), which
+calls `get_cell_at()` a second time per cell to re-fetch the previous cell
+rather than carrying it over from the previous iteration. Worth knowing, but
+it is 44% of something that is already 8% of a frame.

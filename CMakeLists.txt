@@ -158,3 +158,19 @@ target_link_libraries(sink_bench PRIVATE
     SDL3_ttf::SDL3_ttf
     SDL3_image::SDL3_image
 )
+
+# Frame-time benchmark for the render path, which sink_bench (headless by
+# design) structurally cannot measure. Needs a real renderer and glyph atlas,
+# so it opens a hidden window.
+add_executable(render_bench
+    bench/render_bench.cpp
+    src/ansi_parser.cpp
+    src/terminal_grid.cpp
+    src/font_manager.cpp
+)
+target_include_directories(render_bench PRIVATE src)
+target_link_libraries(render_bench PRIVATE
+    SDL3::SDL3
+    SDL3_ttf::SDL3_ttf
+    SDL3_image::SDL3_image
+)
