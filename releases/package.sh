@@ -292,6 +292,54 @@ cat <<EOF > "${CONTENTS_DIR}/Info.plist"
     <true/>
     <key>NSHumanReadableCopyright</key>
     <string>copyright © 2026 rain multimedia. all rights reserved.</string>
+    <key>LSApplicationCategoryType</key>
+    <string>public.app-category.developer-tools</string>
+
+    <!-- TCC usage descriptions.
+         A terminal runs arbitrary commands, and macOS attributes what those
+         child processes do back to the responsible process -- sink. So the
+         prompt the user sees says "sink wants to access ..." no matter which
+         command actually asked. Without these keys macOS supplies generic
+         text, which for a terminal is actively misleading: it reads as though
+         sink itself wants the data. Each string says a command requested it,
+         so the user can judge against whatever they just ran.
+
+         Declaring a key neither requests nor grants anything; it only supplies
+         the wording if a prompt ever happens. Apple's own Terminal.app ships
+         none of these, but it is a platform binary with TCC exceptions that
+         third-party apps cannot use. -->
+    <key>NSDesktopFolderUsageDescription</key>
+    <string>A command run in sink is trying to read or write files on your Desktop.</string>
+    <key>NSDocumentsFolderUsageDescription</key>
+    <string>A command run in sink is trying to read or write files in your Documents folder.</string>
+    <key>NSDownloadsFolderUsageDescription</key>
+    <string>A command run in sink is trying to read or write files in your Downloads folder.</string>
+    <key>NSRemovableVolumeUsageDescription</key>
+    <string>A command run in sink is trying to access files on a removable volume.</string>
+    <key>NSNetworkVolumesUsageDescription</key>
+    <string>A command run in sink is trying to access files on a network volume.</string>
+    <key>NSFileProviderDomainUsageDescription</key>
+    <string>A command run in sink is trying to access files stored in iCloud Drive or another cloud provider.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>A command run in sink (such as osascript) is trying to control another application.</string>
+    <key>NSSystemAdministrationUsageDescription</key>
+    <string>A command run in sink is trying to perform an administrative task.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>A command run in sink is trying to reach devices on your local network.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>A command run in sink is trying to use the camera.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>A command run in sink is trying to use the microphone.</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>A command run in sink is trying to determine your location.</string>
+    <key>NSContactsUsageDescription</key>
+    <string>A command run in sink is trying to access your contacts.</string>
+    <key>NSCalendarsUsageDescription</key>
+    <string>A command run in sink is trying to access your calendars.</string>
+    <key>NSRemindersUsageDescription</key>
+    <string>A command run in sink is trying to access your reminders.</string>
+    <key>NSPhotoLibraryUsageDescription</key>
+    <string>A command run in sink is trying to access your photo library.</string>
 </dict>
 </plist>
 EOF
