@@ -62,6 +62,38 @@ static void test_crlf_and_scroll() {
     CHECK(row_text(g, 2) == "four");
 }
 
+// The row ring's base index wraps back past zero once you scroll more times
+// than the grid has rows. test_crlf_and_scroll above scrolls exactly once, so
+// it never reaches that case; this drives enough lines through a small grid to
+// wrap the base several times and checks that both the visible rows and
+// subsequent row-addressed operations still land on the right cells.
+static void test_scroll_ring_wraparound() {
+    TerminalGrid g; g.resize(20, 4);
+    ANSIParser p;
+
+    std::string feed_str;
+    for (int i = 1; i <= 20; ++i) {
+        feed_str += "line" + std::to_string(i);
+        if (i != 20) feed_str += "\r\n";
+    }
+    feed(p, g, feed_str);   // 16 scrolls through a 4-row grid: base wraps 4x
+
+    CHECK(g.get_scrollback_size() == 16);
+    CHECK(row_text(g, 0) == "line17");
+    CHECK(row_text(g, 1) == "line18");
+    CHECK(row_text(g, 2) == "line19");
+    CHECK(row_text(g, 3) == "line20");
+
+    // Row-addressed operations must still resolve through the wrapped base
+    feed(p, g, "\x1b[1;1H\x1b[2K");        // home, erase whole line
+    CHECK(row_text(g, 0) == "");
+    CHECK(row_text(g, 3) == "line20");
+
+    feed(p, g, "\x1b[3;1Hxy");              // CUP row 3: overwrite "li" of "line19"
+    CHECK(row_text(g, 2) == "xyne19");
+    CHECK(row_text(g, 3) == "line20");
+}
+
 static void test_cup_and_relative_motion() {
     TerminalGrid g; g.resize(20, 5);
     ANSIParser p;
@@ -483,6 +515,7 @@ static void test_utf8() {
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
+    test_scroll_ring_wraparound();
     test_cup_and_relative_motion();
     test_sgr_16_color();
     test_sgr_256_color();

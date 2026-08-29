@@ -261,6 +261,28 @@ private:
     int cols_ = 0;
     int rows_ = 0;
     std::vector<Cell> cells_;
+
+    // Row ring base. scroll_up() used to memmove the entire grid up one row on
+    // every newline, which profiled at ~55% of parse time even after Cell
+    // shrank to 20 bytes. With a rotating base a full-screen scroll just
+    // advances this index and blanks the row that falls off, so the cost goes
+    // from O(rows x cols) to O(cols).
+    //
+    // cells_ is therefore in ring order, not logical order: logical row r
+    // lives at phys_row(r). Everything that touches a row goes through
+    // row_data(). Note that row_wrapped_/row_prompt_ stay in logical order and
+    // are still shifted explicitly -- they are one bool per row, so rotating
+    // them buys nothing.
+    int row_base_ = 0;
+
+    // row_base_ and r are both in [0, rows_), so their sum is below 2 * rows_
+    // and a conditional subtract replaces the modulo.
+    int phys_row(int r) const {
+        int p = r + row_base_;
+        return p >= rows_ ? p - rows_ : p;
+    }
+    Cell* row_data(int r) { return cells_.data() + phys_row(r) * cols_; }
+    const Cell* row_data(int r) const { return cells_.data() + phys_row(r) * cols_; }
     std::vector<bool> row_wrapped_;
     std::vector<bool> row_prompt_; // per active row, parallel to row_wrapped_
     bool wrap_pending_ = false;
