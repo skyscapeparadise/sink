@@ -8,8 +8,48 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # 3.4.0 minimum: the video background hue-shift effect uses the GPU render
 # backend and SDL_GPURenderState custom-shader API, both added in 3.4.0.
 find_package(SDL3 3.4.0 REQUIRED)
+# Prefer the vendored SDL3_ttf + HarfBuzz (vendor/build_text_stack.sh).
+# Homebrew's harfbuzz links glib (and thus libpcre2 + libintl) and graphite2:
+# ~2.2MB for a Unicode backend harfbuzz has built in, and a font technology
+# (SIL Graphite) sink never loads.
+set(SINK_VENDORED_TEXT "${CMAKE_CURRENT_SOURCE_DIR}/vendor/textstack")
+if(EXISTS "${SINK_VENDORED_TEXT}/lib/cmake/SDL3_ttf/SDL3_ttfConfig.cmake")
+    message(STATUS "Using vendored SDL3_ttf + HarfBuzz: ${SINK_VENDORED_TEXT}")
+    list(PREPEND CMAKE_PREFIX_PATH "${SINK_VENDORED_TEXT}")
+else()
+    message(WARNING
+        "Vendored SDL3_ttf not found. Falling back to the system one, which "
+        "pulls in glib/graphite2. Run vendor/build_text_stack.sh.")
+endif()
 find_package(SDL3_ttf REQUIRED)
+# Prefer the vendored SVG-only SDL3_image (vendor/build_sdl3_image.sh).
+# Homebrew's enables every format, pulling ~12MB of AVIF/JXL/TIFF/WebP decoders
+# and their deps into the bundle for what amounts to two SVG logos.
+set(SINK_VENDORED_SDL3_IMAGE "${CMAKE_CURRENT_SOURCE_DIR}/vendor/sdl3_image")
+if(EXISTS "${SINK_VENDORED_SDL3_IMAGE}/lib/cmake/SDL3_image/SDL3_imageConfig.cmake")
+    message(STATUS "Using vendored SDL3_image: ${SINK_VENDORED_SDL3_IMAGE}")
+    list(PREPEND CMAKE_PREFIX_PATH "${SINK_VENDORED_SDL3_IMAGE}")
+else()
+    message(WARNING
+        "Vendored SDL3_image not found. Falling back to the system one, which "
+        "bundles ~12MB of unused image codecs. Run vendor/build_sdl3_image.sh.")
+endif()
 find_package(SDL3_image REQUIRED)
+
+# Prefer the vendored LGPL decode-only FFmpeg (built by vendor/build_ffmpeg.sh).
+# Homebrew's ffmpeg is configured --enable-gpl --enable-version3, so bundling it
+# into sink.app would relicense the app as GPLv3 and drag in ~33MB of encoders
+# sink never calls. Fall back to the system one for development, but warn.
+set(SINK_VENDORED_FFMPEG "${CMAKE_CURRENT_SOURCE_DIR}/vendor/ffmpeg")
+if(EXISTS "${SINK_VENDORED_FFMPEG}/lib/pkgconfig/libavcodec.pc")
+    message(STATUS "Using vendored LGPL FFmpeg: ${SINK_VENDORED_FFMPEG}")
+    set(ENV{PKG_CONFIG_PATH} "${SINK_VENDORED_FFMPEG}/lib/pkgconfig:$ENV{PKG_CONFIG_PATH}")
+else()
+    message(WARNING
+        "Vendored FFmpeg not found. Falling back to the system FFmpeg, which is "
+        "almost certainly GPL and must not be shipped. Run vendor/build_ffmpeg.sh "
+        "before packaging a release.")
+endif()
 
 # Find FFmpeg using pkg-config
 find_package(PkgConfig REQUIRED)
