@@ -276,6 +276,18 @@ private:
     // them buys nothing.
     int row_base_ = 0;
 
+    // A prebuilt row of blank cells in the current SGR colours. Blanking a row
+    // is std::fill over a 20-byte element, which cannot become a memset and so
+    // writes cell by cell; scroll_up() does exactly that on every newline and
+    // it profiled at ~13% of parse time on scrolling text. Copying from a
+    // cached row hands the work to memmove instead. Rebuilt only when the
+    // colours or the width change, which is rare next to how often it is read.
+    std::vector<Cell> blank_row_cache_;
+    PackedColor blank_row_fg_{};
+    PackedColor blank_row_bg_{};
+    bool blank_row_valid_ = false;
+    const Cell* blank_row();
+
     // row_base_ and r are both in [0, rows_), so their sum is below 2 * rows_
     // and a conditional subtract replaces the modulo.
     int phys_row(int r) const {

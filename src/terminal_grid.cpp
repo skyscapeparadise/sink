@@ -299,6 +299,23 @@ void TerminalGrid::write_character(char32_t codepoint) {
     }
 }
 
+// See blank_row_cache_'s declaration.
+const Cell* TerminalGrid::blank_row() {
+    if (!blank_row_valid_ ||
+        static_cast<int>(blank_row_cache_.size()) != cols_ ||
+        blank_row_fg_.r != current_fg_packed_.r || blank_row_fg_.g != current_fg_packed_.g ||
+        blank_row_fg_.b != current_fg_packed_.b || blank_row_fg_.a != current_fg_packed_.a ||
+        blank_row_bg_.r != current_bg_packed_.r || blank_row_bg_.g != current_bg_packed_.g ||
+        blank_row_bg_.b != current_bg_packed_.b || blank_row_bg_.a != current_bg_packed_.a) {
+        blank_row_cache_.assign(static_cast<size_t>(cols_),
+                                Cell{ 32, current_fg_packed_, current_bg_packed_ });
+        blank_row_fg_ = current_fg_packed_;
+        blank_row_bg_ = current_bg_packed_;
+        blank_row_valid_ = true;
+    }
+    return blank_row_cache_.data();
+}
+
 void TerminalGrid::scroll_up() {
     if (rows_ <= 1) return;
 
@@ -360,9 +377,9 @@ void TerminalGrid::scroll_up() {
     row_prompt_[rows_ - 1] = false;
     
     // Fill the new last row with spaces using current style
-    Cell empty_cell = { 32, current_fg_packed_, current_bg_packed_ };
+    const Cell* blank = blank_row();
     Cell* recycled = row_data(rows_ - 1);
-    std::fill(recycled, recycled + cols_, empty_cell);
+    std::copy(blank, blank + cols_, recycled);
 
     if (saved_cursor_row_ > 0) {
         saved_cursor_row_--;
@@ -591,15 +608,12 @@ void TerminalGrid::delete_lines(int count) {
 }
 
 void TerminalGrid::clear_screen() {
-    Cell empty_cell = { 32, current_fg_packed_, current_bg_packed_ };
-    // Fill one row, then copy that row across the rest. std::fill over a
-    // 20-byte element cannot become a memset, but the row-to-row copies are
-    // plain memmove, which is considerably faster over a whole screen.
+    // Copy the cached blank row across every row: std::fill over a 20-byte
+    // element cannot become a memset, but these are plain memmove.
     if (!cells_.empty() && cols_ > 0) {
-        std::fill(cells_.begin(), cells_.begin() + cols_, empty_cell);
-        for (int r = 1; r < rows_; ++r) {
-            std::copy(cells_.begin(), cells_.begin() + cols_,
-                      cells_.begin() + static_cast<size_t>(r) * cols_);
+        const Cell* blank = blank_row();
+        for (int r = 0; r < rows_; ++r) {
+            std::copy(blank, blank + cols_, cells_.begin() + static_cast<size_t>(r) * cols_);
         }
     }
     std::fill(row_wrapped_.begin(), row_wrapped_.end(), false);
@@ -640,9 +654,11 @@ void TerminalGrid::clear_line(int row, int mode) {
         end_col = std::clamp(cursor_col_ + 1, 0, cols_);
     }
     
-    Cell empty_cell = { 32, current_fg_packed_, current_bg_packed_ };
+    const Cell* blank = blank_row();
     Cell* line = row_data(row);
-    std::fill(line + start_col, line + end_col, empty_cell);
+    if (end_col > start_col) {
+        std::copy(blank, blank + (end_col - start_col), line + start_col);
+    }
     wrap_pending_ = false;
 }
 
