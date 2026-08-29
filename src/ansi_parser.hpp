@@ -37,9 +37,19 @@ private:
     // every printable character parsed, and std::string::substr() here
     // was heap-allocating + copying on almost every call once the window
     // filled -- by far the hottest allocation in the whole parse path.
-    static constexpr int kTriggerBufSize = 32;
-    char trigger_buffer_[kTriggerBufSize] = {};
-    int trigger_len_ = 0;
+    // Each printable character is written twice, at i and i+kTrigWindow, so
+    // the most recent kTrigWindow characters are always contiguous somewhere
+    // in the array and the suffix test is a plain memcmp with no wraparound
+    // handling. Replaces a 32-byte buffer that memmoved itself on every
+    // printable character once full; only the last six can ever matter, since
+    // "failed" is the longest pattern.
+    //
+    // (A 64-bit shift register was tried first and measured slower: each
+    // character depended on the previous window value, serialising the loop.
+    // These two stores are independent.)
+    static constexpr int kTrigWindow = 8;
+    char trigger_ring_[kTrigWindow * 2] = {};
+    int trigger_pos_ = 0;
 
     bool is_private_mode_ = false;
 

@@ -45,21 +45,6 @@ static constexpr std::array<uint8_t, 128> make_normal_table() {
 }
 static constexpr std::array<uint8_t, 128> kNormalAction = make_normal_table();
 
-// Suffix test for the error/failed trigger scan -- see trigger_buffer_'s
-// declaration.
-//
-// This used to scan the whole rolling window on every printable character,
-// which profiled at ~25% of total parse time. Rescanning is redundant: the
-// window only ever changes by appending one character (and dropping one from
-// the front, which cannot create a match), so any newly-formed match must end
-// at the character just appended. Every earlier suffix was already tested when
-// it was the tail. Checking only the tail is therefore equivalent, and turns an
-// O(window x pattern) scan into one memcmp.
-static bool buf_ends_with(const char* buf, int len, const char* pat, int pat_len) {
-    if (len < pat_len) return false;
-    return std::memcmp(buf + len - pat_len, pat, static_cast<size_t>(pat_len)) == 0;
-}
-
 ANSIParser::ANSIParser() {}
 
 ANSIParser::~ANSIParser() {}
@@ -230,21 +215,22 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                 // time). The guard above already restricts c to ASCII.
                 char lc = (c >= 'A' && c <= 'Z') ? static_cast<char>(c + 32)
                                                  : static_cast<char>(c);
-                if (trigger_len_ < kTriggerBufSize) {
-                    trigger_buffer_[trigger_len_++] = lc;
-                } else {
-                    std::memmove(trigger_buffer_, trigger_buffer_ + 1, kTriggerBufSize - 1);
-                    trigger_buffer_[kTriggerBufSize - 1] = lc;
-                }
+                trigger_ring_[trigger_pos_] = lc;
+                trigger_ring_[trigger_pos_ + kTrigWindow] = lc;
+                // One past the most recent character, in the contiguous copy.
+                const char* end = trigger_ring_ + trigger_pos_ + kTrigWindow + 1;
+                trigger_pos_ = (trigger_pos_ + 1) & (kTrigWindow - 1);
 
-                // Gate on the last letter first: only 'r' can finish
-                // "error" and only 'd' can finish "failed", so almost
-                // every character costs one comparison instead of a
-                // memcmp.
-                if ((lc == 'r' && buf_ends_with(trigger_buffer_, trigger_len_, "error", 5)) ||
-                    (lc == 'd' && buf_ends_with(trigger_buffer_, trigger_len_, "failed", 6))) {
+                // Gate on the last letter first: only 'r' can finish "error"
+                // and only 'd' can finish "failed", so almost every character
+                // costs a single comparison. The leading zeros the ring starts
+                // with cannot match a letter, so no "enough characters yet"
+                // counter is needed.
+                if ((lc == 'r' && std::memcmp(end - 5, "error", 5) == 0) ||
+                    (lc == 'd' && std::memcmp(end - 6, "failed", 6) == 0)) {
                     grid.trigger_error_flash();
-                    trigger_len_ = 0;
+                    std::memset(trigger_ring_, 0, sizeof(trigger_ring_));
+                    trigger_pos_ = 0;
                 }
             }
             break;
