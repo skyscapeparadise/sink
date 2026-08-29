@@ -1,9 +1,49 @@
 #include "ansi_parser.hpp"
+
+#include <array>
 #include <iostream>
 #include <sstream>
 #include <algorithm>
 #include <cstring>
 #include <limits>
+
+// Dispatch table for STATE_NORMAL.
+//
+// The if-chain this replaces compared a byte against eight control characters
+// in sequence, then against five Unicode ranges, before writing it -- roughly
+// fifteen branches for the most common byte in any terminal stream. One
+// indexed load plus a jump table reaches the same place directly.
+//
+// Everything without a special meaning maps to NA_PRINT, *including* the
+// control characters this parser doesn't handle (NUL, SUB, DEL and friends).
+// That is deliberate: they previously fell through the whole if-chain into the
+// printable branch and were written to the grid, so mapping them to NA_PRINT
+// preserves that behaviour exactly rather than quietly starting to drop them.
+enum NormalAction : uint8_t {
+    NA_PRINT = 0,
+    NA_ESC,
+    NA_LF,
+    NA_CR,
+    NA_BS,
+    NA_TAB,
+    NA_IGNORE,   // BEL, SO, SI: consumed with no effect
+};
+
+static constexpr std::array<uint8_t, 128> make_normal_table() {
+    std::array<uint8_t, 128> t{};   // NA_PRINT (0) everywhere by default
+    t[0x07] = NA_IGNORE;            // BEL
+    t[0x08] = NA_BS;
+    t[0x09] = NA_TAB;
+    t[0x0A] = NA_LF;                // LF
+    t[0x0B] = NA_LF;                // VT
+    t[0x0C] = NA_LF;                // FF
+    t[0x0D] = NA_CR;
+    t[0x0E] = NA_IGNORE;            // SO
+    t[0x0F] = NA_IGNORE;            // SI
+    t[0x1B] = NA_ESC;
+    return t;
+}
+static constexpr std::array<uint8_t, 128> kNormalAction = make_normal_table();
 
 // Suffix test for the error/failed trigger scan -- see trigger_buffer_'s
 // declaration.
@@ -117,75 +157,94 @@ void ANSIParser::parse(TerminalGrid& grid, const char* data, size_t size) {
 void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
     switch (state_) {
         case STATE_NORMAL: {
-            if (c == '\x1b') {
-                state_ = STATE_ESCAPE;
-                reset_csi();
-            } else if (c == '\n' || c == '\v' || c == '\f') {
-                // Line feed: move cursor down, scrolling at the bottom margin
-                grid.index();
-            } else if (c == '\r') {
-                // Carriage return: move cursor to start of line
-                grid.set_cursor_col(0);
-                grid.set_prompt_boundary(-1);
-            } else if (c == '\b') {
-                // Backspace: move cursor left one cell
-                grid.set_cursor_col(grid.get_cursor_col() - 1);
-            } else if (c == '\x07') {
-                // Bell: Ignore audio alerts
-            } else if (c == 0x0E || c == 0x0F) {
-                // SO/SI: shift between G0/G1. G1 isn't tracked (ncurses on
-                // xterm-likes designates G0 directly), so just consume them.
-            } else if (c == '\t') {
-                // Tab: Move to next tab stop (multiples of 8)
-                int next_tab = (grid.get_cursor_col() + 8) & ~7;
-                grid.set_cursor_col(next_tab);
-            } else {
-                // Standard printable character
-                // Ignore Unicode Variation Selectors and Zero-Width characters
-                if (!((c >= 0xFE00 && c <= 0xFE0F) || 
-                      (c >= 0xE0100 && c <= 0xE01EF) ||
-                      (c >= 0x200B && c <= 0x200D) ||
-                      c == 0x2060 ||
-                      c == 0xFEFF)) {
-                    char32_t out = c;
-                    if (g0_dec_graphics_ && c >= 0x60 && c <= 0x7E) {
-                        // DEC Special Graphics: 0x60-0x7E become line-drawing
-                        // and symbol glyphs while ESC ( 0 is in effect.
-                        static const char32_t dec_graphics[31] = {
-                            0x25C6, 0x2592, 0x2409, 0x240C, 0x240D, 0x240A,
-                            0x00B0, 0x00B1, 0x2424, 0x240B, 0x2518, 0x2510,
-                            0x250C, 0x2514, 0x253C, 0x23BA, 0x23BB, 0x2500,
-                            0x23BC, 0x23BD, 0x251C, 0x2524, 0x2534, 0x252C,
-                            0x2502, 0x2264, 0x2265, 0x03C0, 0x2260, 0x00A3,
-                            0x00B7
-                        };
-                        out = dec_graphics[c - 0x60];
+            // ASCII dispatches through the table. Anything above 0x7F is text
+            // as far as this state is concerned -- every control character it
+            // recognises is single-byte ASCII -- so it skips straight to the
+            // write path below.
+            if (c < 128) {
+                switch (kNormalAction[c]) {
+                    case NA_ESC:
+                        state_ = STATE_ESCAPE;
+                        reset_csi();
+                        return;
+                    case NA_LF:
+                        // Line feed: move cursor down, scrolling at the bottom margin
+                        grid.index();
+                        return;
+                    case NA_CR:
+                        // Carriage return: move cursor to start of line
+                        grid.set_cursor_col(0);
+                        grid.set_prompt_boundary(-1);
+                        return;
+                    case NA_BS:
+                        // Backspace: move cursor left one cell
+                        grid.set_cursor_col(grid.get_cursor_col() - 1);
+                        return;
+                    case NA_TAB: {
+                        // Tab: Move to next tab stop (multiples of 8)
+                        int next_tab = (grid.get_cursor_col() + 8) & ~7;
+                        grid.set_cursor_col(next_tab);
+                        return;
                     }
-                    grid.write_character(out);
+                    case NA_IGNORE:
+                        // BEL (no audio alerts), and SO/SI: G1 isn't tracked
+                        // (ncurses on xterm-likes designates G0 directly), so
+                        // both are simply consumed.
+                        return;
+                    default:
+                        break;   // NA_PRINT: fall through to the write path
+                }
+            } else if (c >= 0x200B) {
+                // Variation selectors and zero-width characters occupy no cell.
+                // All of them sit above 0x200B, so ASCII never reaches this
+                // test -- which is why it is guarded rather than applied to
+                // every character as it was before.
+                if ((c >= 0xFE00 && c <= 0xFE0F) ||
+                    (c >= 0xE0100 && c <= 0xE01EF) ||
+                    (c >= 0x200B && c <= 0x200D) ||
+                    c == 0x2060 ||
+                    c == 0xFEFF) {
+                    return;
+                }
+            }
 
-                    if (c >= 32 && c < 127) {
-                        // Not std::tolower: it is locale-aware, so it stays a
-                        // real libsystem_c call per character (~3% of parse
-                        // time). The guard above already restricts c to ASCII.
-                        char lc = (c >= 'A' && c <= 'Z') ? static_cast<char>(c + 32)
-                                                         : static_cast<char>(c);
-                        if (trigger_len_ < kTriggerBufSize) {
-                            trigger_buffer_[trigger_len_++] = lc;
-                        } else {
-                            std::memmove(trigger_buffer_, trigger_buffer_ + 1, kTriggerBufSize - 1);
-                            trigger_buffer_[kTriggerBufSize - 1] = lc;
-                        }
+            char32_t out = c;
+            if (g0_dec_graphics_ && c >= 0x60 && c <= 0x7E) {
+                // DEC Special Graphics: 0x60-0x7E become line-drawing
+                // and symbol glyphs while ESC ( 0 is in effect.
+                static const char32_t dec_graphics[31] = {
+                    0x25C6, 0x2592, 0x2409, 0x240C, 0x240D, 0x240A,
+                    0x00B0, 0x00B1, 0x2424, 0x240B, 0x2518, 0x2510,
+                    0x250C, 0x2514, 0x253C, 0x23BA, 0x23BB, 0x2500,
+                    0x23BC, 0x23BD, 0x251C, 0x2524, 0x2534, 0x252C,
+                    0x2502, 0x2264, 0x2265, 0x03C0, 0x2260, 0x00A3,
+                    0x00B7
+                };
+                out = dec_graphics[c - 0x60];
+            }
+            grid.write_character(out);
 
-                        // Gate on the last letter first: only 'r' can finish
-                        // "error" and only 'd' can finish "failed", so almost
-                        // every character costs one comparison instead of a
-                        // memcmp.
-                        if ((lc == 'r' && buf_ends_with(trigger_buffer_, trigger_len_, "error", 5)) ||
-                            (lc == 'd' && buf_ends_with(trigger_buffer_, trigger_len_, "failed", 6))) {
-                            grid.trigger_error_flash();
-                            trigger_len_ = 0;
-                        }
-                    }
+            if (c >= 32 && c < 127) {
+                // Not std::tolower: it is locale-aware, so it stays a
+                // real libsystem_c call per character (~3% of parse
+                // time). The guard above already restricts c to ASCII.
+                char lc = (c >= 'A' && c <= 'Z') ? static_cast<char>(c + 32)
+                                                 : static_cast<char>(c);
+                if (trigger_len_ < kTriggerBufSize) {
+                    trigger_buffer_[trigger_len_++] = lc;
+                } else {
+                    std::memmove(trigger_buffer_, trigger_buffer_ + 1, kTriggerBufSize - 1);
+                    trigger_buffer_[kTriggerBufSize - 1] = lc;
+                }
+
+                // Gate on the last letter first: only 'r' can finish
+                // "error" and only 'd' can finish "failed", so almost
+                // every character costs one comparison instead of a
+                // memcmp.
+                if ((lc == 'r' && buf_ends_with(trigger_buffer_, trigger_len_, "error", 5)) ||
+                    (lc == 'd' && buf_ends_with(trigger_buffer_, trigger_len_, "failed", 6))) {
+                    grid.trigger_error_flash();
+                    trigger_len_ = 0;
                 }
             }
             break;
