@@ -54,6 +54,14 @@ private:
     double time_base_ = 0.0;
     bool is_hdr_ = false;
 
+    // True when the source is more than 8 bits per component, in which case
+    // frames are kept as P010 (10-bit, Y + interleaved UV) all the way to the
+    // texture. Previously every frame was converted to 8-bit YUV420P, which
+    // silently truncated HDR content to 8 bits while the texture was still
+    // being told it was PQ/HLG with 4x headroom -- stretching 256 levels over
+    // a range meant for 1024 and banding the result.
+    bool use_p010_ = false;
+
     // Asynchronous decoding thread
     std::thread decode_thread_;
     std::atomic<bool> running_{false};

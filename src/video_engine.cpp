@@ -158,12 +158,25 @@ bool VideoEngine::open_video(SDL_Renderer* renderer, const std::string& filepath
         }
     }
 
+    // Pick the texture format from the source bit depth. VideoToolbox returns
+    // P010 for 10-bit HEVC and the software decoders produce yuv420p10; forcing
+    // either into 8-bit YUV420P discards exactly the precision HDR needs. P010
+    // carries the full 10 bits through to the GPU, and it also removes the
+    // per-frame swscale pass on the hardware path, since VideoToolbox is
+    // already handing back the format the texture wants.
+    AVPixelFormat src_pix = (codec_ctx_->pix_fmt != AV_PIX_FMT_NONE)
+                              ? codec_ctx_->pix_fmt
+                              : static_cast<AVPixelFormat>(codec_params->format);
+    const AVPixFmtDescriptor* pix_desc = av_pix_fmt_desc_get(src_pix);
+    use_p010_ = (pix_desc != nullptr && pix_desc->comp[0].depth > 8);
+
     // Create SDL streaming texture using SDL Properties API to support color management
     SDL_PropertiesID props = SDL_CreateProperties();
     SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_ACCESS_NUMBER, SDL_TEXTUREACCESS_STREAMING);
     SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER, width_);
     SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER, height_);
-    SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER, SDL_PIXELFORMAT_IYUV);
+    SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER,
+                          use_p010_ ? SDL_PIXELFORMAT_P010 : SDL_PIXELFORMAT_IYUV);
     SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_COLORSPACE_NUMBER, sdl_colorspace);
     
     if (is_hdr_) {
@@ -174,6 +187,31 @@ bool VideoEngine::open_video(SDL_Renderer* renderer, const std::string& filepath
     
     texture_ = SDL_CreateTextureWithProperties(renderer, props);
     SDL_DestroyProperties(props);
+
+    // Not every renderer backend accepts P010. Fall back to 8-bit rather than
+    // losing the background entirely -- the result is what shipped before this
+    // change, so the fallback is no worse than the old behaviour.
+    if (!texture_ && use_p010_) {
+        std::cerr << "Video Background: P010 texture unsupported (" << SDL_GetError()
+                  << "), falling back to 8-bit YUV" << std::endl;
+        use_p010_ = false;
+        props = SDL_CreateProperties();
+        SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_ACCESS_NUMBER, SDL_TEXTUREACCESS_STREAMING);
+        SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER, width_);
+        SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER, height_);
+        SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER, SDL_PIXELFORMAT_IYUV);
+        SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_COLORSPACE_NUMBER, sdl_colorspace);
+        if (is_hdr_) {
+            SDL_SetFloatProperty(props, SDL_PROP_TEXTURE_CREATE_SDR_WHITE_POINT_FLOAT, 250.0f);
+            SDL_SetFloatProperty(props, SDL_PROP_TEXTURE_CREATE_HDR_HEADROOM_FLOAT, 4.0f);
+        }
+        texture_ = SDL_CreateTextureWithProperties(renderer, props);
+        SDL_DestroyProperties(props);
+    }
+    if (texture_) {
+        std::cout << "Video Background: texture format "
+                  << (use_p010_ ? "P010 (10-bit)" : "IYUV (8-bit)") << std::endl;
+    }
 
     if (!texture_) {
         std::cerr << "Failed to create video background texture: " << SDL_GetError() << std::endl;
@@ -272,14 +310,24 @@ void VideoEngine::update_frame(SDL_Renderer* renderer, float dt) {
     }
 
     if (frame_to_upload) {
-        // Upload YUV planes directly to texture (GPU handles hardware YUV -> RGB conversion)
-        SDL_UpdateYUVTexture(
-            texture_,
-            nullptr,
-            frame_to_upload->data[0], frame_to_upload->linesize[0],
-            frame_to_upload->data[1], frame_to_upload->linesize[1],
-            frame_to_upload->data[2], frame_to_upload->linesize[2]
-        );
+        // Upload planes directly to the texture (GPU handles YUV -> RGB).
+        // P010 is semi-planar: Y plus a single interleaved UV plane.
+        if (use_p010_) {
+            SDL_UpdateNVTexture(
+                texture_,
+                nullptr,
+                frame_to_upload->data[0], frame_to_upload->linesize[0],
+                frame_to_upload->data[1], frame_to_upload->linesize[1]
+            );
+        } else {
+            SDL_UpdateYUVTexture(
+                texture_,
+                nullptr,
+                frame_to_upload->data[0], frame_to_upload->linesize[0],
+                frame_to_upload->data[1], frame_to_upload->linesize[1],
+                frame_to_upload->data[2], frame_to_upload->linesize[2]
+            );
+        }
         av_frame_free(&frame_to_upload);
         first_frame_rendered_ = true;
     }
@@ -298,6 +346,11 @@ void VideoEngine::decode_loop() {
     AVPacket* packet = av_packet_alloc();
     AVFrame* frame = av_frame_alloc();
     SwsContext* sws_ctx = nullptr;
+
+    // Whatever the texture was created as. On the hardware path with 10-bit
+    // input this matches what av_hwframe_transfer_data already produces, so
+    // the swscale pass below is skipped entirely.
+    const AVPixelFormat target_fmt = use_p010_ ? AV_PIX_FMT_P010 : AV_PIX_FMT_YUV420P;
 
     while (running_) {
         // Cap frame queue size to prevent excessive memory usage
@@ -372,9 +425,9 @@ void VideoEngine::decode_loop() {
                     if (transfer_ret >= 0) {
                         hw_cpu_frame->pts = frame->pts;
                         
-                        if (hw_cpu_frame->format != AV_PIX_FMT_YUV420P) {
-                            // Convert the native hardware format (e.g. NV12, P010, UYVY) to standard YUV420P
-                            queued_frame->format = AV_PIX_FMT_YUV420P;
+                        if (hw_cpu_frame->format != target_fmt) {
+                            // Convert the native hardware format (e.g. NV12, UYVY) to the texture's format
+                            queued_frame->format = target_fmt;
                             queued_frame->width = width_;
                             queued_frame->height = height_;
                             av_frame_get_buffer(queued_frame, 0);
@@ -382,7 +435,7 @@ void VideoEngine::decode_loop() {
                             if (!sws_ctx) {
                                 sws_ctx = sws_getContext(
                                     width_, height_, (AVPixelFormat)hw_cpu_frame->format,
-                                    width_, height_, AV_PIX_FMT_YUV420P,
+                                    width_, height_, target_fmt,
                                     SWS_FAST_BILINEAR, nullptr, nullptr, nullptr
                                 );
                             }
@@ -404,9 +457,9 @@ void VideoEngine::decode_loop() {
                         break;
                     }
                     av_frame_free(&hw_cpu_frame);
-                } else if (codec_ctx_->pix_fmt != AV_PIX_FMT_YUV420P) {
-                    // Frame format is not standard YUV420P. Set up scaling converter.
-                    queued_frame->format = AV_PIX_FMT_YUV420P;
+                } else if (codec_ctx_->pix_fmt != target_fmt) {
+                    // Frame format doesn't match the texture. Set up scaling converter.
+                    queued_frame->format = target_fmt;
                     queued_frame->width = width_;
                     queued_frame->height = height_;
                     av_frame_get_buffer(queued_frame, 0); // Allocate ref-counted buffer
@@ -414,7 +467,7 @@ void VideoEngine::decode_loop() {
                     if (!sws_ctx) {
                         sws_ctx = sws_getContext(
                             width_, height_, codec_ctx_->pix_fmt,
-                            width_, height_, AV_PIX_FMT_YUV420P,
+                            width_, height_, target_fmt,
                             SWS_FAST_BILINEAR, nullptr, nullptr, nullptr
                         );
                     }
