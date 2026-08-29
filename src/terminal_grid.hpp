@@ -144,6 +144,7 @@ public:
     bool is_selecting() const { return selecting_; }
 
     void trigger_error_flash() { error_glow_opacity_ = 1.0f; }
+    float get_error_glow_opacity() const { return error_glow_opacity_; }
     void update_timers(float dt);
 
     // Switches to/from the alternate screen buffer (DECSET/DECRST 1049 and

@@ -129,6 +129,46 @@ static void test_scrollback_cap_recycles_rows() {
     CHECK(row_text(g, 0) == "L11");
 }
 
+// The error/failed flash trigger had no coverage at all, despite its scan
+// living on the hottest path in the parser and being rewritten twice (whole-
+// window search -> tail-only test -> a 64-bit shift register). These pin the
+// behaviour that matters: case-insensitivity, matching across separate parse()
+// calls, non-printables not breaking a word, and -- the case that exercised
+// the old sliding-window shift -- a match arriving well after the window that
+// used to be 32 bytes had filled.
+static void test_error_flash_trigger() {
+    auto glow_after = [](const std::string& s1, const std::string& s2) {
+        TerminalGrid g; g.resize(200, 5);
+        ANSIParser p;
+        feed(p, g, s1);
+        if (!s2.empty()) feed(p, g, s2);
+        return g.get_error_glow_opacity();
+    };
+
+    CHECK(glow_after("error", "") > 0.0f);
+    CHECK(glow_after("failed", "") > 0.0f);
+    CHECK(glow_after("ERROR", "") > 0.0f);          // lowercased before matching
+    CHECK(glow_after("Failed", "") > 0.0f);
+    CHECK(glow_after("build error here", "") > 0.0f);
+
+    CHECK(glow_after("erro", "") == 0.0f);          // incomplete
+    CHECK(glow_after("erroX", "") == 0.0f);
+    CHECK(glow_after("faile", "") == 0.0f);
+
+    // The window must survive across parse() calls -- a PTY read can split
+    // anywhere, including mid-word.
+    CHECK(glow_after("erro", "r") > 0.0f);
+    CHECK(glow_after("fail", "ed") > 0.0f);
+
+    // Non-printables are not added to the window, so they don't break a match.
+    CHECK(glow_after("err\x01or", "") > 0.0f);
+
+    // Well past the 32 characters the old sliding buffer held: the match still
+    // has to be found from the tail of a long run of preceding text.
+    CHECK(glow_after(std::string(200, 'a') + "error", "") > 0.0f);
+    CHECK(glow_after(std::string(200, 'a'), "") == 0.0f);
+}
+
 static void test_cup_and_relative_motion() {
     TerminalGrid g; g.resize(20, 5);
     ANSIParser p;
@@ -550,6 +590,7 @@ static void test_utf8() {
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
+    test_error_flash_trigger();
     test_scroll_ring_wraparound();
     test_scrollback_cap_recycles_rows();
     test_cup_and_relative_motion();
