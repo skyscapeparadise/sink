@@ -201,8 +201,8 @@ void TerminalGrid::resize(int cols, int rows) {
     // 4. Distribute wrapped rows into new active cells and scrollback history
     std::deque<ScrollbackRow> new_history;
     std::vector<Cell> new_cells(cols * rows, space_cell);
-    std::vector<bool> new_row_wrapped(rows, false);
-    std::vector<bool> new_row_prompt(rows, false);
+    std::vector<uint8_t> new_row_wrapped(rows, false);
+    std::vector<uint8_t> new_row_prompt(rows, false);
 
     int active_start_idx = 0;
     if (static_cast<int>(wrapped_rows.size()) > rows) {
@@ -349,10 +349,12 @@ void TerminalGrid::scroll_up() {
     // row 0 becomes the new last row and is blanked below.
     row_base_ = phys_row(1);
     
-    // Shift wrapped/prompt flags up by one row
-    for (int r = 1; r < rows_; ++r) {
-        row_wrapped_[r - 1] = row_wrapped_[r];
-        row_prompt_[r - 1] = row_prompt_[r];
+    // Shift wrapped/prompt flags up by one row. These stay in logical order
+    // rather than joining the cell ring: they are one byte per row, so the
+    // shift is a short memmove that std::copy lowers to directly.
+    if (rows_ > 1) {
+        std::copy(row_wrapped_.begin() + 1, row_wrapped_.end(), row_wrapped_.begin());
+        std::copy(row_prompt_.begin() + 1, row_prompt_.end(), row_prompt_.begin());
     }
     row_wrapped_[rows_ - 1] = false;
     row_prompt_[rows_ - 1] = false;

@@ -200,7 +200,7 @@ public:
 
     void clear_wrap_pending() { wrap_pending_ = false; }
     bool is_wrap_pending() const { return wrap_pending_; }
-    const std::vector<bool>& get_row_wrapped() const { return row_wrapped_; }
+    const std::vector<uint8_t>& get_row_wrapped() const { return row_wrapped_; }
 
     // Scrollback Search API
     struct SearchResult {
@@ -284,8 +284,12 @@ private:
     }
     Cell* row_data(int r) { return cells_.data() + phys_row(r) * cols_; }
     const Cell* row_data(int r) const { return cells_.data() + phys_row(r) * cols_; }
-    std::vector<bool> row_wrapped_;
-    std::vector<bool> row_prompt_; // per active row, parallel to row_wrapped_
+    // uint8_t rather than bool: std::vector<bool> is bit-packed, so every
+    // read and write is a shift-and-mask, and scroll_up() shifts both of these
+    // one position on every newline. A byte per row makes that shift a plain
+    // memmove and shows up in the parser benchmark.
+    std::vector<uint8_t> row_wrapped_;
+    std::vector<uint8_t> row_prompt_; // per active row, parallel to row_wrapped_
     bool wrap_pending_ = false;
     int saved_cursor_col_ = 0;
     int saved_cursor_row_ = 0;
@@ -303,8 +307,8 @@ private:
     // Saved with its own geometry: if the window is resized mid-app, restore
     // clamp-copies whatever still fits rather than reflowing.
     std::vector<Cell> saved_primary_cells_;
-    std::vector<bool> saved_primary_row_wrapped_;
-    std::vector<bool> saved_primary_row_prompt_;
+    std::vector<uint8_t> saved_primary_row_wrapped_;
+    std::vector<uint8_t> saved_primary_row_prompt_;
     int saved_primary_cols_ = 0;
     int saved_primary_rows_ = 0;
     int saved_primary_cursor_col_ = 0;
