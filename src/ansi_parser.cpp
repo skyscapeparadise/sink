@@ -24,19 +24,6 @@ ANSIParser::ANSIParser() {}
 
 ANSIParser::~ANSIParser() {}
 
-// Parses a CSI numeric parameter without throwing on overflow or malformed input
-// (terminal input is attacker-controlled, e.g. `cat`'d files or remote shell output).
-static int parse_csi_param(const std::string& buffer) {
-    if (buffer.empty()) return 0;
-    try {
-        return std::stoi(buffer);
-    } catch (const std::out_of_range&) {
-        return std::numeric_limits<int>::max();
-    } catch (const std::invalid_argument&) {
-        return 0;
-    }
-}
-
 // Standard ANSI 16-color palette (indices 0-15 of the xterm-256 palette)
 static const SDL_FColor ansi_colors[16] = {
     {0.05f, 0.05f, 0.05f, 1.0f},     // 0: Black
@@ -79,7 +66,8 @@ static SDL_FColor xterm_256_color(int idx) {
 
 void ANSIParser::reset_csi() {
     csi_params_.clear();
-    csi_buffer_.clear();
+    csi_acc_ = 0;
+    csi_acc_digits_ = false;
     is_private_mode_ = false;
 }
 
@@ -289,17 +277,29 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
             if (c == '?') {
                 is_private_mode_ = true;
             } else if (c >= '0' && c <= '9') {
-                csi_buffer_ += static_cast<char>(c);
+                // Saturate instead of overflowing. CSI parameters are
+                // attacker-controlled (a cat'd file, remote shell output) and
+                // the std::stoi path this replaces clamped out-of-range values
+                // to INT_MAX rather than throwing.
+                if (csi_acc_ <= (std::numeric_limits<int>::max() - 9) / 10) {
+                    csi_acc_ = csi_acc_ * 10 + static_cast<int>(c - '0');
+                } else {
+                    csi_acc_ = std::numeric_limits<int>::max();
+                }
+                csi_acc_digits_ = true;
             } else if (c == ';' || c == ':') {
                 // ':' is the ITU subparameter separator (e.g. SGR 38:5:196).
                 // Treating it like ';' keeps the digits from concatenating
                 // into a single garbage parameter; the colon-form extended
                 // color sequences then parse identically to the ';' form.
-                csi_params_.push_back(parse_csi_param(csi_buffer_));
-                csi_buffer_.clear();
+                // An empty parameter (";;" or a leading ";") is 0, which is
+                // what the accumulator already holds when no digits arrived.
+                csi_params_.push_back(csi_acc_);
+                csi_acc_ = 0;
+                csi_acc_digits_ = false;
             } else if (c >= 0x40 && c <= 0x7E) {
-                if (!csi_buffer_.empty()) {
-                    csi_params_.push_back(parse_csi_param(csi_buffer_));
+                if (csi_acc_digits_) {
+                    csi_params_.push_back(csi_acc_);
                 }
                 process_csi_sequence(grid, static_cast<char>(c));
                 state_ = STATE_NORMAL;
