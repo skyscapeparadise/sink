@@ -4,6 +4,17 @@ project(SinkTerminal VERSION 0.8.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Default to an optimized build. With CMAKE_BUILD_TYPE unset CMake passes no
+# -O flag at all, so every build -- including the one that gets packaged into
+# sink.app -- was compiled at -O0. On the parser benchmark that costs between
+# 2.5x (UTF-8) and 7x (cursor-heavy) throughput.
+# Override for development with: cmake -B build -DCMAKE_BUILD_TYPE=Debug
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING
+        "Build type (Debug, Release, RelWithDebInfo, MinSizeRel)" FORCE)
+endif()
+message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
+
 # Find SDL3, SDL3_ttf, and SDL3_image
 # 3.4.0 minimum: the video background hue-shift effect uses the GPU render
 # backend and SDL_GPURenderState custom-shader API, both added in 3.4.0.
