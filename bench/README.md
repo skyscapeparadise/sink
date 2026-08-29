@@ -87,10 +87,16 @@ cd bench/vte_bench && cargo build --release
 | cursor-heavy (TUI redraw-like) | 186.5 | 86.2 | sink, 2.16x |
 | UTF-8 heavy (emoji/CJK/box-drawing) | 227.5 | 210.7 | sink, 1.08x |
 
-sink was 2.6-6.1 MB/s across these workloads before the 2026-08-28/29
-optimization pass, so this is a 25-45x improvement. Both sides repeat within
-~1% run to run; before the ring went into `vte_bench` its numbers swung
-12-21%, which is worth knowing against any older figures.
+sink measured 2.6-6.1 MB/s across these workloads at the start of the
+2026-08-28/29 optimization pass -- that is, as the app was actually being
+built and shipped, with no `-O` flag at all. Against that, this is a 37-71x
+improvement. Against an already-optimized build of the same pre-pass code
+(9.1/15.6/28.5/15.1 MB/s), the code changes alone are worth 6.5-20x; the
+difference between the two is the `CMAKE_BUILD_TYPE` fix.
+
+Both sides repeat within ~1% run to run; before the ring went into
+`vte_bench` its numbers swung 12-21%, which is worth knowing against any
+older figures.
 
 **Read the plain-text and cursor-heavy margins with the API difference in
 mind.** sink batches runs of printable ASCII into a single grid write, which
