@@ -74,6 +74,19 @@ public:
     
     void set_cell(int col, int row, char32_t codepoint, const SDL_FColor& fg, const SDL_FColor& bg);
     void write_character(char32_t codepoint);
+
+    // Writes up to n plain ASCII characters into the current row, starting at
+    // the cursor and all sharing the current style. Returns how many were
+    // written, clamped to the columns left in the row.
+    //
+    // Exactly equivalent to calling write_character() for each, for characters
+    // that need no translation -- the per-character path recomputes the row
+    // pointer (ring index plus a multiply) and reloads the style off `this`
+    // every time, both of which are invariant across a run of ordinary text.
+    //
+    // The caller must check is_wrap_pending() first: a deferred wrap is left
+    // to write_character() so the wrap-entry logic lives in exactly one place.
+    int write_run(const char* ascii, int n);
     
     void scroll_up();
     void clear_screen();

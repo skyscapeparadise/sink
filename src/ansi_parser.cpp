@@ -99,7 +99,44 @@ void ANSIParser::reset_csi() {
 void ANSIParser::parse(TerminalGrid& grid, const char* data, size_t size) {
     for (size_t i = 0; i < size; ++i) {
         uint8_t byte = static_cast<uint8_t>(data[i]);
-        
+
+        // Fast path: a run of plain printable ASCII in the normal state.
+        //
+        // The per-character path recomputes the row pointer (ring index plus a
+        // multiply) and reloads fg/bg/attrs/hyperlink off the grid for every
+        // character, all of which are invariant across a run of ordinary text.
+        // Handing the whole span to write_run() does that work once, and skips
+        // the UTF-8 check, the state switch and the STATE_NORMAL table lookup
+        // for every character after the first.
+        //
+        // Gated on the byte being printable ASCII first, so streams that are
+        // mostly escape sequences pay a single comparison to skip all of this.
+        // DEC graphics mode is excluded because it translates 0x60-0x7E into
+        // line-drawing glyphs, and a pending wrap is excluded so the deferred
+        // wrap stays in write_character() alone.
+        if (byte >= 0x20 && byte < 0x7F &&
+            state_ == STATE_NORMAL &&
+            utf8_bytes_needed_ == 0 &&
+            !g0_dec_graphics_ &&
+            !grid.is_wrap_pending()) {
+            size_t j = i + 1;
+            while (j < size) {
+                uint8_t b = static_cast<uint8_t>(data[j]);
+                if (b < 0x20 || b >= 0x7F) break;
+                ++j;
+            }
+            int wrote = grid.write_run(data + i, static_cast<int>(j - i));
+            if (wrote > 0) {
+                for (int k = 0; k < wrote; ++k) {
+                    note_trigger_char(grid, static_cast<unsigned char>(data[i + k]));
+                }
+                i += static_cast<size_t>(wrote) - 1; // the loop's ++i consumes the last
+                continue;
+            }
+            // write_run declined (degenerate grid); fall through to the
+            // per-character path, which handles that case as before.
+        }
+
         // Decode multi-byte UTF-8 byte streams
         if (utf8_bytes_needed_ == 0) {
             if (byte < 0x80) {
@@ -136,6 +173,31 @@ void ANSIParser::parse(TerminalGrid& grid, const char* data, size_t size) {
                 process_char(grid, static_cast<char32_t>(byte));
             }
         }
+    }
+}
+
+// See the declaration. Kept out of line so both the per-character path and
+// the batched run path call the identical code.
+void ANSIParser::note_trigger_char(TerminalGrid& grid, char32_t c) {
+    // Not std::tolower: it is locale-aware, so it stays a real libsystem_c
+    // call per character. Callers restrict c to printable ASCII.
+    char lc = (c >= 'A' && c <= 'Z') ? static_cast<char>(c + 32)
+                                     : static_cast<char>(c);
+    trigger_ring_[trigger_pos_] = lc;
+    trigger_ring_[trigger_pos_ + kTrigWindow] = lc;
+    // One past the most recent character, in the contiguous copy.
+    const char* end = trigger_ring_ + trigger_pos_ + kTrigWindow + 1;
+    trigger_pos_ = (trigger_pos_ + 1) & (kTrigWindow - 1);
+
+    // Gate on the last letter first: only 'r' can finish "error" and only 'd'
+    // can finish "failed", so almost every character costs a single
+    // comparison. The leading zeros the ring starts with cannot match a
+    // letter, so no "enough characters yet" counter is needed.
+    if ((lc == 'r' && std::memcmp(end - 5, "error", 5) == 0) ||
+        (lc == 'd' && std::memcmp(end - 6, "failed", 6) == 0)) {
+        grid.trigger_error_flash();
+        std::memset(trigger_ring_, 0, sizeof(trigger_ring_));
+        trigger_pos_ = 0;
     }
 }
 
@@ -210,28 +272,7 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
             grid.write_character(out);
 
             if (c >= 32 && c < 127) {
-                // Not std::tolower: it is locale-aware, so it stays a
-                // real libsystem_c call per character (~3% of parse
-                // time). The guard above already restricts c to ASCII.
-                char lc = (c >= 'A' && c <= 'Z') ? static_cast<char>(c + 32)
-                                                 : static_cast<char>(c);
-                trigger_ring_[trigger_pos_] = lc;
-                trigger_ring_[trigger_pos_ + kTrigWindow] = lc;
-                // One past the most recent character, in the contiguous copy.
-                const char* end = trigger_ring_ + trigger_pos_ + kTrigWindow + 1;
-                trigger_pos_ = (trigger_pos_ + 1) & (kTrigWindow - 1);
-
-                // Gate on the last letter first: only 'r' can finish "error"
-                // and only 'd' can finish "failed", so almost every character
-                // costs a single comparison. The leading zeros the ring starts
-                // with cannot match a letter, so no "enough characters yet"
-                // counter is needed.
-                if ((lc == 'r' && std::memcmp(end - 5, "error", 5) == 0) ||
-                    (lc == 'd' && std::memcmp(end - 6, "failed", 6) == 0)) {
-                    grid.trigger_error_flash();
-                    std::memset(trigger_ring_, 0, sizeof(trigger_ring_));
-                    trigger_pos_ = 0;
-                }
+                note_trigger_char(grid, c);
             }
             break;
         }

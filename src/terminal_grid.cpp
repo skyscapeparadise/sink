@@ -270,6 +270,42 @@ void TerminalGrid::set_cell(int col, int row, char32_t codepoint, const SDL_FCol
     }
 }
 
+int TerminalGrid::write_run(const char* ascii, int n) {
+    // Callers gate on is_wrap_pending(); a pending wrap goes through
+    // write_character() so that logic is not duplicated here.
+    if (n <= 0 || cols_ <= 0 || rows_ <= 0) return 0;
+    if (cursor_row_ < 0 || cursor_row_ >= rows_ ||
+        cursor_col_ < 0 || cursor_col_ >= cols_) {
+        return 0;
+    }
+
+    int avail = cols_ - cursor_col_;
+    if (n > avail) n = avail;
+
+    Cell* row = row_data(cursor_row_);
+    const PackedColor fg = current_fg_packed_;
+    const PackedColor bg = current_bg_packed_;
+    const uint8_t attrs = current_attrs_;
+    const uint32_t link = current_hyperlink_id_;
+    for (int k = 0; k < n; ++k) {
+        row[cursor_col_ + k] = {
+            static_cast<char32_t>(static_cast<unsigned char>(ascii[k])),
+            fg, bg, attrs, link
+        };
+    }
+
+    // Matches applying write_character() n times: on filling the row the
+    // cursor parks on the last column with the wrap deferred (xenl), rather
+    // than moving past it.
+    if (cursor_col_ + n >= cols_) {
+        cursor_col_ = cols_ - 1;
+        wrap_pending_ = true;
+    } else {
+        cursor_col_ += n;
+    }
+    return n;
+}
+
 void TerminalGrid::write_character(char32_t codepoint) {
     // Deferred auto-wrap (xenl): if wrap is pending from a previous char hitting the rightmost column, wrap now
     if (wrap_pending_) {

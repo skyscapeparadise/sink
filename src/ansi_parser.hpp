@@ -79,4 +79,9 @@ private:
     void process_char(TerminalGrid& grid, char32_t c);
     void process_csi_sequence(TerminalGrid& grid, char command);
     void reset_csi();
+
+    // Feeds one printable ASCII character into the error/failed trigger
+    // window. Shared by the per-character path and the batched run path so the
+    // two cannot drift apart.
+    void note_trigger_char(TerminalGrid& grid, char32_t c);
 };
