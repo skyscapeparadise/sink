@@ -20,3 +20,18 @@ releases/
 
 # Rust build artifacts (bench/vte_bench)
 bench/vte_bench/target/
+
+# Vendored dependencies (built by vendor/build_*.sh; each pins a version and
+# verifies a checksum, so these are reproducible rather than committed)
+vendor/ffmpeg/
+vendor/.cache/
+vendor/.build/
+vendor/sdl3_image/
+vendor/textstack/
+
+# Generated benchmark workloads (~32MB, recreate with bench/gen_workloads.py)
+bench/workloads/
+
+# Packaged release artifacts
+*.dmg
+*.zip
