@@ -20,6 +20,14 @@ bool FontManager::initialize() {
     return true;
 }
 
+// First fallback face that covers this codepoint, or nullptr.
+TTF_Font* FontManager::first_fallback_with(char32_t codepoint) const {
+    for (TTF_Font* f : fallback_fonts_) {
+        if (f && TTF_FontHasGlyph(f, codepoint)) return f;
+    }
+    return nullptr;
+}
+
 void FontManager::cleanup() {
     if (atlas_texture_) {
         SDL_DestroyTexture(atlas_texture_);
@@ -39,6 +47,10 @@ void FontManager::cleanup() {
         TTF_CloseFont(emoji_font_);
         emoji_font_ = nullptr;
     }
+    for (TTF_Font*& fb : fallback_fonts_) {
+        if (fb) TTF_CloseFont(fb);
+    }
+    fallback_fonts_.clear();
     if (ligature_font_) {
         TTF_CloseFont(ligature_font_);
         ligature_font_ = nullptr;
@@ -71,6 +83,10 @@ bool FontManager::load_font(SDL_Renderer* renderer, const std::string& font_path
         TTF_CloseFont(emoji_font_);
         emoji_font_ = nullptr;
     }
+    for (TTF_Font*& fb : fallback_fonts_) {
+        if (fb) TTF_CloseFont(fb);
+    }
+    fallback_fonts_.clear();
     if (ligature_font_) {
         TTF_CloseFont(ligature_font_);
         ligature_font_ = nullptr;
@@ -120,6 +136,43 @@ bool FontManager::load_font(SDL_Renderer* renderer, const std::string& font_path
     emoji_font_ = TTF_OpenFont("/System/Library/Fonts/Apple Color Emoji.ttc", font_size);
     if (!emoji_font_) {
         std::cerr << "Warning: Failed to open Apple Color Emoji font. Emoji support may be degraded." << std::endl;
+    }
+
+    // Fallback chain for codepoints the configured font doesn't cover. Each
+    // group lists alternatives because the exact files differ across macOS
+    // releases; the first that opens wins. Missing entries are not fatal --
+    // a codepoint no face covers still ends up as a space, as before.
+    struct FallbackGroup {
+        const char* purpose;
+        const char* paths[4];
+    };
+    static const FallbackGroup kFallbacks[] = {
+        // Box-drawing, block elements, geometric shapes, arrows, technical
+        // symbols: what ncurses frames and ESC ( 0 line drawing need.
+        { "symbols/box-drawing", {
+            "/System/Library/Fonts/Menlo.ttc",
+            "/System/Library/Fonts/SFNSMono.ttf",
+            "/System/Library/Fonts/Monaco.ttf",
+            nullptr } },
+        // CJK ideographs and kana.
+        { "CJK", {
+            "/System/Library/Fonts/PingFang.ttc",
+            "/System/Library/Fonts/Hiragino Sans GB.ttc",
+            "/System/Library/Fonts/STHeiti Light.ttc",
+            nullptr } },
+    };
+    for (const FallbackGroup& group : kFallbacks) {
+        TTF_Font* opened = nullptr;
+        for (int i = 0; i < 4 && group.paths[i] && !opened; ++i) {
+            opened = TTF_OpenFont(group.paths[i], font_size);
+        }
+        if (opened) {
+            fallback_fonts_.push_back(opened);
+        } else {
+            std::cerr << "Warning: no " << group.purpose
+                      << " fallback font found; those codepoints will render blank."
+                      << std::endl;
+        }
     }
 
     // Same face, ~2x point size -- see get_ligature_glyph().
@@ -348,18 +401,29 @@ const GlyphInfo* FontManager::get_glyph(SDL_Renderer* renderer, char32_t codepoi
     SDL_Color white = {255, 255, 255, 255};
     TTF_Font* styled_font = font_for_style(style);
 
-    if (is_emoji_codepoint(codepoint)) {
-        if (emoji_font_ && TTF_FontHasGlyph(emoji_font_, codepoint)) {
-            glyph_surf = TTF_RenderGlyph_Blended(emoji_font_, codepoint, white);
-            is_color = true;
-        }
-    } else {
-        if (styled_font && TTF_FontHasGlyph(styled_font, codepoint)) {
-            glyph_surf = TTF_RenderGlyph_Blended(styled_font, codepoint, white);
-        } else if (emoji_font_ && TTF_FontHasGlyph(emoji_font_, codepoint)) {
-            glyph_surf = TTF_RenderGlyph_Blended(emoji_font_, codepoint, white);
-            is_color = true;
-        }
+    // A single cascade rather than an emoji branch and a text branch.
+    // is_emoji_codepoint() claims U+2600-27BF and U+2300-23FF wholesale, but
+    // Apple Color Emoji covers only part of those: U+2713 checkmark and
+    // U+276F -- the arrow Starship and powerlevel10k prompts are built from --
+    // both live in that range and are absent from it. The old shape gave up
+    // when the emoji face missed, so those rendered blank however good the
+    // rest of the chain was. Now anything the emoji face lacks keeps
+    // descending.
+    if (is_emoji_codepoint(codepoint) && emoji_font_ &&
+        TTF_FontHasGlyph(emoji_font_, codepoint)) {
+        glyph_surf = TTF_RenderGlyph_Blended(emoji_font_, codepoint, white);
+        is_color = true;
+    } else if (styled_font && TTF_FontHasGlyph(styled_font, codepoint)) {
+        glyph_surf = TTF_RenderGlyph_Blended(styled_font, codepoint, white);
+    } else if (TTF_Font* fb = first_fallback_with(codepoint)) {
+        // Fallback faces are used unstyled: they are separate families, so
+        // synthesising bold/italic on them would diverge from the configured
+        // font rather than match it.
+        glyph_surf = TTF_RenderGlyph_Blended(fb, codepoint, white);
+    } else if (emoji_font_ && TTF_FontHasGlyph(emoji_font_, codepoint)) {
+        // Colour emoji outside the ranges is_emoji_codepoint() knows about.
+        glyph_surf = TTF_RenderGlyph_Blended(emoji_font_, codepoint, white);
+        is_color = true;
     }
 
     if (!glyph_surf) {

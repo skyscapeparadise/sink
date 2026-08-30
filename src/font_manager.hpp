@@ -4,6 +4,7 @@
 #include <SDL3_ttf/SDL_ttf.h>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 struct GlyphInfo {
     SDL_FRect src_rect;  // Location of the glyph on the atlas texture
@@ -54,6 +55,21 @@ private:
     TTF_Font* font_italic_ = nullptr;
     TTF_Font* font_bold_italic_ = nullptr;
     TTF_Font* emoji_font_ = nullptr;
+
+    // System faces consulted, in order, when the configured font has no glyph
+    // for a codepoint. Before this existed the chain was just the configured
+    // font then Apple Color Emoji, and anything neither covered fell back to a
+    // space -- so with the bundled Monaspace Neon (779 glyphs, no box-drawing
+    // block) every ncurses frame, every DEC Special Graphics line and all CJK
+    // rendered as blank cells.
+    //
+    // Menlo comes first: it is monospaced, metrically close, and carries the
+    // box-drawing, block-element and symbol ranges terminals lean on. The CJK
+    // face follows, then emoji, which stays last because it is the only
+    // colour font and the only one whose glyphs are square rather than
+    // cell-shaped.
+    std::vector<TTF_Font*> fallback_fonts_;
+    TTF_Font* first_fallback_with(char32_t codepoint) const;
     TTF_Font* ligature_font_ = nullptr; // same face as font_, ~2x point size
     SDL_Texture* atlas_texture_ = nullptr;
     SDL_Texture* dynamic_atlas_texture_ = nullptr;
