@@ -173,6 +173,41 @@ static void test_error_flash_trigger() {
 // Before this the grid advanced one column per codepoint regardless, so CJK
 // and emoji rendered at half the width every other terminal gives them and
 // anything column-aligned drifted.
+// DECSET/DECRST 2026 (synchronized output) and 1004 (focus reporting). Both
+// are mode flags the app layer acts on -- holding the presented frame, and
+// sending CSI I / CSI O -- so what is checked here is that the parser tracks
+// them, including that an unknown neighbouring mode doesn't disturb them.
+static void test_synchronized_output_and_focus_modes() {
+    TerminalGrid g; g.resize(20, 5);
+    ANSIParser p;
+
+    CHECK(!g.is_frame_held());
+    CHECK(!g.is_focus_reporting());
+
+    feed(p, g, "\x1b[?2026h");
+    CHECK(g.is_frame_held());
+    feed(p, g, "\x1b[?2026l");
+    CHECK(!g.is_frame_held());
+
+    feed(p, g, "\x1b[?1004h");
+    CHECK(g.is_focus_reporting());
+    feed(p, g, "\x1b[?1004l");
+    CHECK(!g.is_focus_reporting());
+
+    // Set together, reset independently
+    feed(p, g, "\x1b[?2026h\x1b[?1004h");
+    CHECK(g.is_frame_held());
+    CHECK(g.is_focus_reporting());
+    feed(p, g, "\x1b[?2026l");
+    CHECK(!g.is_frame_held());
+    CHECK(g.is_focus_reporting());
+
+    // An unrecognised mode in between must not clear either
+    feed(p, g, "\x1b[?2026h\x1b[?7h");
+    CHECK(g.is_frame_held());
+    CHECK(g.is_focus_reporting());
+}
+
 static void test_wide_characters() {
     CHECK(char_display_width(U'A') == 1);
     CHECK(char_display_width(U'\u00e9') == 1);       // Latin-1 accented
@@ -649,6 +684,7 @@ static void test_utf8() {
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
+    test_synchronized_output_and_focus_modes();
     test_wide_characters();
     test_wide_character_wrap();
     test_wide_character_copy();

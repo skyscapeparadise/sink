@@ -181,6 +181,29 @@ public:
     void set_cursor_visible(bool visible) { cursor_visible_ = visible; }
     bool is_cursor_visible() const { return cursor_visible_; }
 
+    // Synchronized output (DECSET/DECRST 2026). Apps that redraw a whole
+    // frame -- neovim, helix, fzf, lazygit -- wrap the update in BSU/ESU so
+    // the terminal shows the finished frame rather than the half-drawn states
+    // in between. Holding presentation is what stops that tearing.
+    //
+    // The deadline is a safety valve: an app that sets 2026 and then crashes,
+    // or never sends the reset, must not be able to freeze the terminal.
+    void set_synchronized_output(bool active) {
+        if (active && !synchronized_output_) {
+            synchronized_output_deadline_ = SDL_GetTicks() + kSyncOutputTimeoutMs;
+        }
+        synchronized_output_ = active;
+    }
+    bool is_frame_held() const {
+        return synchronized_output_ && SDL_GetTicks() < synchronized_output_deadline_;
+    }
+
+    // Focus reporting (DECSET/DECRST 1004): the app is told when the terminal
+    // gains or loses focus, which vim uses to drive autoread and tmux to
+    // track the active client.
+    void set_focus_reporting(bool active) { focus_reporting_ = active; }
+    bool is_focus_reporting() const { return focus_reporting_; }
+
     void set_bracketed_paste(bool active) { bracketed_paste_active_ = active; }
     bool is_bracketed_paste_active() const { return bracketed_paste_active_; }
 
@@ -389,6 +412,10 @@ private:
     bool alt_screen_active_ = false;
     bool cursor_visible_ = true;
     bool bracketed_paste_active_ = false;
+    static constexpr Uint64 kSyncOutputTimeoutMs = 150;
+    bool synchronized_output_ = false;
+    Uint64 synchronized_output_deadline_ = 0;
+    bool focus_reporting_ = false;
     int mouse_mode_ = 0;
     bool mouse_sgr_ = false;
     bool app_cursor_keys_ = false;

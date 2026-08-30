@@ -716,6 +716,8 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
                         else     grid.restore_cursor();
                         break;
                     case 2004: grid.set_bracketed_paste(set); break;
+                    case 2026: grid.set_synchronized_output(set); break;
+                    case 1004: grid.set_focus_reporting(set); break;
                     case 9:      // X10 press-only reporting
                     case 1000:   // press + release
                     case 1002:   // press + release + drag motion

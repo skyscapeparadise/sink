@@ -1002,13 +1002,23 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         return SDL_APP_CONTINUE;
     }
 
-    if (event->type == SDL_EVENT_WINDOW_FOCUS_GAINED) {
+    if (event->type == SDL_EVENT_WINDOW_FOCUS_GAINED ||
+        event->type == SDL_EVENT_WINDOW_FOCUS_LOST) {
+        bool gained = (event->type == SDL_EVENT_WINDOW_FOCUS_GAINED);
         SDL_WindowID focus_win_id = event->window.windowID;
         for (auto* tw : state->windows) {
-            if (tw->window && SDL_GetWindowID(tw->window) == focus_win_id) {
-                state->active_window = tw;
-                break;
+            if (!tw->window || SDL_GetWindowID(tw->window) != focus_win_id) continue;
+            if (gained) state->active_window = tw;
+            // Focus reporting (DECSET 1004): CSI I on gain, CSI O on loss.
+            // Sent per pane, since each runs its own program and enables the
+            // mode independently.
+            for (Pane* pane : all_panes(tw)) {
+                if (pane && pane->terminal.is_focus_reporting()) {
+                    const char* seq = gained ? "\x1b[I" : "\x1b[O";
+                    pane->pty.write_to_pty(seq, 3);
+                }
             }
+            break;
         }
     }
 
@@ -2402,7 +2412,21 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             SDL_RenderFillRect(tw->renderer, &full_rect);
         }
 
-        SDL_RenderPresent(tw->renderer);
+        // Synchronized output (DECSET 2026): while any pane is mid-update,
+        // hold the finished frame on screen instead of presenting a partial
+        // one. The geometry above is still built -- only presentation is
+        // deferred -- so the next present shows current state either way.
+        // Checking every pane rather than just the focused one means a full
+        // screen app redrawing in a background split doesn't tear; the
+        // deadline inside is_frame_held() bounds how long any of them can
+        // hold the window.
+        bool frame_held = false;
+        for (Pane* pane : all_panes(tw)) {
+            if (pane && pane->terminal.is_frame_held()) { frame_held = true; break; }
+        }
+        if (!frame_held) {
+            SDL_RenderPresent(tw->renderer);
+        }
     }
 
     // Draw Settings UI if open
