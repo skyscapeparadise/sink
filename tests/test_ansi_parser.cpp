@@ -177,6 +177,60 @@ static void test_error_flash_trigger() {
 // are mode flags the app layer acts on -- holding the presented frame, and
 // sending CSI I / CSI O -- so what is checked here is that the parser tracks
 // them, including that an unknown neighbouring mode doesn't disturb them.
+// SearchResult::col is a column, but set_search_query() was assigning it the
+// byte offset std::string::find() returns. On any row containing multi-byte
+// text the highlight drifted right, further with each such character before
+// the match. These check the mapping through the user-visible predicate.
+static void test_search_column_mapping() {
+    // Latin-1 accented: two UTF-8 bytes, one column.
+    {
+        TerminalGrid g; g.resize(30, 4);
+        ANSIParser p;
+        feed(p, g, "\xc3\xa9" "abc");           // eacute a b c
+        g.set_search_active(true);
+        g.set_search_query("abc");
+        CHECK(!g.is_cell_search_matched(0, 0));  // the accented char itself
+        CHECK(g.is_cell_search_matched(1, 0));
+        CHECK(g.is_cell_search_matched(2, 0));
+        CHECK(g.is_cell_search_matched(3, 0));
+        CHECK(!g.is_cell_search_matched(4, 0));
+    }
+
+    // CJK: three bytes and two columns each, so byte offsets drift twice over.
+    {
+        TerminalGrid g; g.resize(30, 4);
+        ANSIParser p;
+        feed(p, g, "\xe4\xbd\xa0\xe5\xa5\xbd" "abc");   // two CJK, then abc
+        g.set_search_active(true);
+        g.set_search_query("abc");
+        CHECK(!g.is_cell_search_matched(3, 0));  // still inside the CJK pair
+        CHECK(g.is_cell_search_matched(4, 0));
+        CHECK(g.is_cell_search_matched(5, 0));
+        CHECK(g.is_cell_search_matched(6, 0));
+        CHECK(!g.is_cell_search_matched(7, 0));
+
+        // A match on the wide character itself highlights both its columns.
+        g.set_search_query("\xe4\xbd\xa0");
+        CHECK(g.is_cell_search_matched(0, 0));
+        CHECK(g.is_cell_search_matched(1, 0));
+        CHECK(!g.is_cell_search_matched(2, 0));
+    }
+
+    // ASCII case-insensitivity still works, and does not corrupt UTF-8 bytes
+    // on the same row.
+    {
+        TerminalGrid g; g.resize(30, 4);
+        ANSIParser p;
+        feed(p, g, "Caf\xc3\xa9" " World");
+        g.set_search_active(true);
+        g.set_search_query("world");
+        CHECK(g.is_cell_search_matched(5, 0));
+        CHECK(g.is_cell_search_matched(9, 0));
+        CHECK(!g.is_cell_search_matched(10, 0));
+        CHECK(!g.is_cell_search_matched(4, 0));
+    }
+}
+
 static void test_synchronized_output_and_focus_modes() {
     TerminalGrid g; g.resize(20, 5);
     ANSIParser p;
@@ -684,6 +738,7 @@ static void test_utf8() {
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
+    test_search_column_mapping();
     test_synchronized_output_and_focus_modes();
     test_wide_characters();
     test_wide_character_wrap();

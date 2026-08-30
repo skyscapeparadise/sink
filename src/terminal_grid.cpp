@@ -1766,48 +1766,79 @@ void TerminalGrid::set_search_query(const std::string& query) {
 
     if (query.empty()) return;
 
-    std::string lower_query = query;
-    std::transform(lower_query.begin(), lower_query.end(), lower_query.begin(), ::tolower);
+    // Lowercase ASCII only. ::tolower on a byte >= 0x80 is undefined for a
+    // plain char and would in any case mangle UTF-8 continuation bytes, so
+    // matching stays case-insensitive for ASCII and exact for everything else.
+    auto ascii_lower = [](std::string t) {
+        for (char& ch : t) {
+            unsigned char u = static_cast<unsigned char>(ch);
+            if (u >= 'A' && u <= 'Z') ch = static_cast<char>(u + 32);
+        }
+        return t;
+    };
+    const std::string lower_query = ascii_lower(query);
 
     int total_history = static_cast<int>(scrollback_history_.size());
     int total_rows = total_history + rows_;
 
+    // Reused across rows so a long scrollback doesn't reallocate per line.
+    std::string line_str;
+    std::vector<int> byte_col;
+
     for (int abs_r = 0; abs_r < total_rows; ++abs_r) {
-        std::string line_str;
+        line_str.clear();
+        byte_col.clear();
+
+        // Build the row's text alongside a byte-index -> column map. std::string
+        // find() returns a *byte* offset, and this used to be assigned straight
+        // to SearchResult::col, which is a column -- so every match on a row
+        // containing any multi-byte character highlighted the wrong cells, drifting
+        // further right the more of them preceded it.
+        auto append_cell = [&](const Cell& cell, int col) {
+            // The trailing half of a double-width pair contributes no text; the
+            // lead cell's bytes already map to the first of its two columns, and
+            // skipping here means the *next* cell's bytes map past both, so a
+            // match spanning a wide character reports the full two-column width.
+            if (cell.attrs & ATTR_WIDE_CONT) return;
+            size_t before = line_str.size();
+            char32_t cp = cell.codepoint;
+            if (cp >= 32 && cp <= 126) {
+                line_str += static_cast<char>(cp);
+            } else if (cp > 126) {
+                line_str += utf32_to_utf8(cp);
+            } else {
+                line_str += ' ';
+            }
+            byte_col.insert(byte_col.end(), line_str.size() - before, col);
+        };
+
         if (abs_r < total_history) {
             const auto& row_cells = scrollback_history_[abs_r].cells;
-            for (const auto& cell : row_cells) {
-                if (cell.codepoint >= 32 && cell.codepoint <= 126) {
-                    line_str += static_cast<char>(cell.codepoint);
-                } else if (cell.codepoint > 126) {
-                    line_str += utf32_to_utf8(cell.codepoint);
-                } else {
-                    line_str += ' ';
-                }
+            for (size_t c = 0; c < row_cells.size(); ++c) {
+                append_cell(row_cells[c], static_cast<int>(c));
             }
         } else {
             int r = abs_r - total_history;
+            const Cell* row = row_data(r);
             for (int c = 0; c < cols_; ++c) {
-                char32_t cp = row_data(r)[c].codepoint;
-                if (cp >= 32 && cp <= 126) {
-                    line_str += static_cast<char>(cp);
-                } else if (cp > 126) {
-                    line_str += utf32_to_utf8(cp);
-                } else {
-                    line_str += ' ';
-                }
+                append_cell(row[c], c);
             }
         }
+        // Sentinel so a match ending at the last byte can still resolve an
+        // exclusive end column.
+        byte_col.push_back(abs_r < total_history
+                           ? static_cast<int>(scrollback_history_[abs_r].cells.size())
+                           : cols_);
 
-        std::string lower_line = line_str;
-        std::transform(lower_line.begin(), lower_line.end(), lower_line.begin(), ::tolower);
+        const std::string lower_line = ascii_lower(line_str);
 
         size_t pos = 0;
         while ((pos = lower_line.find(lower_query, pos)) != std::string::npos) {
+            size_t end_byte = std::min(pos + query.length(), byte_col.size() - 1);
             SearchResult res;
             res.absolute_row = abs_r;
-            res.col = static_cast<int>(pos);
-            res.len = static_cast<int>(query.length());
+            res.col = byte_col[pos];
+            res.len = std::max(1, byte_col[end_byte] - byte_col[pos]);
             search_matches_.push_back(res);
             pos += std::max<size_t>(1, query.length());
         }
