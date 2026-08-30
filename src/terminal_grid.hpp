@@ -64,11 +64,17 @@ struct Cell {
 // Columns a codepoint occupies: 2 for East Asian Wide/Fullwidth and emoji
 // presentation, 1 otherwise.
 //
-// Combining marks are deliberately *not* given width 0 here. sink rasterises
-// one glyph per cell and cannot compose a mark onto its base, so the choice
-// would be between a misaligned cell of its own (today) and dropping the mark
-// entirely. Neither is right; proper composition is its own project.
+// Combining marks never reach this: write_character() composes them onto the
+// preceding character before any width question arises. See is_combining_mark.
 int char_display_width(char32_t cp);
+
+// True for Unicode Mn/Me: marks that attach to the preceding base character
+// and occupy no column of their own.
+bool is_combining_mark(char32_t cp);
+
+// Canonical composition of a base and a combining mark, or 0 if the pair has
+// no precomposed form. 'e' + U+0301 gives U+00E9.
+char32_t compose_pair(char32_t base, char32_t mark);
 
 struct ScrollbackRow {
     std::vector<Cell> cells;

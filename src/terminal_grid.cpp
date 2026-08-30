@@ -1,4 +1,5 @@
 #include "terminal_grid.hpp"
+#include "unicode_tables.hpp"
 #include <algorithm>
 #include <iostream>
 #include <string>
@@ -22,6 +23,37 @@ static void write_string(TerminalGrid& grid, int col, int row, const std::string
 // converge on regardless of what the standard technically says about
 // Ambiguous width. Box-drawing (U+2500-257F) is deliberately absent: it is
 // Ambiguous, and every terminal treats it as narrow.
+bool is_combining_mark(char32_t cp) {
+    if (cp < 0x0300 || cp > kCombiningMaxCodepoint) return false;
+    // Block pre-filter first: this is asked about every non-ASCII character
+    // written, and CJK and emoji -- the bulk of them -- sit in blocks holding
+    // no marks at all, so they reject on a load and a test rather than a
+    // binary search over 350-odd ranges.
+    unsigned block = static_cast<unsigned>(cp) >> 8;
+    if (!(kCombiningBlockBits[block >> 3] & (1u << (block & 7)))) return false;
+
+    int lo = 0, hi = kCombiningRangeCount - 1;
+    while (lo <= hi) {
+        int mid = (lo + hi) / 2;
+        if (cp < kCombiningRanges[mid].lo) hi = mid - 1;
+        else if (cp > kCombiningRanges[mid].hi) lo = mid + 1;
+        else return true;
+    }
+    return false;
+}
+
+char32_t compose_pair(char32_t base, char32_t mark) {
+    int lo = 0, hi = kComposePairCount - 1;
+    while (lo <= hi) {
+        int mid = (lo + hi) / 2;
+        const ComposePair& e = kComposePairs[mid];
+        if (e.base < base || (e.base == base && e.mark < mark)) lo = mid + 1;
+        else if (e.base > base || (e.base == base && e.mark > mark)) hi = mid - 1;
+        else return e.composed;
+    }
+    return 0;
+}
+
 int char_display_width(char32_t cp) {
     if (cp < 0x1100) return 1;   // the overwhelming common case, checked first
 
@@ -359,6 +391,36 @@ void TerminalGrid::write_character(char32_t codepoint) {
         cursor_col_ = 0;
     }
     
+    // A combining mark carries no width: it composes onto the character
+    // already written rather than taking a cell. macOS hands out filenames in
+    // NFD, so `ls` in any directory with accented names produces exactly these
+    // base+mark sequences -- previously each mark consumed its own cell, so
+    // the text was both wrong and a column wider per accent.
+    if (is_combining_mark(codepoint)) {
+        if (cursor_row_ >= 0 && cursor_row_ < rows_ && cols_ > 0) {
+            // The base is the cell just written. With a wrap deferred the
+            // cursor is still parked on it; otherwise it sits one to the left,
+            // or two if that character was double-width.
+            int base_col = wrap_pending_ ? cursor_col_ : cursor_col_ - 1;
+            Cell* row = row_data(cursor_row_);
+            if (base_col > 0 && (row[base_col].attrs & ATTR_WIDE_CONT)) {
+                base_col--;
+            }
+            if (base_col >= 0 && base_col < cols_) {
+                char32_t composed = compose_pair(row[base_col].codepoint, codepoint);
+                if (composed) {
+                    row[base_col].codepoint = composed;
+                }
+                // No precomposed form (stacked marks, Devanagari, Hebrew
+                // points): the mark is dropped. Rendering it would need the
+                // glyph drawn over its base, which this atlas cannot express,
+                // and giving it a cell of its own -- the previous behaviour --
+                // misaligns everything after it on the line.
+            }
+        }
+        return;
+    }
+
     const int width = char_display_width(codepoint);
 
     // A double-width glyph cannot straddle a line break, so if only one column

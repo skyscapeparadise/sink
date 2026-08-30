@@ -181,6 +181,50 @@ static void test_error_flash_trigger() {
 // byte offset std::string::find() returns. On any row containing multi-byte
 // text the highlight drifted right, further with each such character before
 // the match. These check the mapping through the user-visible predicate.
+// Combining marks compose onto the character before them instead of taking a
+// cell. This is the shape macOS produces constantly: it stores filenames in
+// NFD, so `ls` in a directory with accented names emits base+mark sequences.
+static void test_combining_marks() {
+    CHECK(is_combining_mark(0x0301));            // combining acute
+    CHECK(is_combining_mark(0x0308));            // combining diaeresis
+    CHECK(!is_combining_mark(U'a'));
+    CHECK(!is_combining_mark(0x4F60));           // CJK is not a mark
+    CHECK(compose_pair(U'e', 0x0301) == 0x00E9); // e + acute -> eacute
+    CHECK(compose_pair(U'n', 0x0303) == 0x00F1); // n + tilde  -> ntilde
+    CHECK(compose_pair(U'z', 0x0301) == 0x017A);
+    CHECK(compose_pair(U'q', 0x0301) == 0);      // no precomposed form
+
+    // NFD "café" -- c a f e U+0301 -- occupies four columns, not five, and
+    // the last cell holds the composed character.
+    TerminalGrid g; g.resize(20, 4);
+    ANSIParser p;
+    feed(p, g, "caf" "e\xcc\x81");
+    CHECK(g.get_cell_at(0, 0).codepoint == U'c');
+    CHECK(g.get_cell_at(1, 0).codepoint == U'a');
+    CHECK(g.get_cell_at(2, 0).codepoint == U'f');
+    CHECK(g.get_cell_at(3, 0).codepoint == 0x00E9);
+    CHECK(g.get_cursor_col() == 4);
+
+    // Text after it lands where it should rather than a column late.
+    feed(p, g, "!");
+    CHECK(g.get_cell_at(4, 0).codepoint == U'!');
+
+    // A mark with no base to attach to is dropped, not written to a cell.
+    TerminalGrid g2; g2.resize(20, 4);
+    ANSIParser p2;
+    feed(p2, g2, "\xcc\x81");
+    CHECK(g2.get_cell_at(0, 0).codepoint == 32);
+    CHECK(g2.get_cursor_col() == 0);
+
+    // Marks compose onto a double-width base without disturbing its pair.
+    TerminalGrid g3; g3.resize(20, 4);
+    ANSIParser p3;
+    feed(p3, g3, "\xe4\xbd\xa0\xcc\x81");        // CJK then a mark
+    CHECK(g3.get_cell_at(0, 0).codepoint == 0x4F60); // no composed form, base intact
+    CHECK((g3.get_cell_at(1, 0).attrs & ATTR_WIDE_CONT) != 0);
+    CHECK(g3.get_cursor_col() == 2);
+}
+
 static void test_search_column_mapping() {
     // Latin-1 accented: two UTF-8 bytes, one column.
     {
@@ -738,6 +782,7 @@ static void test_utf8() {
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
+    test_combining_marks();
     test_search_column_mapping();
     test_synchronized_output_and_focus_modes();
     test_wide_characters();
