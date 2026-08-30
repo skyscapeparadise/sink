@@ -134,6 +134,23 @@ target_link_libraries(sink_tests PRIVATE
 )
 add_test(NAME ansi_parser COMMAND sink_tests)
 
+# tmux compatibility proof. Drives a real tmux in a PTY, replays what it writes
+# through sink's parser, and compares against tmux's own view. Registered only
+# when tmux is installed, and labelled "integration" because it spawns servers
+# and depends on timing -- exclude with `ctest -LE integration` if that becomes
+# a problem in CI.
+find_program(TMUX_EXECUTABLE tmux)
+if(TMUX_EXECUTABLE)
+    add_test(NAME tmux_compat
+             COMMAND ${CMAKE_COMMAND} -E env
+                     python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/tmux_compat.py
+                     $<TARGET_FILE:tmux_replay>
+             WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    set_tests_properties(tmux_compat PROPERTIES LABELS integration TIMEOUT 180)
+else()
+    message(STATUS "tmux not found; skipping the tmux compatibility test")
+endif()
+
 # Config store tests: no window/PTY/renderer needed, just the TOML-backed
 # preset store, so it's a separate lightweight binary rather than piling
 # onto sink_tests (which already owns its own main()).
@@ -154,6 +171,22 @@ add_executable(sink_bench
 )
 target_include_directories(sink_bench PRIVATE src)
 target_link_libraries(sink_bench PRIVATE
+    SDL3::SDL3
+    SDL3_ttf::SDL3_ttf
+    SDL3_image::SDL3_image
+)
+
+# Replays a captured terminal byte stream through the parser and prints the
+# resulting screen. Used by tests/tmux_compat.py to compare sink's rendering of
+# tmux's output against tmux's own view of what it drew.
+add_executable(tmux_replay
+    tests/tmux_replay.cpp
+    src/ansi_parser.cpp
+    src/terminal_grid.cpp
+    src/font_manager.cpp
+)
+target_include_directories(tmux_replay PRIVATE src)
+target_link_libraries(tmux_replay PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
     SDL3_image::SDL3_image
