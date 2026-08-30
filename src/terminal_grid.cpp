@@ -17,6 +17,42 @@ static void write_string(TerminalGrid& grid, int col, int row, const std::string
     }
 }
 
+// See the declaration. Ranges follow Unicode East Asian Width (W and F) plus
+// the emoji blocks that have Emoji_Presentation, which is what terminals
+// converge on regardless of what the standard technically says about
+// Ambiguous width. Box-drawing (U+2500-257F) is deliberately absent: it is
+// Ambiguous, and every terminal treats it as narrow.
+int char_display_width(char32_t cp) {
+    if (cp < 0x1100) return 1;   // the overwhelming common case, checked first
+
+    if ((cp >= 0x1100 && cp <= 0x115F) ||   // Hangul Jamo initial consonants
+        (cp >= 0x2E80 && cp <= 0x303E) ||   // CJK radicals, Kangxi, CJK symbols
+        (cp >= 0x3041 && cp <= 0x33FF) ||   // Kana, Bopomofo, enclosed CJK, compat
+        (cp >= 0x3400 && cp <= 0x4DBF) ||   // CJK unified ext A
+        (cp >= 0x4E00 && cp <= 0x9FFF) ||   // CJK unified
+        (cp >= 0xA000 && cp <= 0xA4CF) ||   // Yi
+        (cp >= 0xA960 && cp <= 0xA97F) ||   // Hangul Jamo ext A
+        (cp >= 0xAC00 && cp <= 0xD7A3) ||   // Hangul syllables
+        (cp >= 0xF900 && cp <= 0xFAFF) ||   // CJK compatibility ideographs
+        (cp >= 0xFE10 && cp <= 0xFE19) ||   // vertical forms
+        (cp >= 0xFE30 && cp <= 0xFE6F) ||   // CJK compat forms, small forms
+        (cp >= 0xFF00 && cp <= 0xFF60) ||   // fullwidth ASCII forms
+        (cp >= 0xFFE0 && cp <= 0xFFE6)) {   // fullwidth signs
+        return 2;
+    }
+
+    if ((cp >= 0x1F300 && cp <= 0x1F64F) ||   // pictographs, emoticons
+        (cp >= 0x1F680 && cp <= 0x1F6FF) ||   // transport and map
+        (cp >= 0x1F900 && cp <= 0x1F9FF) ||   // supplemental pictographs
+        (cp >= 0x1FA70 && cp <= 0x1FAFF) ||   // extended-A pictographs
+        (cp >= 0x20000 && cp <= 0x2FFFD) ||   // CJK unified ext B onward
+        (cp >= 0x30000 && cp <= 0x3FFFD)) {
+        return 2;
+    }
+
+    return 1;
+}
+
 static std::string utf32_to_utf8(char32_t codepoint) {
     std::string out;
     if (codepoint < 0x80) {
@@ -323,15 +359,50 @@ void TerminalGrid::write_character(char32_t codepoint) {
         cursor_col_ = 0;
     }
     
-    if (cursor_col_ >= 0 && cursor_col_ < cols_ && cursor_row_ >= 0 && cursor_row_ < rows_) {
-        row_data(cursor_row_)[cursor_col_] =
-            { codepoint, current_fg_packed_, current_bg_packed_, current_attrs_, current_hyperlink_id_ };
+    const int width = char_display_width(codepoint);
+
+    // A double-width glyph cannot straddle a line break, so if only one column
+    // is left it wraps first rather than being split. This is the one case
+    // where the wrap happens *before* the write instead of being deferred.
+    if (width == 2 && cursor_col_ == cols_ - 1) {
+        if (cursor_row_ < static_cast<int>(row_wrapped_.size())) {
+            row_wrapped_[cursor_row_] = true;
+        }
+        // The column left behind is blanked: leaving the old contents there
+        // would show a stale glyph in a cell the text has moved past.
+        if (cursor_row_ >= 0 && cursor_row_ < rows_) {
+            row_data(cursor_row_)[cursor_col_] =
+                { 32, current_fg_packed_, current_bg_packed_, current_attrs_, 0 };
+        }
+        if (cursor_row_ == get_scroll_bottom()) {
+            scroll_up();
+        } else if (cursor_row_ < rows_ - 1) {
+            cursor_row_++;
+        }
+        cursor_col_ = 0;
+        wrap_pending_ = false;
     }
 
-    if (cursor_col_ >= cols_ - 1) {
+    if (cursor_col_ >= 0 && cursor_col_ < cols_ && cursor_row_ >= 0 && cursor_row_ < rows_) {
+        Cell* row = row_data(cursor_row_);
+        row[cursor_col_] =
+            { codepoint, current_fg_packed_, current_bg_packed_, current_attrs_, current_hyperlink_id_ };
+        // The trailing half carries the same style so the background reads as
+        // one block, but no codepoint: the lead cell draws across both.
+        if (width == 2 && cursor_col_ + 1 < cols_) {
+            row[cursor_col_ + 1] = {
+                0, current_fg_packed_, current_bg_packed_,
+                static_cast<uint8_t>(current_attrs_ | ATTR_WIDE_CONT),
+                current_hyperlink_id_
+            };
+        }
+    }
+
+    if (cursor_col_ + width >= cols_) {
+        cursor_col_ = cols_ - 1;
         wrap_pending_ = true;
     } else {
-        cursor_col_++;
+        cursor_col_ += width;
     }
 }
 
@@ -1059,6 +1130,11 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
             }
 
             // Populate Text Geometry
+            // A double-width glyph is drawn across both of its cells. The
+            // trailing half holds codepoint 0 and so is skipped by the guard
+            // below without needing a check of its own.
+            bool is_wide = (char_display_width(cell.codepoint) == 2);
+
             if (!skip_text && render_cp != 32 && render_cp != 0) {
                 bool is_ligature = (render_cp != cell.codepoint && render_cp >= 0x2000);
                 // Ligature substitute glyphs are rasterized from a ~2x-size
@@ -1095,8 +1171,8 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
                         float glyph_w = glyph->src_rect.w;
                         float glyph_h = glyph->src_rect.h;
 
-                        if (glyph->is_color || is_ligature) {
-                            float target_w = is_ligature ? (cell_w * 2.0f) : cell_w;
+                        if (glyph->is_color || is_ligature || is_wide) {
+                            float target_w = (is_ligature || is_wide) ? (cell_w * 2.0f) : cell_w;
                             // Scaling purely to hit the width target assumes
                             // the glyph's natural aspect ratio already fits
                             // "N cells wide, 1 row tall" -- for some
@@ -1119,7 +1195,7 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
                             glyph_h *= scale_factor;
                         }
 
-                        float span_w = is_ligature ? (cell_w * 2.0f) : cell_w;
+                        float span_w = (is_ligature || is_wide) ? (cell_w * 2.0f) : cell_w;
                         float gx0 = x0 + (span_w - glyph_w) / 2.0f;
                         float gy0 = y0 + (cell_h - glyph_h) / 2.0f;
                         float gx1 = gx0 + glyph_w;
@@ -1578,7 +1654,11 @@ std::string TerminalGrid::get_selected_text() const {
             }
             
             for (int c = sc; c <= limit_col; ++c) {
-                text += utf32_to_utf8(row_cells[c].codepoint);
+                // Skip the trailing half of a double-width pair: it holds no
+                // codepoint of its own and would otherwise emit a NUL byte.
+                if (!(row_cells[c].attrs & ATTR_WIDE_CONT)) {
+                    text += utf32_to_utf8(row_cells[c].codepoint);
+                }
             }
             
             if (!is_wrapped && r < r1) {

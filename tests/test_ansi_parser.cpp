@@ -169,6 +169,65 @@ static void test_error_flash_trigger() {
     CHECK(glow_after(std::string(200, 'a'), "") == 0.0f);
 }
 
+// East Asian Wide and Fullwidth characters, and emoji, occupy two columns.
+// Before this the grid advanced one column per codepoint regardless, so CJK
+// and emoji rendered at half the width every other terminal gives them and
+// anything column-aligned drifted.
+static void test_wide_characters() {
+    CHECK(char_display_width(U'A') == 1);
+    CHECK(char_display_width(U'\u00e9') == 1);       // Latin-1 accented
+    CHECK(char_display_width(U'\u2500') == 1);       // box-drawing stays narrow
+    CHECK(char_display_width(U'\u4f60') == 2);       // CJK
+    CHECK(char_display_width(U'\u3042') == 2);       // kana
+    CHECK(char_display_width(U'\uff21') == 2);       // fullwidth A
+    CHECK(char_display_width(U'\uac00') == 2);       // Hangul syllable
+    CHECK(char_display_width(0x1F680) == 2);          // emoji
+
+    // Two CJK codepoints occupy four columns, each with a marked trailing half
+    TerminalGrid g; g.resize(20, 4);
+    ANSIParser p;
+    feed(p, g, "\xe4\xbd\xa0\xe5\xa5\xbd");        // U+4F60 U+597D
+    CHECK(g.get_cell_at(0, 0).codepoint == 0x4F60);
+    CHECK((g.get_cell_at(1, 0).attrs & ATTR_WIDE_CONT) != 0);
+    CHECK(g.get_cell_at(2, 0).codepoint == 0x597D);
+    CHECK((g.get_cell_at(3, 0).attrs & ATTR_WIDE_CONT) != 0);
+    CHECK(g.get_cursor_col() == 4);
+
+    // Narrow text after a wide char lands on the right column
+    feed(p, g, "ab");
+    CHECK(g.get_cell_at(4, 0).codepoint == 'a');
+    CHECK(g.get_cell_at(5, 0).codepoint == 'b');
+    CHECK(g.get_cursor_col() == 6);
+}
+
+// A double-width glyph cannot straddle a line break. With one column left it
+// has to wrap first, and the column it leaves behind must be blanked rather
+// than keeping whatever was there.
+static void test_wide_character_wrap() {
+    TerminalGrid g; g.resize(5, 4);
+    ANSIParser p;
+    feed(p, g, "abcd");                              // fills columns 0-3
+    CHECK(g.get_cursor_col() == 4);
+    feed(p, g, "\xe4\xbd\xa0");                     // U+4F60, needs two columns
+    CHECK(g.get_cell_at(4, 0).codepoint == 32);       // vacated column blanked
+    CHECK(g.get_cell_at(0, 1).codepoint == 0x4F60);   // wrapped to the next row
+    CHECK((g.get_cell_at(1, 1).attrs & ATTR_WIDE_CONT) != 0);
+    CHECK(g.get_cursor_row() == 1);
+    CHECK(g.get_cursor_col() == 2);
+}
+
+// Copying a region containing wide characters must not emit the trailing
+// half, which carries codepoint 0 and would otherwise become a NUL byte.
+static void test_wide_character_copy() {
+    TerminalGrid g; g.resize(20, 4);
+    ANSIParser p;
+    feed(p, g, "x\xe4\xbd\xa0y");                   // x U+4F60 y
+    g.select_all();
+    std::string sel = g.get_selected_text();
+    CHECK(sel.find('\0') == std::string::npos);
+    CHECK(sel.find("x\xe4\xbd\xa0y") != std::string::npos);
+}
+
 static void test_cup_and_relative_motion() {
     TerminalGrid g; g.resize(20, 5);
     ANSIParser p;
@@ -590,6 +649,9 @@ static void test_utf8() {
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
+    test_wide_characters();
+    test_wide_character_wrap();
+    test_wide_character_copy();
     test_error_flash_trigger();
     test_scroll_ring_wraparound();
     test_scrollback_cap_recycles_rows();

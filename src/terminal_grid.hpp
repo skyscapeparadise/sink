@@ -16,6 +16,9 @@ enum CellAttr : uint8_t {
     ATTR_UNDERLINE     = 1 << 3,
     ATTR_REVERSE       = 1 << 4,
     ATTR_STRIKETHROUGH = 1 << 5,
+    // Second cell of a double-width pair. Carries no glyph of its own: the
+    // lead cell draws across both. Bits 6-7 were free, so this costs nothing.
+    ATTR_WIDE_CONT     = 1 << 6,
 };
 
 // Cell colours packed to 8 bits per channel.
@@ -57,6 +60,15 @@ struct Cell {
     uint8_t attrs = 0;
     uint32_t hyperlink_id = 0; // 0 = no link; see TerminalGrid::get_hyperlink_uri
 };
+
+// Columns a codepoint occupies: 2 for East Asian Wide/Fullwidth and emoji
+// presentation, 1 otherwise.
+//
+// Combining marks are deliberately *not* given width 0 here. sink rasterises
+// one glyph per cell and cannot compose a mark onto its base, so the choice
+// would be between a misaligned cell of its own (today) and dropping the mark
+// entirely. Neither is right; proper composition is its own project.
+int char_display_width(char32_t cp);
 
 struct ScrollbackRow {
     std::vector<Cell> cells;
