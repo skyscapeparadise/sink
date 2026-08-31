@@ -128,6 +128,13 @@ public:
     void insert_lines(int count);       // IL (CSI L)
     void delete_lines(int count);       // DL (CSI M)
     void clear_scrollback();
+
+    // RIS (ESC c): return the terminal to its power-on state. vtebench sends
+    // this between every sample, and full-screen apps send it to recover a
+    // confused terminal, so a terminal that ignores it accumulates modes --
+    // an alt screen never exited, a scroll region never widened -- until
+    // output scrolls inside a few rows and the screen looks frozen.
+    void full_reset();
     void clear_line(int row, int mode); // 0 = cursor to end, 1 = start to cursor, 2 = entire line
     void delete_character(int count);
     void erase_characters(int count); // ECH: blank count cells at the cursor in place, no shift
@@ -190,19 +197,18 @@ public:
     // Synchronized output (DECSET/DECRST 2026). Apps that redraw a whole
     // frame -- neovim, helix, fzf, lazygit -- wrap the update in BSU/ESU so
     // the terminal shows the finished frame rather than the half-drawn states
-    // in between. Holding presentation is what stops that tearing.
+    // in between.
     //
-    // The deadline is a safety valve: an app that sets 2026 and then crashes,
-    // or never sends the reset, must not be able to freeze the terminal.
-    void set_synchronized_output(bool active) {
-        if (active && !synchronized_output_) {
-            synchronized_output_deadline_ = SDL_GetTicks() + kSyncOutputTimeoutMs;
-        }
-        synchronized_output_ = active;
-    }
-    bool is_frame_held() const {
-        return synchronized_output_ && SDL_GetTicks() < synchronized_output_deadline_;
-    }
+    // This is only the protocol state: whether the application currently has
+    // an update open. How long that is honoured is the render loop's decision,
+    // because the guarantee that matters -- that the screen keeps updating --
+    // can only be expressed against actual presents. An earlier version put a
+    // deadline here instead and re-armed it on each BSU, which bounded a
+    // single update but not a run of them: vtebench's sync benchmark sends a
+    // BSU/ESU pair roughly every 400 bytes, so the deadline was always freshly
+    // armed and the window never presented again.
+    void set_synchronized_output(bool active) { synchronized_output_ = active; }
+    bool is_synchronized_output() const { return synchronized_output_; }
 
     // Focus reporting (DECSET/DECRST 1004): the app is told when the terminal
     // gains or loses focus, which vim uses to drive autoread and tmux to
@@ -418,9 +424,7 @@ private:
     bool alt_screen_active_ = false;
     bool cursor_visible_ = true;
     bool bracketed_paste_active_ = false;
-    static constexpr Uint64 kSyncOutputTimeoutMs = 150;
     bool synchronized_output_ = false;
-    Uint64 synchronized_output_deadline_ = 0;
     bool focus_reporting_ = false;
     int mouse_mode_ = 0;
     bool mouse_sgr_ = false;

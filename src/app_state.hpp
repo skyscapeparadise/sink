@@ -137,6 +137,11 @@ struct TerminalWindow {
     int pending_h = 0;
     Uint64 last_resize_event_time = 0;
 
+    // Last time this window actually presented. Synchronized output (DECSET
+    // 2026) defers presentation, and this is what bounds that: the screen has
+    // to refresh even if an application holds updates open back to back.
+    Uint64 last_present_ms = 0;
+
     // Detects a native tab bar appearing/disappearing (see
     // get_top_offset_pts): unlike an actual window resize, that doesn't
     // fire SDL_EVENT_WINDOW_RESIZED, so it's polled once a frame instead.

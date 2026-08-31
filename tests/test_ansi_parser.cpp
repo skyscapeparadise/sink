@@ -177,6 +177,10 @@ static void test_error_flash_trigger() {
 // are mode flags the app layer acts on -- holding the presented frame, and
 // sending CSI I / CSI O -- so what is checked here is that the parser tracks
 // them, including that an unknown neighbouring mode doesn't disturb them.
+//
+// 2026 is deliberately pure state with no timing in it. How long a held frame
+// may be honoured belongs to the render loop, measured from the last actual
+// present; see kMaxSyncHoldMs in main.cpp.
 // SearchResult::col is a column, but set_search_query() was assigning it the
 // byte offset std::string::find() returns. On any row containing multi-byte
 // text the highlight drifted right, further with each such character before
@@ -184,6 +188,66 @@ static void test_error_flash_trigger() {
 // Combining marks compose onto the character before them instead of taking a
 // cell. This is the shape macOS produces constantly: it stores filenames in
 // NFD, so `ls` in a directory with accented names emits base+mark sequences.
+// RIS (ESC c): return the terminal to its power-on state.
+//
+// vtebench sends this between every sample and again at the end, and its setup
+// scripts enter the alt screen and set narrow scroll regions. A terminal that
+// ignores RIS accumulates those, so output ends up scrolling inside a couple
+// of rows and the screen appears frozen -- which is exactly what happened.
+static void test_ris_full_reset() {
+    TerminalGrid g; g.resize(20, 10);
+    ANSIParser p;
+
+    // Put the terminal into as many non-default states as possible.
+    feed(p, g, "scrollback\r\n");
+    feed(p, g, "\x1b[?1049h");          // alt screen
+    feed(p, g, "\x1b[3;5r");            // narrow scroll region
+    feed(p, g, "\x1b[?6h");             // origin mode
+    feed(p, g, "\x1b[31;1mred bold");   // colour + attribute
+    feed(p, g, "\x1b[?25l");            // hide cursor
+    feed(p, g, "\x1b[?2004h");          // bracketed paste
+    feed(p, g, "\x1b[?1000h");          // mouse reporting
+    feed(p, g, "\x1b[?1h");             // application cursor keys
+    feed(p, g, "\x1b[?2026h");          // synchronized output
+    feed(p, g, "\x1b[?1004h");          // focus reporting
+    feed(p, g, "\x1b(0");               // DEC Special Graphics
+
+    CHECK(g.is_alt_screen_active());
+    CHECK(g.get_scroll_top() == 2);
+    CHECK(g.is_origin_mode());
+    CHECK(!g.is_cursor_visible());
+    CHECK(g.get_mouse_mode() == 1000);
+    CHECK(g.is_synchronized_output());
+
+    feed(p, g, "\x1b" "c");   // ESC c -- split so \x1bc is not one hex escape
+
+    CHECK(!g.is_alt_screen_active());
+    CHECK(g.get_scroll_top() == 0);
+    CHECK(g.get_scroll_bottom() == 9);
+    CHECK(!g.is_origin_mode());
+    CHECK(g.is_cursor_visible());
+    CHECK(!g.is_bracketed_paste_active());
+    CHECK(g.get_mouse_mode() == 0);
+    CHECK(!g.is_app_cursor_keys());
+    CHECK(!g.is_synchronized_output());
+    CHECK(!g.is_focus_reporting());
+    CHECK(g.get_cursor_row() == 0);
+    CHECK(g.get_cursor_col() == 0);
+    CHECK(g.get_scrollback_size() == 0);
+    CHECK(g.get_current_attrs() == 0);
+    CHECK(row_text(g, 0) == "");
+
+    // Charset selection is parser state and must reset too: 'q' would draw a
+    // horizontal line while DEC Special Graphics is active.
+    feed(p, g, "q");
+    CHECK(g.get_cell_at(0, 0).codepoint == U'q');
+
+    // And the terminal is usable afterwards, with default colours.
+    feed(p, g, "\x1b[2;1Hafter");
+    CHECK(row_text(g, 1) == "after");
+    CHECK(color_near(g.get_cell_at(0, 1).fg, 0.9f, 0.9f, 0.9f));
+}
+
 static void test_combining_marks() {
     CHECK(is_combining_mark(0x0301));            // combining acute
     CHECK(is_combining_mark(0x0308));            // combining diaeresis
@@ -279,13 +343,13 @@ static void test_synchronized_output_and_focus_modes() {
     TerminalGrid g; g.resize(20, 5);
     ANSIParser p;
 
-    CHECK(!g.is_frame_held());
+    CHECK(!g.is_synchronized_output());
     CHECK(!g.is_focus_reporting());
 
     feed(p, g, "\x1b[?2026h");
-    CHECK(g.is_frame_held());
+    CHECK(g.is_synchronized_output());
     feed(p, g, "\x1b[?2026l");
-    CHECK(!g.is_frame_held());
+    CHECK(!g.is_synchronized_output());
 
     feed(p, g, "\x1b[?1004h");
     CHECK(g.is_focus_reporting());
@@ -294,15 +358,15 @@ static void test_synchronized_output_and_focus_modes() {
 
     // Set together, reset independently
     feed(p, g, "\x1b[?2026h\x1b[?1004h");
-    CHECK(g.is_frame_held());
+    CHECK(g.is_synchronized_output());
     CHECK(g.is_focus_reporting());
     feed(p, g, "\x1b[?2026l");
-    CHECK(!g.is_frame_held());
+    CHECK(!g.is_synchronized_output());
     CHECK(g.is_focus_reporting());
 
     // An unrecognised mode in between must not clear either
     feed(p, g, "\x1b[?2026h\x1b[?7h");
-    CHECK(g.is_frame_held());
+    CHECK(g.is_synchronized_output());
     CHECK(g.is_focus_reporting());
 }
 
@@ -782,6 +846,7 @@ static void test_utf8() {
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
+    test_ris_full_reset();
     test_combining_marks();
     test_search_column_mapping();
     test_synchronized_output_and_focus_modes();

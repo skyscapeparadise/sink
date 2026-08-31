@@ -287,6 +287,18 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                 str_is_osc_ = (c == ']');
                 osc_buffer_.clear();
                 state_ = STATE_STR;
+            } else if (c == 'c') {
+                // RIS: full reset. Also clears the parser's own carried state
+                // -- a pending charset designation or half-built CSI must not
+                // survive a reset any more than the grid's modes do.
+                grid.full_reset();
+                g0_dec_graphics_ = false;
+                utf8_bytes_needed_ = 0;
+                utf8_codepoint_ = 0;
+                reset_csi();
+                trigger_pos_ = 0;
+                std::memset(trigger_ring_, 0, sizeof(trigger_ring_));
+                state_ = STATE_NORMAL;
             } else if (c == '7') { // DECSC: Save Cursor
                 grid.save_cursor();
                 state_ = STATE_NORMAL;

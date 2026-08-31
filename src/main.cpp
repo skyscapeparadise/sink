@@ -1900,6 +1900,11 @@ static void render_search_drawer(TerminalWindow* tw, int width, int height) {
     }
 }
 
+// Longest the screen may go without presenting while an application holds a
+// synchronized update open. Real updates complete in a few milliseconds; this
+// only engages when something misbehaves or streams updates continuously.
+static constexpr Uint64 kMaxSyncHoldMs = 100;
+
 SDL_AppResult SDL_AppIterate(void* appstate) {
     AppState* state = static_cast<AppState*>(appstate);
     if (!state) return SDL_APP_FAILURE;
@@ -2415,17 +2420,25 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         // Synchronized output (DECSET 2026): while any pane is mid-update,
         // hold the finished frame on screen instead of presenting a partial
         // one. The geometry above is still built -- only presentation is
-        // deferred -- so the next present shows current state either way.
-        // Checking every pane rather than just the focused one means a full
-        // screen app redrawing in a background split doesn't tear; the
-        // deadline inside is_frame_held() bounds how long any of them can
-        // hold the window.
-        bool frame_held = false;
+        // deferred -- so whenever the frame is released it shows current state.
+        // Every pane is checked rather than just the focused one, so a full
+        // screen app redrawing in a background split doesn't tear either.
+        //
+        // The cap is measured from the last *actual* present, not from when
+        // each update opened. Applications send these in a continuous stream
+        // -- vtebench's sync benchmark emits a BSU/ESU pair roughly every 400
+        // bytes -- so a per-update deadline is always freshly armed and never
+        // expires, which froze the window entirely. Presenting a partial frame
+        // after 100ms is a visible glitch; never presenting again is a hang.
+        bool sync_open = false;
         for (Pane* pane : all_panes(tw)) {
-            if (pane && pane->terminal.is_frame_held()) { frame_held = true; break; }
+            if (pane && pane->terminal.is_synchronized_output()) { sync_open = true; break; }
         }
-        if (!frame_held) {
+        Uint64 now_ms = SDL_GetTicks();
+        bool starved = (now_ms - tw->last_present_ms) >= kMaxSyncHoldMs;
+        if (!sync_open || starved) {
             SDL_RenderPresent(tw->renderer);
+            tw->last_present_ms = now_ms;
         }
     }
 

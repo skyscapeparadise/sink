@@ -806,6 +806,52 @@ void TerminalGrid::set_max_scrollback(size_t lines) {
     }
 }
 
+void TerminalGrid::full_reset() {
+    // Leave the alternate screen before clearing, so the saved primary buffer
+    // is discarded rather than restored over the top of the reset.
+    if (alt_screen_active_) {
+        alt_screen_active_ = false;
+        saved_primary_cells_.clear();
+        saved_primary_row_wrapped_.clear();
+        saved_primary_row_prompt_.clear();
+    }
+
+    current_fg_ = {0.9f, 0.9f, 0.9f, 1.0f};
+    current_bg_ = {0.0f, 0.0f, 0.0f, 0.0f};
+    current_fg_packed_ = pack_color(current_fg_);
+    current_bg_packed_ = pack_color(current_bg_);
+    current_attrs_ = 0;
+    current_hyperlink_id_ = 0;
+    blank_row_valid_ = false;
+
+    clear_screen();
+    clear_scrollback();
+
+    cursor_col_ = 0;
+    cursor_row_ = 0;
+    saved_cursor_col_ = 0;
+    saved_cursor_row_ = 0;
+    wrap_pending_ = false;
+
+    scroll_top_ = 0;
+    scroll_bottom_ = rows_ - 1;
+    origin_mode_ = false;
+
+    scroll_offset_ = 0;
+    display_scroll_offset_ = 0.0f;
+
+    cursor_visible_ = true;
+    bracketed_paste_active_ = false;
+    synchronized_output_ = false;
+    focus_reporting_ = false;
+    mouse_mode_ = 0;
+    mouse_sgr_ = false;
+    app_cursor_keys_ = false;
+
+    clear_selection();
+    prompt_boundary_col_ = -1;
+}
+
 void TerminalGrid::clear_scrollback() {
     scrollback_history_.clear();
     scroll_offset_ = 0;
