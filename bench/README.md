@@ -78,34 +78,73 @@ cd bench/vte_bench && cargo build --release
 ./target/release/vte_bench ../workloads
 ```
 
-## Results (Apple Silicon, 2026-08-29, both sides with a row ring)
+## A warning about precision
 
-| workload | sink (MB/s) | vte (MB/s) | faster |
+This harness is not a reliable instrument for precise ratios, and that was
+established the hard way.
+
+Adding wide-character handling to `vte_bench` made it **2.2x faster on plain
+text** -- a workload containing no wide characters at all. Checksumming the
+resulting grid showed the two builds produced byte-identical output with
+identical cursor positions on three of the four workloads. Same work, same
+result, twice the speed.
+
+Isolating it further: rewriting the wrap condition alone changed nothing, and
+adding the `char_width` call while ignoring its result changed nothing. Only
+the complete change moved it. So a semantically-neutral edit swung this
+harness by a factor of two through codegen alone, presumably inlining around
+vte's `Perform` dispatch.
+
+The implication cuts both ways. The pre-change numbers were not more
+trustworthy than the post-change ones -- both are a particular compiler's
+particular decision on a particular day. **Use this to see whether sink is in
+the same league, not to publish a ratio.** Any figure below could move by 2x
+on an unrelated edit to either side.
+
+## Results (Apple Silicon, 2026-08-29, both sides with a row ring and
+## double-width handling)
+
+| workload | sink (MB/s) | vte (MB/s) | |
 |---|---|---|---|
-| plain text (cat-like) | 185.7 | 119.5 | sink, 1.55x |
-| SGR-heavy (colorized ls-like) | 187.5 | 145.1 | sink, 1.29x |
-| cursor-heavy (TUI redraw-like) | 186.5 | 86.2 | sink, 2.16x |
-| UTF-8 heavy (emoji/CJK/box-drawing) | 227.5 | 210.7 | sink, 1.08x |
+| plain text (cat-like) | 179.5 | 253.4 | vte 1.41x |
+| SGR-heavy (colorized ls-like) | 180.8 | 157.4 | sink 1.15x |
+| cursor-heavy (TUI redraw-like) | 180.8 | 108.3 | sink 1.67x |
+| UTF-8 heavy (emoji/CJK/box-drawing) | 190.8 | 286.5 | vte 1.50x |
 
-sink measured 2.6-6.1 MB/s across these workloads at the start of the
-2026-08-28/29 optimization pass -- that is, as the app was actually being
-built and shipped, with no `-O` flag at all. Against that, this is a 37-71x
-improvement. Against an already-optimized build of the same pre-pass code
-(9.1/15.6/28.5/15.1 MB/s), the code changes alone are worth 6.5-20x; the
-difference between the two is the `CMAKE_BUILD_TYPE` fix.
+Each side leads on two. Read alongside the warning above.
 
-Both sides repeat within ~1% run to run; before the ring went into
-`vte_bench` its numbers swung 12-21%, which is worth knowing against any
-older figures.
+sink measured 2.6-6.1 MB/s at the start of the 2026-08-28/29 optimization
+pass -- that is, as the app was actually being built and shipped, with no `-O`
+flag at all. Against that it is 30-70x faster now. Against an already-optimized
+build of the same pre-pass code (9.1/15.6/28.5/15.1 MB/s), the code changes
+alone are worth 6-20x; the difference between the two is the
+`CMAKE_BUILD_TYPE` fix.
 
-**Read the plain-text and cursor-heavy margins with the API difference in
-mind.** sink batches runs of printable ASCII into a single grid write, which
-is worth a lot on text-heavy input. `vte` cannot: its `Perform` trait hands
-back one character at a time, so this benchmark's Rust side -- and Alacritty
-itself -- pays a per-character callback no matter what. That is a real
-architectural difference rather than a benchmark artifact, unlike the row-ring
-mismatch described above, which *was* one and got fixed. But it does mean the
-gap is partly about interface shape, not only parser quality.
+Both sides repeat within ~1% run to run. That stability is about *rerunning* a
+binary, not about rebuilding one -- see the warning above.
+
+## Keeping the two sides comparable, continued
+
+Parity has now been broken and repaired twice, in opposite directions, which
+is worth recording because the failure mode is easy to miss.
+
+First the row ring: sink gained one, `vte_bench` did not, and the comparison
+silently started measuring grid architecture instead of parser speed. Then
+double-width characters: sink started giving East Asian Wide and emoji two
+columns, `vte_bench` still gave them one, and the UTF-8 workload -- 23% wide
+characters, so a 1.23x difference in cells written -- began penalising sink for
+being correct.
+
+Both were mirrored across on the same reasoning: real Alacritty has a ring and
+handles double-width text, so a stand-in that lacks either is not representing
+it. **If you change how sink stores or lays out cells, change `vte_bench` too,
+or these numbers quietly stop meaning anything.**
+
+Two asymmetries remain, both favouring `vte_bench`, and both are real costs of
+sink's feature set rather than artifacts: its `Cell` is 12 bytes against sink's
+20, because sink's cells also carry SGR attribute bits and a hyperlink id; and
+sink checks every non-ASCII character for combining marks in order to compose
+them onto their base, which `vte_bench` does not do.
 
 ## What this surfaced
 

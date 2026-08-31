@@ -16,10 +16,19 @@
 // workloads, so the ring was mirrored here too. Real Alacritty also uses a
 // ring, so this is closer to it than the original was.
 //
-// One difference remains and it favours this side: Cell here is 12 bytes
-// against sink's 20, because sink's cells also carry SGR attribute bits and
-// a hyperlink id. That is a real cost of sink's feature set rather than a
-// benchmark artifact, so it is left alone rather than padded to match.
+// Double-width handling is mirrored here too, for the same reason as the ring:
+// real Alacritty gives East Asian Wide characters and emoji two columns, so a
+// harness that gave them one would be measuring sink doing correct work
+// against a stand-in doing less of it. The UTF-8 workload is 23% wide
+// characters, which is a 1.23x difference in cells written -- easily enough to
+// decide that comparison on its own.
+//
+// Two differences remain and both favour this side: Cell here is 12 bytes
+// against sink's 20, because sink's cells also carry SGR attribute bits and a
+// hyperlink id; and sink additionally checks every non-ASCII character for
+// combining marks to compose them onto their base, which this does not do.
+// Both are real costs of sink's feature set rather than benchmark artifacts,
+// so they are left alone rather than padded to match.
 use std::env;
 use std::fs;
 use std::time::Instant;
@@ -30,6 +39,40 @@ struct Cell {
     ch: char,
     fg: (u8, u8, u8),
     bg: (u8, u8, u8),
+}
+
+/// Columns a character occupies. Mirrors char_display_width() in
+/// src/terminal_grid.cpp: East Asian Wide and Fullwidth plus the emoji blocks
+/// with Emoji_Presentation. Box-drawing is Ambiguous and stays narrow.
+#[inline]
+fn char_width(c: char) -> usize {
+    let cp = c as u32;
+    if cp < 0x1100 {
+        return 1;
+    }
+    if (0x1100..=0x115F).contains(&cp)
+        || (0x2E80..=0x303E).contains(&cp)
+        || (0x3041..=0x33FF).contains(&cp)
+        || (0x3400..=0x4DBF).contains(&cp)
+        || (0x4E00..=0x9FFF).contains(&cp)
+        || (0xA000..=0xA4CF).contains(&cp)
+        || (0xA960..=0xA97F).contains(&cp)
+        || (0xAC00..=0xD7A3).contains(&cp)
+        || (0xF900..=0xFAFF).contains(&cp)
+        || (0xFE10..=0xFE19).contains(&cp)
+        || (0xFE30..=0xFE6F).contains(&cp)
+        || (0xFF00..=0xFF60).contains(&cp)
+        || (0xFFE0..=0xFFE6).contains(&cp)
+        || (0x1F300..=0x1F64F).contains(&cp)
+        || (0x1F680..=0x1F6FF).contains(&cp)
+        || (0x1F900..=0x1F9FF).contains(&cp)
+        || (0x1FA70..=0x1FAFF).contains(&cp)
+        || (0x20000..=0x2FFFD).contains(&cp)
+        || (0x30000..=0x3FFFD).contains(&cp)
+    {
+        return 2;
+    }
+    1
 }
 
 struct Grid {
@@ -73,12 +116,18 @@ impl Grid {
     }
 
     fn write_char(&mut self, c: char) {
-        if self.cursor_col >= self.cols {
+        let w = char_width(c);
+        // A double-width glyph cannot straddle a line break.
+        if self.cursor_col + w > self.cols {
             self.newline();
         }
         let idx = self.row_start(self.cursor_row) + self.cursor_col;
         self.cells[idx] = Cell { ch: c, fg: self.cur_fg, bg: self.cur_bg };
-        self.cursor_col += 1;
+        if w == 2 && self.cursor_col + 1 < self.cols {
+            // Trailing half: same style, no character of its own.
+            self.cells[idx + 1] = Cell { ch: '\0', fg: self.cur_fg, bg: self.cur_bg };
+        }
+        self.cursor_col += w;
     }
 
     // Same cost shape as TerminalGrid::scroll_up(): rotate the ring base and
