@@ -1,6 +1,7 @@
 #include "terminal_grid.hpp"
 #include "unicode_tables.hpp"
 #include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <string>
 
@@ -999,23 +1000,29 @@ void TerminalGrid::reset_scroll() {
     scroll_offset_ = 0;
 }
 
-Cell TerminalGrid::get_cell_at(int col, int row) const {
+TerminalGrid::RowView TerminalGrid::row_view(int row, int view_offset) const {
     int total_history = static_cast<int>(scrollback_history_.size());
-    int line_idx = row + (total_history - scroll_offset_);
-    
+    int line_idx = row + (total_history - view_offset);
+
+    // Above the oldest line still in history. render() asks for row -1 to
+    // cover the sub-row smooth-scroll shift, so this is reachable whenever the
+    // view is pinned to the very top -- and indexing the deque at -1 would be
+    // reading off the front of it.
+    if (line_idx < 0) return {};
+
     if (line_idx < total_history) {
         const auto& hist_row = scrollback_history_[line_idx].cells;
-        if (col >= 0 && col < static_cast<int>(hist_row.size())) {
-            return hist_row[col];
-        }
-        return Cell{ 32, current_fg_packed_, current_bg_packed_ };
-    } else {
-        int active_row = line_idx - total_history;
-        if (col >= 0 && col < cols_ && active_row >= 0 && active_row < rows_) {
-            return row_data(active_row)[col];
-        }
-        return Cell{ 32, current_fg_packed_, current_bg_packed_ };
+        return { hist_row.data(), static_cast<int>(hist_row.size()) };
     }
+    int active_row = line_idx - total_history;
+    if (active_row >= rows_) return {};
+    return { row_data(active_row), cols_ };
+}
+
+Cell TerminalGrid::get_cell_at(int col, int row) const {
+    RowView view = row_view(row, scroll_offset_);
+    if (col >= 0 && col < view.len) return view.cells[col];
+    return Cell{ 32, current_fg_packed_, current_bg_packed_ };
 }
 
 void TerminalGrid::initialize_mock_data() {
@@ -1114,6 +1121,11 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
     SDL_Texture* atlas = font_manager.get_atlas_texture();
     if (!atlas) return;
 
+    // Opens the glyph atlas's per-pass reset budget. Without it, a screen
+    // wanting more distinct glyphs than the atlas holds re-rasterizes all of
+    // them every frame forever instead of just missing a few.
+    font_manager.begin_frame();
+
     SDL_Texture* dyn_atlas = font_manager.get_dynamic_atlas_texture();
 
     int win_w = 0, win_h = 0;
@@ -1138,7 +1150,9 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
     dyn_text_vertices_.clear();
     dyn_text_indices_.clear();
 
-    size_t total_cells = static_cast<size_t>(rows_ * cols_);
+    // rows_ + 1: the cell loop may draw one row above the grid to cover the
+    // sub-row smooth-scroll shift (see first_row below).
+    size_t total_cells = static_cast<size_t>((rows_ + 1) * cols_);
     bg_vertices_.reserve(total_cells * 4 + 32);
     bg_indices_.reserve(total_cells * 6 + 48);
     text_vertices_.reserve(total_cells * 4);
@@ -1147,15 +1161,62 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
     dyn_text_indices_.reserve(total_cells * 6);
     
 
-    // Smooth scrolling interpolation (sub-pixel lerp towards target scroll_offset_)
+    // Smooth scrolling. display_scroll_offset_ is where the view actually is;
+    // scroll_offset_ is where the wheel has asked it to be. The two are equal
+    // only once the glide has settled.
+    //
+    // The rows drawn below are fetched at the *interpolated* position, with
+    // only the sub-row remainder applied as a pixel shift. Fetching the target
+    // rows and translating them by the whole lag instead -- which is what this
+    // used to do -- leaves a band of the viewport with nothing drawn in it,
+    // one row tall for every row of lag, and never fetches the rows that
+    // belong there. Dragging slowly lags well under a row so it never shows;
+    // a fast flick through a deep scrollback lags tens of rows, which is most
+    // of the screen, and reads as the terminal failing to keep up with the
+    // scroll rather than as an animation.
     float target_scroll = static_cast<float>(scroll_offset_);
+    // Momentum can move scroll_offset_ by dozens of lines in a single frame,
+    // far faster than the lerp below closes the gap. Past a screenful of lag
+    // the glide has stopped conveying motion and is just latency, so cap it.
+    float max_lag = static_cast<float>(rows_);
+    display_scroll_offset_ = std::clamp(display_scroll_offset_,
+                                        target_scroll - max_lag,
+                                        target_scroll + max_lag);
     display_scroll_offset_ += (target_scroll - display_scroll_offset_) * std::min(1.0f, dt * 22.0f);
-    float scroll_diff_y = (target_scroll - display_scroll_offset_) * cell_h;
+    // Settle exactly rather than asymptotically, so a view at rest sits on a
+    // row boundary and needs no overscan row at all.
+    if (std::fabs(target_scroll - display_scroll_offset_) < 0.01f) {
+        display_scroll_offset_ = target_scroll;
+    }
+
+    int view_offset = static_cast<int>(std::floor(display_scroll_offset_));
+    float scroll_diff_y = (display_scroll_offset_ - view_offset) * cell_h; // in [0, cell_h)
+    // Shifting the rows down by a fraction of a row uncovers that fraction of
+    // the row above the grid, so start the loop one row early. The clip
+    // installed before the draw calls trims what it puts above start_y.
+    int first_row = (scroll_diff_y > 0.0f) ? -1 : 0;
 
     // 1. Draw Grid Cells
-    for (int r = 0; r < rows_; ++r) {
+    // Stands in for any column a row doesn't reach: scrollback rows are stored
+    // at whatever width they were captured at, which can be narrower than the
+    // grid is now.
+    const Cell blank_cell{ 32, current_fg_packed_, current_bg_packed_ };
+    for (int r = first_row; r < rows_; ++r) {
+        // Everything row-invariant is resolved once here instead of per cell.
+        // The search span especially: it used to be a linear scan of every
+        // match for every one of the ~10k cells on screen.
+        RowView row_view_cells = row_view(r, view_offset);
+        int sel_first = 0, sel_last = -1;
+        selected_span(r, view_offset, sel_first, sel_last);
+        size_t match_begin = 0, match_end = 0;
+        search_span(r, view_offset, match_begin, match_end);
+
+        auto cell_of = [&](int c) -> const Cell& {
+            return (c >= 0 && c < row_view_cells.len) ? row_view_cells.cells[c] : blank_cell;
+        };
+
         for (int c = 0; c < cols_; ++c) {
-            Cell cell = get_cell_at(c, r);
+            const Cell& cell = cell_of(c);
 
             float x0 = start_x + c * cell_w;
             float y0 = start_y + r * cell_h + scroll_diff_y;
@@ -1181,8 +1242,12 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
 
             // Populate Background Geometry
             SDL_FColor bg_color = cell_bg;
-            bool selected = is_cell_selected(c, r);
-            bool search_matched = is_cell_search_matched(c, r);
+            bool selected = (c >= sel_first && c <= sel_last);
+            bool search_matched = false;
+            for (size_t i = match_begin; i < match_end; ++i) {
+                const SearchResult& m = search_matches_[i];
+                if (c >= m.col && c < m.col + m.len) { search_matched = true; break; }
+            }
 
             if (selected) {
                 bg_color = { 1.00f, 0.60f, 0.00f, 0.35f }; // Premium Translucent Amber Gold Selection
@@ -1211,7 +1276,7 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
             bool skip_text = false;
 
             if (enable_ligatures_ && c < cols_ - 1) {
-                Cell next_cell = get_cell_at(c + 1, r);
+                const Cell& next_cell = cell_of(c + 1);
                 char32_t c1 = cell.codepoint;
                 char32_t c2 = next_cell.codepoint;
                 if (c1 == '-' && c2 == '>') render_cp = 0x2192; // →
@@ -1225,7 +1290,7 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
                 else if (c1 == '>' && c2 == '>') render_cp = 0x226B; // ≫
             }
             if (enable_ligatures_ && c > 0) {
-                Cell prev_cell = get_cell_at(c - 1, r);
+                const Cell& prev_cell = cell_of(c - 1);
                 char32_t p1 = prev_cell.codepoint;
                 char32_t p2 = cell.codepoint;
                 if ((p1 == '-' && p2 == '>') || (p1 == '=' && p2 == '>') ||
@@ -1374,6 +1439,11 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
         }
     }
 
+    // Everything pushed so far is grid cells, and only grid cells get clipped
+    // to the text area when the batch is drawn -- the margin and cursor
+    // geometry below deliberately paints outside it.
+    const size_t cell_bg_index_count = bg_indices_.size();
+
     // 2. Populate Padding Margin Geometry to eliminate gaps and smearing parallel lines
     if (cols_ > 0 && rows_ > 0) {
         float grid_w = cols_ * cell_w;
@@ -1381,10 +1451,18 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
         float end_x = start_x + grid_w;
         float end_y = start_y + grid_h;
 
-        SDL_FColor tl_color = unpack_color(get_cell_at(0, 0).bg);
-        SDL_FColor tr_color = unpack_color(get_cell_at(cols_ - 1, 0).bg);
-        SDL_FColor bl_color = unpack_color(get_cell_at(0, rows_ - 1).bg);
-        SDL_FColor br_color = unpack_color(get_cell_at(cols_ - 1, rows_ - 1).bg);
+        // Read at the animated offset, not scroll_offset_: the margin is
+        // extending the colour of the corner cell actually on screen, and
+        // mid-glide those are rows apart.
+        auto corner_bg = [&](int col, int row) {
+            RowView v = row_view(row, view_offset);
+            const Cell& cell = (col >= 0 && col < v.len) ? v.cells[col] : blank_cell;
+            return unpack_color(cell.bg);
+        };
+        SDL_FColor tl_color = corner_bg(0, 0);
+        SDL_FColor tr_color = corner_bg(cols_ - 1, 0);
+        SDL_FColor bl_color = corner_bg(0, rows_ - 1);
+        SDL_FColor br_color = corner_bg(cols_ - 1, rows_ - 1);
 
         // Top Margin (fills full width, from y=0 to y=start_y)
         if (tl_color.a > 0.0f) {
@@ -1453,7 +1531,10 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
 
     // Update visual animated cursor position
     float target_col = static_cast<float>(cursor_col_);
-    float target_row = static_cast<float>(cursor_row_ + scroll_offset_);
+    // display_scroll_offset_, not scroll_offset_, so the cursor stays pinned to
+    // its row while the view glides instead of jumping to where the scroll is
+    // headed and waiting there for the text to arrive.
+    float target_row = static_cast<float>(cursor_row_) + display_scroll_offset_;
 
     float diff_col = std::abs(target_col - visual_cursor_col_);
     float diff_row = std::abs(target_row - visual_cursor_row_);
@@ -1490,19 +1571,55 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
         bg_indices_.push_back(base_idx + 3);
     }
 
+    // Clip the cell geometry to the text area. Mid-glide the loop above emits
+    // a row that starts above start_y and pushes the bottom row past the last
+    // row's baseline; without this, both slivers land in the window padding,
+    // on top of the margin fill that is supposed to own it. Only the top and
+    // bottom edges are tightened -- horizontally the clip is left as the
+    // caller set it, because glyphs wider than their cell already overhang the
+    // grid's left and right edges by design.
+    SDL_Rect prev_clip{};
+    const bool had_clip = SDL_RenderClipEnabled(renderer);
+    if (had_clip) SDL_GetRenderClipRect(renderer, &prev_clip);
+
+    SDL_Rect cell_clip = {
+        had_clip ? prev_clip.x : 0,
+        static_cast<int>(std::floor(start_y)),
+        had_clip ? prev_clip.w : win_w,
+        static_cast<int>(std::ceil(rows_ * cell_h))
+    };
+    if (had_clip && !SDL_GetRectIntersection(&prev_clip, &cell_clip, &cell_clip)) {
+        cell_clip = { 0, 0, 0, 0 }; // nothing of the grid is visible
+    }
+    auto clip_to_cells = [&]() { SDL_SetRenderClipRect(renderer, &cell_clip); };
+    auto clip_restore  = [&]() { SDL_SetRenderClipRect(renderer, had_clip ? &prev_clip : nullptr); };
+
     // 3. Draw Background Color Rectangles
     if (!bg_vertices_.empty()) {
-        SDL_RenderGeometry(renderer, nullptr, bg_vertices_.data(), static_cast<int>(bg_vertices_.size()), bg_indices_.data(), static_cast<int>(bg_indices_.size()));
+        // Split at the boundary recorded above so the margin fill and the
+        // cursor keep drawing over the full pane, in the same order as before.
+        if (cell_bg_index_count > 0) {
+            clip_to_cells();
+            SDL_RenderGeometry(renderer, nullptr, bg_vertices_.data(), static_cast<int>(bg_vertices_.size()), bg_indices_.data(), static_cast<int>(cell_bg_index_count));
+            clip_restore();
+        }
+        if (bg_indices_.size() > cell_bg_index_count) {
+            SDL_RenderGeometry(renderer, nullptr, bg_vertices_.data(), static_cast<int>(bg_vertices_.size()), bg_indices_.data() + cell_bg_index_count, static_cast<int>(bg_indices_.size() - cell_bg_index_count));
+        }
     }
 
 
 
     // 5. Draw Final Crisp Text Glyphs
-    if (!text_vertices_.empty()) {
-        SDL_RenderGeometry(renderer, atlas, text_vertices_.data(), static_cast<int>(text_vertices_.size()), text_indices_.data(), static_cast<int>(text_indices_.size()));
-    }
-    if (dyn_atlas && !dyn_text_vertices_.empty()) {
-        SDL_RenderGeometry(renderer, dyn_atlas, dyn_text_vertices_.data(), static_cast<int>(dyn_text_vertices_.size()), dyn_text_indices_.data(), static_cast<int>(dyn_text_indices_.size()));
+    if (!text_vertices_.empty() || (dyn_atlas && !dyn_text_vertices_.empty())) {
+        clip_to_cells();
+        if (!text_vertices_.empty()) {
+            SDL_RenderGeometry(renderer, atlas, text_vertices_.data(), static_cast<int>(text_vertices_.size()), text_indices_.data(), static_cast<int>(text_indices_.size()));
+        }
+        if (dyn_atlas && !dyn_text_vertices_.empty()) {
+            SDL_RenderGeometry(renderer, dyn_atlas, dyn_text_vertices_.data(), static_cast<int>(dyn_text_vertices_.size()), dyn_text_indices_.data(), static_cast<int>(dyn_text_indices_.size()));
+        }
+        clip_restore();
     }
 
     // 6. Draw Translucent macOS Scrollbar Overlay
@@ -1516,9 +1633,11 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
             
             float thumb_h = std::max(24.0f * display_scale, track_h * (static_cast<float>(rows_) / total_rows));
             
+            // Tracks the animated position, so the thumb travels with the
+            // text rather than arriving at the destination ahead of it.
             float frac = 0.0f;
             if (total_history > 0) {
-                frac = static_cast<float>(scroll_offset_) / total_history;
+                frac = std::clamp(display_scroll_offset_ / total_history, 0.0f, 1.0f);
             }
             float thumb_y = track_y + (track_h - thumb_h) * (1.0f - frac);
             
@@ -1691,28 +1810,35 @@ void TerminalGrid::select_line_at(int row) {
     selecting_ = false;
 }
 
-bool TerminalGrid::is_cell_selected(int col, int row) const {
-    if (!has_selection_) return false;
-    
+void TerminalGrid::selected_span(int row, int view_offset, int& first, int& last) const {
+    first = 0;
+    last = -1; // empty
+    if (!has_selection_) return;
+
     int total_history = static_cast<int>(scrollback_history_.size());
-    int grid_row = row + (total_history - scroll_offset_);
-    
+    int grid_row = row + (total_history - view_offset);
+
     int r0 = select_start_row_;
     int c0 = select_start_col_;
     int r1 = select_end_row_;
     int c1 = select_end_col_;
-    
+
     if (r0 > r1 || (r0 == r1 && c0 > c1)) {
         std::swap(r0, r1);
         std::swap(c0, c1);
     }
-    
-    if (grid_row > r0 && grid_row < r1) return true;
-    if (grid_row == r0 && grid_row == r1) return (col >= c0 && col <= c1);
-    if (grid_row == r0 && grid_row < r1) return (col >= c0);
-    if (grid_row == r1 && grid_row > r0) return (col <= c1);
-    
-    return false;
+
+    if (grid_row < r0 || grid_row > r1) return;
+    // Interior rows are selected end to end; only the anchor rows are clipped
+    // to the column the drag started or finished at.
+    first = (grid_row == r0) ? c0 : 0;
+    last = (grid_row == r1) ? c1 : cols_ - 1;
+}
+
+bool TerminalGrid::is_cell_selected(int col, int row) const {
+    int first = 0, last = -1;
+    selected_span(row, scroll_offset_, first, last);
+    return col >= first && col <= last;
 }
 
 std::string TerminalGrid::get_selected_text() const {
@@ -1986,17 +2112,27 @@ void TerminalGrid::search_prev() {
     scroll_offset_ = target_scroll;
 }
 
-bool TerminalGrid::is_cell_search_matched(int col, int row) const {
-    if (!search_active_ || search_matches_.empty()) return false;
-    int total_history = static_cast<int>(scrollback_history_.size());
-    int abs_row = row + (total_history - scroll_offset_);
+void TerminalGrid::search_span(int row, int view_offset, size_t& begin, size_t& end) const {
+    begin = 0;
+    end = 0;
+    if (!search_active_ || search_matches_.empty()) return;
 
-    for (const auto& match : search_matches_) {
-        if (match.absolute_row == abs_row) {
-            if (col >= match.col && col < (match.col + match.len)) {
-                return true;
-            }
-        }
+    int total_history = static_cast<int>(scrollback_history_.size());
+    int abs_row = row + (total_history - view_offset);
+
+    auto by_row = [](const SearchResult& m, int r) { return m.absolute_row < r; };
+    auto lo = std::lower_bound(search_matches_.begin(), search_matches_.end(), abs_row, by_row);
+    auto hi = std::lower_bound(lo, search_matches_.end(), abs_row + 1, by_row);
+    begin = static_cast<size_t>(lo - search_matches_.begin());
+    end = static_cast<size_t>(hi - search_matches_.begin());
+}
+
+bool TerminalGrid::is_cell_search_matched(int col, int row) const {
+    size_t begin = 0, end = 0;
+    search_span(row, scroll_offset_, begin, end);
+    for (size_t i = begin; i < end; ++i) {
+        const SearchResult& m = search_matches_[i];
+        if (col >= m.col && col < m.col + m.len) return true;
     }
     return false;
 }

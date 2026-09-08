@@ -167,6 +167,11 @@ public:
     // Scrollback view control helpers
     void scroll_view(int delta);
     void reset_scroll();
+    // Ends the smooth-scroll glide immediately, putting the view where
+    // scroll_offset_ already says it is. Hit-testing maps pixels to rows
+    // through scroll_offset_, so anything that starts a click needs the rows
+    // on screen to agree with it rather than still be gliding towards it.
+    void snap_scroll_view() { display_scroll_offset_ = static_cast<float>(scroll_offset_); }
     int get_scroll_offset() const { return scroll_offset_; }
     Cell get_cell_at(int col, int row) const;
 
@@ -356,6 +361,35 @@ private:
     }
     Cell* row_data(int r) { return cells_.data() + phys_row(r) * cols_; }
     const Cell* row_data(int r) const { return cells_.data() + phys_row(r) * cols_; }
+
+    // A screen row's backing cells, resolved once so the render loop doesn't
+    // re-derive them per column. `cells` is null (and `len` 0) for a row that
+    // has nothing behind it -- above the oldest scrollback line, or below the
+    // last active row -- which the caller renders as blanks.
+    //
+    // `view_offset` is the scrollback distance to read at. It is a parameter
+    // rather than just scroll_offset_ because render() reads at the *animated*
+    // position, which lags the target while a scroll is still gliding.
+    struct RowView {
+        const Cell* cells = nullptr;
+        int len = 0;
+    };
+    RowView row_view(int row, int view_offset) const;
+
+    // Columns [first, last] of `row` covered by the selection, inclusive.
+    // Empty when last < first. Hoisting this out of the per-cell test lets the
+    // render loop ask once per row instead of once per cell.
+    void selected_span(int row, int view_offset, int& first, int& last) const;
+
+    // Half-open range of search_matches_ entries falling on `row`.
+    //
+    // set_search_query() fills the vector in ascending absolute-row order, so
+    // this is a binary search. It replaces a linear scan of *every* match for
+    // *every* cell on screen: searching a common substring in a deep
+    // scrollback finds tens of thousands of matches, and 10k cells x that many
+    // comparisons per frame measured at 271ms -- a 4fps window for as long as
+    // the search bar stayed open.
+    void search_span(int row, int view_offset, size_t& begin, size_t& end) const;
     // uint8_t rather than bool: std::vector<bool> is bit-packed, so every
     // read and write is a shift-and-mask, and scroll_up() shifts both of these
     // one position on every newline. A byte per row makes that shift a plain

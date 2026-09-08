@@ -1274,6 +1274,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
     if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
         if (event->button.windowID == SDL_GetWindowID(target_tw->window)) {
             target_tw->fpane().scroll_velocity = 0.0f;
+            // The row this click resolves to is computed from scroll_offset_,
+            // so land the view on it before doing so -- otherwise a click that
+            // interrupts a fling selects the row the scroll was heading for
+            // rather than the one under the pointer.
+            target_tw->fpane().terminal.snap_scroll_view();
             if (event->button.button == SDL_BUTTON_LEFT) {
                 float mx = event->button.x;
                 float my = event->button.y;

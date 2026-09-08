@@ -843,6 +843,99 @@ static void test_utf8() {
     CHECK(g.get_cell_at(2, 0).codepoint == 0x1F600);
 }
 
+// Selection and search highlighting are resolved per row by render(), which
+// keeps a per-cell entry point (is_cell_selected / is_cell_search_matched)
+// only so the row-at-a-time and cell-at-a-time answers can be compared. These
+// pin the cell-level contract those share.
+static void test_selection_spans() {
+    TerminalGrid g; g.resize(10, 4);
+    ANSIParser p;
+    feed(p, g, "abcdefghij\r\nklmnopqrst\r\nuvwxyzABCD");
+
+    // Single row, mid-row to mid-row: inclusive at both ends.
+    g.start_selection(2, 0);
+    g.update_selection(5, 0);
+    g.end_selection();
+    CHECK(!g.is_cell_selected(1, 0));
+    CHECK(g.is_cell_selected(2, 0));
+    CHECK(g.is_cell_selected(5, 0));
+    CHECK(!g.is_cell_selected(6, 0));
+    CHECK(!g.is_cell_selected(3, 1));
+
+    // Multi-row: the first row runs from the anchor to the end, interior rows
+    // are selected end to end, and the last row stops at the release column.
+    g.start_selection(7, 0);
+    g.update_selection(3, 2);
+    g.end_selection();
+    CHECK(!g.is_cell_selected(6, 0));
+    CHECK(g.is_cell_selected(7, 0));
+    CHECK(g.is_cell_selected(9, 0));
+    CHECK(g.is_cell_selected(0, 1));
+    CHECK(g.is_cell_selected(9, 1));
+    CHECK(g.is_cell_selected(0, 2));
+    CHECK(g.is_cell_selected(3, 2));
+    CHECK(!g.is_cell_selected(4, 2));
+
+    // Dragging upwards selects the same cells as dragging downwards.
+    g.start_selection(3, 2);
+    g.update_selection(7, 0);
+    g.end_selection();
+    CHECK(g.is_cell_selected(7, 0));
+    CHECK(!g.is_cell_selected(6, 0));
+    CHECK(g.is_cell_selected(3, 2));
+    CHECK(!g.is_cell_selected(4, 2));
+
+    g.clear_selection();
+    CHECK(!g.is_cell_selected(7, 0));
+}
+
+static void test_search_match_spans() {
+    TerminalGrid g; g.resize(20, 3);
+    ANSIParser p;
+    // Three rows scrolled into history plus three on screen, so matches are
+    // looked up across the history/active boundary rather than only in one.
+    feed(p, g, "needle one\r\nhaystack\r\nneedle two\r\nhaystack\r\nhaystack\r\nneedle three");
+
+    g.set_search_query("needle");
+    g.set_search_active(true);
+    CHECK(g.get_search_match_count() == 3);
+
+    // Bottom row of the live view holds the third match.
+    CHECK(g.is_cell_search_matched(0, 2));
+    CHECK(g.is_cell_search_matched(5, 2));
+    CHECK(!g.is_cell_search_matched(6, 2));
+    CHECK(!g.is_cell_search_matched(0, 1));
+
+    // Scroll far enough back that the first two matches are on screen.
+    g.scroll_view(3);
+    CHECK(g.is_cell_search_matched(0, 0));
+    CHECK(g.is_cell_search_matched(5, 0));
+    CHECK(!g.is_cell_search_matched(6, 0));
+    CHECK(!g.is_cell_search_matched(0, 1)); // "haystack"
+    CHECK(g.is_cell_search_matched(0, 2));
+
+    g.set_search_active(false);
+    CHECK(!g.is_cell_search_matched(0, 0));
+}
+
+// The row above the top of the visible view: render() reads it to fill the
+// sliver a part-row smooth-scroll shift uncovers. Scrolled all the way back
+// there is no such row, and asking for it used to index the scrollback deque
+// one before its front.
+static void test_read_above_top_of_history() {
+    TerminalGrid g; g.resize(10, 3);
+    ANSIParser p;
+    feed(p, g, "one\r\ntwo\r\nthree\r\nfour\r\nfive");
+
+    g.scroll_view(1000); // clamps to the full history
+    CHECK(g.get_scroll_offset() == static_cast<int>(g.get_scrollback_size()));
+    CHECK(row_text(g, 0) == "one");
+    // Blank, not a crash and not the newest line wrapped around.
+    CHECK(g.get_cell_at(0, -1).codepoint == 32);
+    CHECK(!g.is_cell_selected(0, -1));
+    CHECK(!g.is_cell_search_matched(0, -1));
+}
+
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
@@ -883,6 +976,9 @@ int main() {
     test_osc_8_hyperlinks();
     test_osc_133_prompt_marks();
     test_utf8();
+    test_selection_spans();
+    test_search_match_spans();
+    test_read_above_top_of_history();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;
