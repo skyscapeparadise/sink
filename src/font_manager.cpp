@@ -183,8 +183,8 @@ bool FontManager::load_font(SDL_Renderer* renderer, const std::string& font_path
         TTF_SetFontStyle(ligature_font_, TTF_STYLE_BOLD);
     }
 
-    // Create dynamic atlas texture (1024x1024 RGBA32)
-    dynamic_atlas_texture_ = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, 1024, 1024);
+    // Create dynamic atlas texture (see kDynamicAtlasSize, RGBA32)
+    dynamic_atlas_texture_ = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, kDynamicAtlasSize, kDynamicAtlasSize);
     if (!dynamic_atlas_texture_) {
         std::cerr << "Failed to create dynamic atlas texture: " << SDL_GetError() << std::endl;
         return false;
@@ -193,8 +193,8 @@ bool FontManager::load_font(SDL_Renderer* renderer, const std::string& font_path
     SDL_SetTextureScaleMode(dynamic_atlas_texture_, SDL_SCALEMODE_LINEAR);
 
     // Initialize dynamic atlas to transparent black
-    std::vector<uint32_t> empty_pixels(1024 * 1024, 0);
-    SDL_UpdateTexture(dynamic_atlas_texture_, nullptr, empty_pixels.data(), 1024 * sizeof(uint32_t));
+    std::vector<uint32_t> empty_pixels(static_cast<size_t>(kDynamicAtlasSize) * kDynamicAtlasSize, 0);
+    SDL_UpdateTexture(dynamic_atlas_texture_, nullptr, empty_pixels.data(), kDynamicAtlasSize * sizeof(uint32_t));
 
     // Get monospace cell dimensions
     cell_height_ = static_cast<float>(TTF_GetFontHeight(font_));
@@ -439,26 +439,19 @@ const GlyphInfo* FontManager::get_glyph(SDL_Renderer* renderer, char32_t codepoi
     int h = glyph_surf->h;
 
     // Check if we need to wrap to next row
-    if (dynamic_x_ + w + 4 > 1024) {
+    if (dynamic_x_ + w + 4 > kDynamicAtlasSize) {
         dynamic_x_ = 0;
         dynamic_y_ += dynamic_row_h_ + 4;
         dynamic_row_h_ = 0;
     }
 
     // Check if atlas is full
-    if (dynamic_y_ + h + 4 > 1024) {
-        // Reset packer coordinates & clear cache. All dynamic caches (every
-        // style, plus ligatures) share this one atlas texture/packer, so
-        // they all go stale together.
-        dynamic_x_ = 0;
-        dynamic_y_ = 0;
-        dynamic_row_h_ = 0;
-        for (auto& cache : dynamic_glyph_cache_) cache.clear();
-        ligature_glyph_cache_.clear();
-
-        // Clear dynamic texture
-        std::vector<uint32_t> empty_pixels(1024 * 1024, 0);
-        SDL_UpdateTexture(dynamic_atlas_texture_, nullptr, empty_pixels.data(), 1024 * sizeof(uint32_t));
+    if (dynamic_y_ + h + 4 > kDynamicAtlasSize && !reset_dynamic_atlas()) {
+        // Out of atlas for this frame. Leave the cell blank for now rather
+        // than thrashing; the glyph is rasterized on a later frame once the
+        // reset budget is back.
+        SDL_DestroySurface(glyph_surf);
+        return nullptr;
     }
 
     // Copy surface pixels to dynamic texture. TTF_RenderGlyph_Blended does not
@@ -507,6 +500,30 @@ const GlyphInfo* FontManager::get_glyph(SDL_Renderer* renderer, char32_t codepoi
     return &dynamic_glyph_cache_[style][codepoint];
 }
 
+// Rewinds the dynamic packer to the top-left and drops every glyph cached in
+// it. Returns false when this frame has already spent its one reset, in which
+// case the caller must not pack: resetting twice in a frame means the glyphs
+// the frame needs don't all fit at once, and continuing would re-rasterize the
+// whole screen on every frame from then on -- a screenful of distinct CJK
+// measured at 152ms/frame, indefinitely, because nothing stayed cached long
+// enough to be reused.
+bool FontManager::reset_dynamic_atlas() const {
+    if (dynamic_resets_this_frame_ > 0) return false;
+    dynamic_resets_this_frame_++;
+
+    // All dynamic caches (every style, plus ligatures) share this one atlas
+    // texture and packer, so they all go stale together.
+    dynamic_x_ = 0;
+    dynamic_y_ = 0;
+    dynamic_row_h_ = 0;
+    for (auto& cache : dynamic_glyph_cache_) cache.clear();
+    ligature_glyph_cache_.clear();
+
+    std::vector<uint32_t> empty_pixels(static_cast<size_t>(kDynamicAtlasSize) * kDynamicAtlasSize, 0);
+    SDL_UpdateTexture(dynamic_atlas_texture_, nullptr, empty_pixels.data(), kDynamicAtlasSize * sizeof(uint32_t));
+    return true;
+}
+
 const GlyphInfo* FontManager::get_ligature_glyph(SDL_Renderer* renderer, char32_t codepoint) const {
     auto it = ligature_glyph_cache_.find(codepoint);
     if (it != ligature_glyph_cache_.end()) {
@@ -530,21 +547,15 @@ const GlyphInfo* FontManager::get_ligature_glyph(SDL_Renderer* renderer, char32_
     int w = glyph_surf->w;
     int h = glyph_surf->h;
 
-    if (dynamic_x_ + w + 4 > 1024) {
+    if (dynamic_x_ + w + 4 > kDynamicAtlasSize) {
         dynamic_x_ = 0;
         dynamic_y_ += dynamic_row_h_ + 4;
         dynamic_row_h_ = 0;
     }
 
-    if (dynamic_y_ + h + 4 > 1024) {
-        dynamic_x_ = 0;
-        dynamic_y_ = 0;
-        dynamic_row_h_ = 0;
-        for (auto& cache : dynamic_glyph_cache_) cache.clear();
-        ligature_glyph_cache_.clear();
-
-        std::vector<uint32_t> empty_pixels(1024 * 1024, 0);
-        SDL_UpdateTexture(dynamic_atlas_texture_, nullptr, empty_pixels.data(), 1024 * sizeof(uint32_t));
+    if (dynamic_y_ + h + 4 > kDynamicAtlasSize && !reset_dynamic_atlas()) {
+        SDL_DestroySurface(glyph_surf);
+        return nullptr;
     }
 
     SDL_Rect dst_rect = { dynamic_x_, dynamic_y_, w, h };

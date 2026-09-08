@@ -41,6 +41,10 @@ public:
     // ligatures look soft/blurry compared to normal glyphs.
     const GlyphInfo* get_ligature_glyph(SDL_Renderer* renderer, char32_t codepoint) const;
 
+    // Opens a frame for the glyph atlas. Only the reset budget is per-frame;
+    // cached glyphs are untouched and survive across frames as before.
+    void begin_frame() const { dynamic_resets_this_frame_ = 0; }
+
     float get_cell_width() const { return cell_width_; }
     float get_cell_height() const { return cell_height_; }
 
@@ -97,6 +101,15 @@ private:
     GlyphInfo ascii_cache_[128];
     bool has_ascii_cache_[128] = {false};
 
+    // Dynamic atlas edge, in pixels. Everything non-ASCII and every styled
+    // glyph packs in here, so the size that matters is how many *distinct*
+    // glyphs one screen can want at once: exceed it and the packer resets,
+    // dropping every cached glyph, and the screen re-rasterizes from scratch
+    // on every frame from then on. At 1024 a 200x50 grid of CJK blew past it
+    // and rendered at 7fps indefinitely; 2048 holds roughly four times as many
+    // and covers a full screen of dense text, for 16MB of texture memory.
+    static constexpr int kDynamicAtlasSize = 2048;
+
     static int style_index(bool bold, bool italic) { return (bold ? 1 : 0) | (italic ? 2 : 0); }
     TTF_Font* font_for_style(int idx) const {
         switch (idx) {
@@ -115,6 +128,17 @@ private:
     mutable int dynamic_x_ = 0;
     mutable int dynamic_y_ = 0;
     mutable int dynamic_row_h_ = 0;
+    // Resets performed since the last begin_frame(). A reset invalidates every
+    // glyph cached so far, so a frame that needs more glyphs than the atlas
+    // holds would otherwise reset repeatedly and re-rasterize the whole screen
+    // every frame forever. One reset per frame is the cap; misses past it are
+    // left undrawn for that frame instead.
+    mutable int dynamic_resets_this_frame_ = 0;
+
+    // Rewinds the packer and drops every glyph cached in the atlas. Returns
+    // false if this frame has already used its one reset, in which case the
+    // caller must not pack.
+    bool reset_dynamic_atlas() const;
 
     bool build_atlas(SDL_Renderer* renderer);
 };
