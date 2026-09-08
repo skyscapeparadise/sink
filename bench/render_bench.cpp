@@ -34,6 +34,12 @@ static std::vector<char> read_file(const std::string& path) {
 struct Scene {
     const char* label;
     const char* workload;   // nullptr = leave the grid blank
+    // Lines to scroll back before timing. The live view reads a contiguous
+    // block of cells_; scrollback reads a deque of separately-allocated rows,
+    // so the two are worth measuring apart.
+    int scroll_back = 0;
+    // Query to leave active in the search box while rendering.
+    const char* search = nullptr;
 };
 
 int main(int argc, char** argv) {
@@ -67,6 +73,9 @@ int main(int argc, char** argv) {
         { "plain text",              "plain_text.bin" },
         { "SGR-heavy (colorized)",   "colored_text.bin" },
         { "UTF-8 heavy",             "unicode_heavy.bin" },
+        { "distinct CJK screenful",  "distinct_cjk.bin" },
+        { "scrollback (deep)",       "plain_text.bin", 4000 },
+        { "scrollback + search",     "plain_text.bin", 4000, "e" },
     };
 
     std::printf("\n%-26s %10s %10s %10s %12s\n",
@@ -83,8 +92,16 @@ int main(int argc, char** argv) {
             // Enough to fill the visible grid several times over, so what's on
             // screen is representative rather than a mostly-blank buffer.
             ANSIParser p;
+            // A scrollback scene needs enough output behind it to actually
+            // have scrolled that far back, so it feeds the workload repeatedly.
             size_t take = std::min<size_t>(data.size(), 400000);
-            p.parse(grid, data.data(), take);
+            int passes = s.scroll_back > 0 ? 40 : 1;
+            for (int i = 0; i < passes; ++i) p.parse(grid, data.data(), take);
+        }
+        if (s.scroll_back > 0) grid.scroll_view(s.scroll_back);
+        if (s.search) {
+            grid.set_search_query(s.search);
+            grid.set_search_active(true);
         }
 
         // Warm the glyph atlas and let the driver settle before timing.

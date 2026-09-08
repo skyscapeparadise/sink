@@ -102,9 +102,29 @@ def gen_unicode_heavy():
         i += 1
 
 
+# ---- Workload 5: every cell a different glyph ---------------------------
+# Not realistic text -- real CJK reuses characters heavily -- but it is the
+# worst case for the glyph atlas, which caches by codepoint. It exists so
+# render_bench can show what happens when a single screen wants more distinct
+# glyphs than the atlas holds: the packer resets, every cached glyph is
+# dropped, and the whole screen re-rasterizes on the next frame too.
+def gen_distinct_cjk():
+    # CJK Unified Ideographs, walked in order and wrapped rather than sampled,
+    # so the file is deterministic and every screenful is distinct.
+    lo, hi = 0x4E00, 0x9FA0
+    cp = lo
+    while True:
+        line = []
+        for _ in range(100):  # 100 wide chars = 200 columns
+            line.append(chr(cp))
+            cp = lo if cp + 1 > hi else cp + 1
+        yield "".join(line) + "\r\n"
+
+
 if __name__ == "__main__":
     os.makedirs(OUT_DIR, exist_ok=True)
     write_workload("plain_text.bin", gen_plain_text())
     write_workload("colored_text.bin", gen_colored_text())
     write_workload("cursor_heavy.bin", gen_cursor_heavy())
     write_workload("unicode_heavy.bin", gen_unicode_heavy())
+    write_workload("distinct_cjk.bin", gen_distinct_cjk())
