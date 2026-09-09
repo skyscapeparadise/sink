@@ -2228,7 +2228,8 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         // running sinkdemo is streaming into; the other panes stay live)
         for (Pane* pane_ptr : all_panes(tw)) {
         Pane& pane = *pane_ptr;
-        std::vector<char> output = pane.pty.read_pending();
+        std::vector<char>& output = pane.pty_output;
+        pane.pty.read_pending(output);
         bool demo_owns_pane = SinkDemo::is_demo_running(tw) && pane_ptr == &tw->demo_target();
         if (!output.empty() && !demo_owns_pane) {
             std::lock_guard<std::mutex> lock(pane.grid_mutex);

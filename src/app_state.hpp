@@ -31,6 +31,11 @@ struct Pane {
     ANSIParser parser;
     std::mutex grid_mutex;
 
+    // Reused every frame to receive PTYBridge::read_pending()'s bytes. Held
+    // across frames rather than declared at the call site so its storage and
+    // the reader thread's trade places instead of being reallocated.
+    std::vector<char> pty_output;
+
     // Typewriter-animation pacing
     std::vector<char> animation_buffer;
     Uint64 last_output_chunk_time = 0;

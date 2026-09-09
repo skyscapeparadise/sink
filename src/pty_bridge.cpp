@@ -160,34 +160,48 @@ bool PTYBridge::write_to_pty(const char* data, size_t size) {
     return true;
 }
 
-std::vector<char> PTYBridge::read_pending() {
-    std::lock_guard<std::mutex> lock(queue_mutex_);
-    std::vector<char> data;
-    data.reserve(read_queue_.size());
-    while (!read_queue_.empty()) {
-        data.push_back(read_queue_.front());
-        read_queue_.pop();
-    }
-    return data;
+void PTYBridge::read_pending(std::vector<char>& out) {
+    out.clear();
+    std::lock_guard<std::mutex> lock(buffer_mutex_);
+    // Swap rather than copy: `out` comes back holding the accumulated bytes,
+    // and read_buffer_ takes over out's now-empty storage for the next frame.
+    // Both capacities survive, so at steady state neither side allocates.
+    out.swap(read_buffer_);
 }
 
 void PTYBridge::read_loop() {
-    char buffer[1024];
+    // 64K rather than 1K. A program dumping output at full tilt otherwise
+    // costs one poll() and one read() per kilobyte, which is the bulk of what
+    // this thread does once the byte-at-a-time queue is gone.
+    std::vector<char> buffer(64 * 1024);
     struct pollfd pfd;
     pfd.fd = master_fd_;
     pfd.events = POLLIN;
 
     while (running_) {
+        // Backpressure. If the main thread has fallen behind, leave the bytes
+        // in the pty instead of buffering them here without limit: the
+        // kernel's buffer fills, the child blocks in write(), and it resumes
+        // as soon as read_pending() drains. Rechecks often enough that
+        // shutdown() still joins promptly.
+        size_t pending = 0;
+        {
+            std::lock_guard<std::mutex> lock(buffer_mutex_);
+            pending = read_buffer_.size();
+        }
+        if (pending >= kMaxPendingBytes) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            continue;
+        }
+
         // Poll the master file descriptor with a 100ms timeout
         int ret = poll(&pfd, 1, 100);
         if (ret > 0) {
             if (pfd.revents & (POLLIN | POLLHUP | POLLERR)) {
-                ssize_t bytes_read = ::read(master_fd_, buffer, sizeof(buffer));
+                ssize_t bytes_read = ::read(master_fd_, buffer.data(), buffer.size());
                 if (bytes_read > 0) {
-                    std::lock_guard<std::mutex> lock(queue_mutex_);
-                    for (ssize_t i = 0; i < bytes_read; ++i) {
-                        read_queue_.push(buffer[i]);
-                    }
+                    std::lock_guard<std::mutex> lock(buffer_mutex_);
+                    read_buffer_.insert(read_buffer_.end(), buffer.data(), buffer.data() + bytes_read);
                 } else {
                     // EOF or descriptor closed
                     running_ = false;

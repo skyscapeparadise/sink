@@ -4,9 +4,16 @@ Measures how fast sink's ANSI parser + grid (`ANSIParser` + `TerminalGrid`)
 processes representative terminal output, and compares it against `vte` --
 the actual VT parser crate Alacritty is built on.
 
-There are two benchmarks here: `sink_bench` (parser throughput, compared
-against `vte`) and `render_bench` (frame time, sink only -- there is nothing
-to compare it against, since `vte` is a parser and draws nothing).
+There are three benchmarks here: `sink_bench` (parser throughput, compared
+against `vte`), `render_bench` (frame time, sink only -- there is nothing to
+compare it against, since `vte` is a parser and draws nothing), and
+`pty_bench` (the whole pipeline, through a real pty and a real shell).
+
+They divide the pipeline between them. `sink_bench` starts from bytes already
+in memory and `render_bench` starts from a grid already populated, so for a
+long time the step between them -- the reader thread pulling bytes off the pty
+and handing them to the main thread -- was measured by nothing at all. That
+turned out to matter; see `pty_bench` below.
 
 ## What sink_bench measures (and what it doesn't)
 
@@ -226,3 +233,37 @@ Within render(), the biggest single cost is the ligature scan (~44%), which
 calls `get_cell_at()` a second time per cell to re-fetch the previous cell
 rather than carrying it over from the previous iteration. Worth knowing, but
 it is 44% of something that is already 8% of a frame.
+
+## pty_bench: the whole pipeline
+
+`sink_bench` begins after the pty and `render_bench` begins after the parser,
+so neither can see the hand-off between the reader thread and the main thread.
+`pty_bench` spawns the user's login shell through `PTYBridge` exactly as the
+app does, has it `cat` a workload file, and drains it the way
+`SDL_AppIterate` does -- `read_pending()` once per simulated frame, then parse
+whatever it returned.
+
+```sh
+cmake --build build --target pty_bench
+./build/pty_bench bench/workloads/plain_text.bin
+```
+
+It depends on the user's shell, their rc files and the machine, so it is a
+before/after measure of *this program*, not a cross-terminal comparison --
+Alacritty's `vtebench` (see `run_vtebench.sh`) is the tool for that. Run to
+run it varies by 10-30%, considerably noisier than the other two; take several
+samples.
+
+What it found on its first run (Apple Silicon, 2026-09-08, 8MB plain text):
+
+| hand-off | end to end |
+|---|---|
+| `std::queue<char>`, byte at a time | 71-82 MB/s |
+| `std::vector`, appended in bulk and swapped | 89-120 MB/s |
+
+The hand-off in isolation is far more lopsided than that -- 208 MB/s against
+30 GB/s, since a buffer swap is O(1) and pushing eight million chars is not.
+End to end most of that headroom is spent elsewhere, on the pty itself and on
+the parser, which is why the whole-pipeline number is the honest one to quote.
+It is also why this benchmark had to exist to justify the change: the isolated
+figure makes the fix look ~145x better than it is.
