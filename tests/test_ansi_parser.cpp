@@ -1048,6 +1048,43 @@ static void test_dsr_and_da() {
     CHECK(g.take_pending_reply().size() <= 4096);
 }
 
+// ICH is the mirror of DCH, and the pair is how readline and editors edit
+// mid-line without repainting the tail.
+static void test_ich() {
+    TerminalGrid g; g.resize(10, 2);
+    ANSIParser p;
+    feed(p, g, "abcdef");
+
+    // Two blanks opened at column 2; the tail shifts right, cursor stays.
+    feed(p, g, "\x1b[1;3H\x1b[2@");
+    CHECK(row_text(g, 0) == "ab  cdef");
+    CHECK(g.get_cursor_col() == 2);
+
+    // Omitted parameter means 1, and an explicit 0 means 1 too.
+    feed(p, g, "\x1b[1;1H\x1b[@");
+    CHECK(row_text(g, 0) == " ab  cdef");
+    feed(p, g, "\x1b[1;1H\x1b[0@");
+    CHECK(row_text(g, 0) == "  ab  cdef");
+
+    // Characters pushed past the right edge are lost, not wrapped.
+    TerminalGrid g2; g2.resize(6, 2);
+    ANSIParser p2;
+    feed(p2, g2, "abcdef\x1b[1;1H\x1b[2@");
+    CHECK(row_text(g2, 0) == "  abcd");
+    CHECK(row_text(g2, 1) == "");
+
+    // A count past the end of the row blanks the rest of it rather than
+    // running off the end.
+    feed(p2, g2, "\x1b[1;3H\x1b[99@");
+    CHECK(row_text(g2, 0) == "");
+
+    // ICH and DCH undo each other.
+    TerminalGrid g3; g3.resize(10, 1);
+    ANSIParser p3;
+    feed(p3, g3, "hello\x1b[1;3H\x1b[3@\x1b[3P");
+    CHECK(row_text(g3, 0) == "hello");
+}
+
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
@@ -1093,6 +1130,7 @@ int main() {
     test_read_above_top_of_history();
     test_search_matching();
     test_dsr_and_da();
+    test_ich();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;

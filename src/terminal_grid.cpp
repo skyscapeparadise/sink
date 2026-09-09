@@ -899,6 +899,36 @@ void TerminalGrid::set_cursor_row(int row) {
     wrap_pending_ = false;
 }
 
+void TerminalGrid::insert_character(int count) {
+    // ICH (Insert Character, CSI Ps @): open `count` blank cells at the
+    // cursor, shifting the rest of the line right. Whatever falls off the
+    // right edge is gone -- ICH does not wrap -- and the cursor stays put.
+    //
+    // The mirror of delete_character (DCH). Readline and editors use the pair
+    // to insert and delete mid-line without repainting the tail, so with ICH
+    // missing the tail was overwritten instead of shifted: the program's model
+    // of the screen and the screen itself silently diverged, which shows up as
+    // characters being eaten while typing into the middle of a long line.
+    if (cursor_row_ < 0 || cursor_row_ >= rows_) return;
+    if (cursor_col_ < 0 || cursor_col_ >= cols_) return;
+    if (count <= 0) return;
+    wrap_pending_ = false;
+
+    Cell* row_cells = row_data(cursor_row_);
+    int remaining = cols_ - cursor_col_;
+    int to_insert = std::min(count, remaining);
+
+    // Rightward, so overlapping source and destination don't clobber.
+    for (int i = cols_ - 1; i >= cursor_col_ + to_insert; --i) {
+        row_cells[i] = row_cells[i - to_insert];
+    }
+
+    Cell empty_cell = { 32, current_fg_packed_, current_bg_packed_ };
+    for (int i = cursor_col_; i < cursor_col_ + to_insert; ++i) {
+        row_cells[i] = empty_cell;
+    }
+}
+
 void TerminalGrid::delete_character(int count) {
     if (cursor_row_ < 0 || cursor_row_ >= rows_) return;
     if (cursor_col_ < 0 || cursor_col_ >= cols_) return;

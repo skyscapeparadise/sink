@@ -136,6 +136,7 @@ public:
     // output scrolls inside a few rows and the screen looks frozen.
     void full_reset();
     void clear_line(int row, int mode); // 0 = cursor to end, 1 = start to cursor, 2 = entire line
+    void insert_character(int count); // ICH: open count blank cells at the cursor
     void delete_character(int count);
     void erase_characters(int count); // ECH: blank count cells at the cursor in place, no shift
     

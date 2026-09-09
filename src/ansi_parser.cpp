@@ -769,6 +769,10 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
             }
             break;
         }
+        case '@': { // ICH -- Insert Character
+            grid.insert_character(get_count_param(0, 1));
+            break;
+        }
         case 'n': { // DSR -- Device Status Report
             // These are the sequences a terminal is obliged to answer. A
             // program that asks blocks until the reply arrives, so ignoring
