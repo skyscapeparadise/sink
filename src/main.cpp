@@ -210,6 +210,34 @@ static bool encode_kitty_key(SDL_Keycode sym, SDL_Keymod mod, bool is_repeat,
     return true;
 }
 
+// Application keypad mode (DECKPAM). The final byte each keypad key sends as
+// an SS3 sequence, which is how a full-screen app tells a keypad 1 from the 1
+// on the number row. Numeric mode sends the plain character instead, which is
+// what SDL_EVENT_TEXT_INPUT already delivers.
+static char app_keypad_final(SDL_Keycode sym) {
+    switch (sym) {
+        case SDLK_KP_0: return 'p';
+        case SDLK_KP_1: return 'q';
+        case SDLK_KP_2: return 'r';
+        case SDLK_KP_3: return 's';
+        case SDLK_KP_4: return 't';
+        case SDLK_KP_5: return 'u';
+        case SDLK_KP_6: return 'v';
+        case SDLK_KP_7: return 'w';
+        case SDLK_KP_8: return 'x';
+        case SDLK_KP_9: return 'y';
+        case SDLK_KP_PERIOD:   return 'n';
+        case SDLK_KP_ENTER:    return 'M';
+        case SDLK_KP_PLUS:     return 'k';
+        case SDLK_KP_MINUS:    return 'm';
+        case SDLK_KP_MULTIPLY: return 'j';
+        case SDLK_KP_DIVIDE:   return 'o';
+        case SDLK_KP_COMMA:    return 'l';
+        case SDLK_KP_EQUALS:   return 'X';
+        default: return 0;
+    }
+}
+
 extern "C" void trigger_menu_render_tick() {
     if (g_app_state) {
         SDL_AppIterate(g_app_state);
@@ -1625,6 +1653,12 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             }
         }
     } else if (event->type == SDL_EVENT_TEXT_INPUT) {
+        if (state->suppress_next_text_input) {
+            // The key that produced this was already sent as an SS3 keypad
+            // sequence; see app_keypad_final().
+            state->suppress_next_text_input = false;
+            return SDL_APP_CONTINUE;
+        }
         if (state->settings_ui.is_open() && SDL_GetKeyboardFocus() == state->settings_ui.get_window()) {
             return SDL_APP_CONTINUE;
         }
@@ -1787,6 +1821,21 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             tw->fpane().terminal.reset_scroll();
             tw->fpane().scroll_velocity = 0.0f;
             tw->fpane().scroll_accumulator = 0.0f;
+
+            // Application keypad. Only reached when an app has actually asked
+            // for it, so ordinary typing never comes near this.
+            if (tw->fpane().terminal.is_app_keypad()) {
+                if (char final_byte = app_keypad_final(sym)) {
+                    char seq[3] = { '\x1b', 'O', final_byte };
+                    tw->fpane().pty.write_to_pty(seq, 3);
+                    // SDL follows a keypad press with a text-input event
+                    // carrying the digit. Both would reach the shell, so the
+                    // text half is dropped -- scoped to the very next event,
+                    // and only ever armed on a keypad key in this mode.
+                    state->suppress_next_text_input = true;
+                    continue;
+                }
+            }
 
             // Kitty keyboard protocol, if this pane's app negotiated it.
             // `continue` rather than `return`, so broadcasting still reaches

@@ -341,6 +341,12 @@ public:
     bool is_mouse_sgr() const { return mouse_sgr_; }
 
     // DECCKM (?1): arrows send ESC O A style when the app asked for it
+    // DECKPAM/DECKPNM (ESC = / ESC >). With it set, the numeric keypad sends
+    // SS3 sequences instead of digits, which is how a full-screen app tells a
+    // keypad 1 from the 1 on the number row.
+    void set_app_keypad(bool on) { app_keypad_ = on; }
+    bool is_app_keypad() const { return app_keypad_; }
+
     void set_app_cursor_keys(bool app) { app_cursor_keys_ = app; }
     bool is_app_cursor_keys() const { return app_cursor_keys_; }
 
@@ -686,6 +692,7 @@ private:
     int mouse_mode_ = 0;
     bool mouse_sgr_ = false;
     bool app_cursor_keys_ = false;
+    bool app_keypad_ = false;
     bool alternate_scroll_ = true;
     int prompt_boundary_col_ = -1;
 

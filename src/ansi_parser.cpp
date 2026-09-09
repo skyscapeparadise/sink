@@ -625,6 +625,12 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                 grid.index();
                 grid.set_cursor_col(0);
                 state_ = STATE_NORMAL;
+            } else if (c == '=') { // DECKPAM: application keypad
+                grid.set_app_keypad(true);
+                state_ = STATE_NORMAL;
+            } else if (c == '>') { // DECKPNM: numeric keypad
+                grid.set_app_keypad(false);
+                state_ = STATE_NORMAL;
             } else if (c == 'H') { // HTS: set a tab stop at the cursor column
                 grid.set_tab_stop();
                 state_ = STATE_NORMAL;

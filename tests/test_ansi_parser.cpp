@@ -2070,6 +2070,34 @@ static void test_osc_cwd() {
     CHECK(g.get_working_directory() == before);
 }
 
+// DECKPAM/DECKPNM. The key encoding lives in main.cpp against SDL events; what
+// is testable here is the mode the parser tracks, which is what decides it.
+static void test_app_keypad() {
+    TerminalGrid g; g.resize(20, 4);
+    ANSIParser p;
+    CHECK(!g.is_app_keypad());
+
+    feed(p, g, "\x1b=");
+    CHECK(g.is_app_keypad());
+    feed(p, g, "\x1b>");
+    CHECK(!g.is_app_keypad());
+
+    // Not swallowed as part of anything else: text either side still lands.
+    feed(p, g, "a\x1b=b");
+    CHECK(g.is_app_keypad());
+    CHECK(row_text(g, 0) == "ab");
+
+    // RIS clears it, as it does the other modes.
+    feed(p, g, "\x1b" "c");
+    CHECK(!g.is_app_keypad());
+
+    // DECSTR does too -- an app that exits without restoring the numeric
+    // keypad would otherwise leave the shell's keypad sending SS3.
+    feed(p, g, "\x1b=");
+    feed(p, g, "\x1b[!p");
+    CHECK(!g.is_app_keypad());
+}
+
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
@@ -2131,6 +2159,7 @@ int main() {
     test_osc_colors();
     test_osc_palette();
     test_osc_cwd();
+    test_app_keypad();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;

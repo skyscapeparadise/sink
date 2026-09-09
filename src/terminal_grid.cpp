@@ -391,6 +391,11 @@ void TerminalGrid::soft_reset() {
     // what programs are actually written against.
     cursor_visible_ = true;
     origin_mode_ = false;
+    // The VT510 list for DECSTR does not mention the keypad, but leaving it in
+    // application mode is exactly the kind of stranded state a soft reset is
+    // sent to clear -- an app that exits without restoring it would otherwise
+    // leave the shell's keypad emitting SS3 with no way back short of RIS.
+    app_keypad_ = false;
     scroll_top_ = 0;
     scroll_bottom_ = rows_ - 1;
     cursor_shape_ = CursorShape::Block;
@@ -1102,6 +1107,7 @@ void TerminalGrid::full_reset() {
     scroll_top_ = 0;
     scroll_bottom_ = rows_ - 1;
     origin_mode_ = false;
+    app_keypad_ = false;
     cursor_shape_ = CursorShape::Block;
     reset_tab_stops();
     kbd_stack_.assign(1, 0);

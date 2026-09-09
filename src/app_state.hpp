@@ -198,6 +198,10 @@ struct AppState {
     float display_scale = 1.0f;
     Uint64 last_tick = 0;
     bool input_broadcasting = false;
+    // Set when a keypad press was already answered with an SS3 sequence, so
+    // the text-input event SDL sends for the same key is dropped rather than
+    // reaching the shell twice. Armed and cleared within one key press.
+    bool suppress_next_text_input = false;
     float exposure = 0.7f;
     float hue_shift = 0.0f;
     bool animated_typing = true;
