@@ -1,4 +1,6 @@
 #include "ansi_parser.hpp"
+#include <cstdlib>
+#include <unordered_map>
 
 #include <array>
 #include <iostream>
@@ -256,6 +258,243 @@ void ANSIParser::note_trigger_char(TerminalGrid& grid, char32_t c) {
     note_trigger_run(grid, &ch, 1);
 }
 
+// Standard base64, defined further down next to the OSC 52 clipboard decode
+// that was its first caller.
+static std::string base64_decode(const std::string& in);
+
+// Places a kitty-protocol image at the cursor. The protocol lets the sender
+// crop the source (x/y/w/h) and choose how many cells to fill (c/r); left to
+// itself it uses the whole image at its natural size.
+static void place_kitty_image(TerminalGrid& grid, uint64_t image_id, uint64_t placement_id,
+                              int src_x, int src_y, int src_w, int src_h,
+                              int want_cols, int want_rows, int z) {
+    const TerminalImage* img = grid.images().find(image_id);
+    if (!img) return;
+
+    if (src_w <= 0) src_w = img->width - src_x;
+    if (src_h <= 0) src_h = img->height - src_y;
+    src_x = std::max(0, std::min(src_x, img->width));
+    src_y = std::max(0, std::min(src_y, img->height));
+    src_w = std::max(0, std::min(src_w, img->width - src_x));
+    src_h = std::max(0, std::min(src_h, img->height - src_y));
+    if (src_w == 0 || src_h == 0) return;
+
+    int cell_w = grid.effective_cell_px_w();
+    int cell_h = grid.effective_cell_px_h();
+    int cols = want_cols > 0 ? want_cols : (src_w + cell_w - 1) / cell_w;
+    int rows = want_rows > 0 ? want_rows : (src_h + cell_h - 1) / cell_h;
+    cols = std::min(cols, grid.get_cols() - grid.get_cursor_col());
+    if (cols <= 0 || rows <= 0) return;
+
+    ImagePlacement placement;
+    placement.image_id = image_id;
+    placement.placement_id = placement_id;
+    placement.line_id = grid.line_id_for_row(grid.get_cursor_row());
+    placement.col = grid.get_cursor_col();
+    placement.cols = cols;
+    placement.rows = rows;
+    placement.src_x = src_x;
+    placement.src_y = src_y;
+    placement.src_w = src_w;
+    placement.src_h = src_h;
+    placement.z = z;
+    grid.images().place(placement);
+
+    // Unlike sixel, the kitty protocol leaves the cursor where it was: an
+    // application placing an image is positioning it itself and does not want
+    // the terminal moving the cursor out from under it.
+}
+
+// Kitty graphics protocol: ESC _ G <key=value,...> ; <base64 payload> ESC \
+//
+// Deliberately narrower than the full protocol, and the omissions are choices
+// rather than gaps:
+//
+// - Only t=d, the payload arriving inline. t=f and t=t have the terminal open
+//   a path the sender names, and t=s attaches shared memory it names. That is
+//   a filesystem read performed on behalf of whatever can write to the tty,
+//   which is any command output and any remote host on the other end of an
+//   ssh session. Clients that ask get an EBADF back and fall back to sending
+//   the bytes inline, which is slower and entirely safe.
+// - No o=z compression, no animation frames, no unicode placeholders. Clients
+//   are told so and pick something else.
+void ANSIParser::dispatch_apc(TerminalGrid& grid) {
+    if (apc_buffer_.empty() || apc_buffer_[0] != 'G') return;
+
+    std::string body = apc_buffer_.substr(1);
+    size_t semi = body.find(';');
+    std::string controls = (semi == std::string::npos) ? body : body.substr(0, semi);
+    std::string payload = (semi == std::string::npos) ? std::string() : body.substr(semi + 1);
+
+    auto parse_controls = [](const std::string& text) {
+        std::unordered_map<char, std::string> out;
+        size_t i = 0;
+        while (i < text.size()) {
+            size_t comma = text.find(',', i);
+            if (comma == std::string::npos) comma = text.size();
+            size_t eq = text.find('=', i);
+            if (eq != std::string::npos && eq < comma && eq > i) {
+                out[text[i]] = text.substr(eq + 1, comma - eq - 1);
+            }
+            i = comma + 1;
+        }
+        return out;
+    };
+
+    std::unordered_map<char, std::string> keys = parse_controls(controls);
+    auto num = [&](char k, long fallback) -> long {
+        auto it = keys.find(k);
+        if (it == keys.end() || it->second.empty()) return fallback;
+        char* end = nullptr;
+        long v = std::strtol(it->second.c_str(), &end, 10);
+        return end == it->second.c_str() ? fallback : v;
+    };
+    auto letter = [&](char k, char fallback) -> char {
+        auto it = keys.find(k);
+        return (it == keys.end() || it->second.empty()) ? fallback : it->second[0];
+    };
+
+    // Chunking. Continuation chunks carry only m= and payload, so the first
+    // chunk's control data is what governs the whole transfer.
+    std::string data;
+    long more = num('m', 0);
+    if (kitty_.active) {
+        kitty_.data += base64_decode(payload);
+        if (kitty_.data.size() > kApcMaxLen) { kitty_ = KittyTransfer{}; return; }
+        if (more == 1) return;
+        controls = kitty_.controls;
+        keys = parse_controls(controls);
+        data.swap(kitty_.data);
+        kitty_ = KittyTransfer{};
+    } else if (more == 1) {
+        kitty_.active = true;
+        kitty_.controls = controls;
+        kitty_.data = base64_decode(payload);
+        return;
+    } else {
+        data = base64_decode(payload);
+    }
+
+    const long quiet = num('q', 0);
+    const uint64_t image_id = static_cast<uint64_t>(num('i', 0));
+    const uint64_t placement_id = static_cast<uint64_t>(num('p', 0));
+    auto respond = [&](const char* status, bool is_error) {
+        // q=1 silences the successes, q=2 silences everything. A client that
+        // asked for silence and gets chatter has its own output corrupted.
+        if (quiet >= 2 || (quiet >= 1 && !is_error)) return;
+        std::string reply = "\x1b_G";
+        if (image_id) reply += "i=" + std::to_string(image_id);
+        if (placement_id) {
+            if (image_id) reply += ",";
+            reply += "p=" + std::to_string(placement_id);
+        }
+        reply += ";";
+        reply += status;
+        reply += "\x1b\\";
+        grid.queue_reply(reply);
+    };
+
+    const char action = letter('a', 't');
+
+    if (action == 'd') {
+        // Delete. The uppercase forms free the pixels as well as the
+        // placement; the lowercase ones leave the image available to place
+        // again, which is the whole point of the distinction.
+        char what = letter('d', 'a');
+        bool free_data = (what >= 'A' && what <= 'Z');
+        char lower = static_cast<char>(free_data ? what + 32 : what);
+        if (lower == 'a') {
+            if (free_data) grid.images().clear_all();
+            else grid.images().clear_placements();
+        } else if (lower == 'i') {
+            if (free_data) grid.images().delete_image(image_id);
+            else grid.images().delete_placement(image_id, placement_id);
+        }
+        return;
+    }
+
+    if (action == 'q') {
+        // A capability probe. Answering OK is the whole point: it is how a
+        // client learns the protocol is available at all.
+        respond("OK", false);
+        return;
+    }
+
+    if (action == 't' || action == 'T') {
+        const char medium = letter('t', 'd');
+        if (medium != 'd') {
+            respond("EBADF:only direct transmission is supported", true);
+            return;
+        }
+        if (keys.count('o')) {
+            respond("EINVAL:compression is not supported", true);
+            return;
+        }
+
+        const long format = num('f', 32);
+        std::vector<uint32_t> pixels;
+        int width = 0, height = 0;
+
+        if (format == 100) {
+            if (!decode_png(data.data(), data.size(), pixels, width, height)) {
+                respond("EINVAL:could not decode PNG", true);
+                return;
+            }
+        } else if (format == 32 || format == 24) {
+            width = static_cast<int>(num('s', 0));
+            height = static_cast<int>(num('v', 0));
+            const int stride = (format == 32) ? 4 : 3;
+            if (width <= 0 || height <= 0 ||
+                data.size() < static_cast<size_t>(width) * height * stride) {
+                respond("EINVAL:raw pixels do not match s and v", true);
+                return;
+            }
+            pixels.resize(static_cast<size_t>(width) * height);
+            const unsigned char* src = reinterpret_cast<const unsigned char*>(data.data());
+            for (size_t i = 0; i < pixels.size(); ++i) {
+                const unsigned char* p = src + i * stride;
+                unsigned alpha = (stride == 4) ? p[3] : 0xFFu;
+                pixels[i] = static_cast<uint32_t>(p[0]) |
+                            (static_cast<uint32_t>(p[1]) << 8) |
+                            (static_cast<uint32_t>(p[2]) << 16) |
+                            (alpha << 24);
+            }
+        } else {
+            respond("EINVAL:unsupported format", true);
+            return;
+        }
+
+        uint64_t stored = grid.images().store(image_id, width, height, std::move(pixels));
+        if (stored == 0) {
+            respond("ENOMEM:image rejected", true);
+            return;
+        }
+        if (action == 'T') {
+            place_kitty_image(grid, stored, placement_id,
+                              static_cast<int>(num('x', 0)), static_cast<int>(num('y', 0)),
+                              static_cast<int>(num('w', 0)), static_cast<int>(num('h', 0)),
+                              static_cast<int>(num('c', 0)), static_cast<int>(num('r', 0)),
+                              static_cast<int>(num('z', 0)));
+        }
+        respond("OK", false);
+        return;
+    }
+
+    if (action == 'p') {
+        if (!grid.images().has_image(image_id)) {
+            respond("ENOENT:no such image", true);
+            return;
+        }
+        place_kitty_image(grid, image_id, placement_id,
+                              static_cast<int>(num('x', 0)), static_cast<int>(num('y', 0)),
+                              static_cast<int>(num('w', 0)), static_cast<int>(num('h', 0)),
+                              static_cast<int>(num('c', 0)), static_cast<int>(num('r', 0)),
+                              static_cast<int>(num('z', 0)));
+        respond("OK", false);
+        return;
+    }
+}
+
 void ANSIParser::dispatch_dcs(TerminalGrid& grid) {
     // Sixel is "DCS <params> q <data> ST". Anything else in a DCS is consumed
     // and ignored, as it was before this captured them at all.
@@ -387,8 +626,10 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                 // payload isn't printed to the screen as literal text.
                 str_is_osc_ = (c == ']');
                 str_is_dcs_ = (c == 'P');
+                str_is_apc_ = (c == '_');
                 osc_buffer_.clear();
                 dcs_buffer_.clear();
+                apc_buffer_.clear();
                 state_ = STATE_STR;
             } else if (c == 'c') {
                 // RIS: full reset. Also clears the parser's own carried state
@@ -435,6 +676,7 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
             if (c == 0x07 || c == 0x9C) { // BEL, or single-byte ST (C1)
                 if (str_is_osc_) dispatch_osc(grid);
                 if (str_is_dcs_) dispatch_dcs(grid);
+                if (str_is_apc_) dispatch_apc(grid);
                 state_ = STATE_NORMAL;
             } else if (c == 0x1b) { // possible start of two-byte ST (ESC \)
                 state_ = STATE_STR_ESC;
@@ -444,6 +686,10 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                 // rather than widened.
                 if (c < 0x80 && dcs_buffer_.size() < kDcsMaxLen) {
                     dcs_buffer_ += static_cast<char>(c);
+                }
+            } else if (str_is_apc_) {
+                if (c < 0x80 && apc_buffer_.size() < kApcMaxLen) {
+                    apc_buffer_ += static_cast<char>(c);
                 }
             } else if (str_is_osc_ && osc_buffer_.size() < kOscMaxLen) {
                 // Payload is re-encoded as UTF-8 (titles can be non-ASCII)
@@ -469,6 +715,7 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
             if (c == '\\') {
                 if (str_is_osc_) dispatch_osc(grid);
                 if (str_is_dcs_) dispatch_dcs(grid);
+                if (str_is_apc_) dispatch_apc(grid);
                 state_ = STATE_NORMAL; // ST: sequence complete
             } else {
                 // Not a valid ST -- the string was implicitly aborted by a new

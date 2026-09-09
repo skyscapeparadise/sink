@@ -60,6 +60,11 @@ struct ImagePlacement {
 bool decode_sixel(const char* data, size_t size, bool background_transparent,
                   std::vector<uint32_t>& out_pixels, int& out_width, int& out_height);
 
+// Decodes PNG bytes into RGBA, for the kitty graphics protocol's f=100.
+// Returns false on anything SDL3_image will not read.
+bool decode_png(const void* data, size_t size,
+                std::vector<uint32_t>& out_pixels, int& out_width, int& out_height);
+
 class TerminalImages {
 public:
     ~TerminalImages();

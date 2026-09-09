@@ -96,6 +96,22 @@ private:
     static constexpr size_t kDcsMaxLen = 8u * 1024 * 1024;
     void dispatch_dcs(TerminalGrid& grid);
 
+    // Kitty graphics protocol, which arrives in an APC (ESC _ G ... ST).
+    bool str_is_apc_ = false;
+    std::string apc_buffer_;
+    static constexpr size_t kApcMaxLen = 8u * 1024 * 1024;
+    void dispatch_apc(TerminalGrid& grid);
+
+    // A transmission split across chunks (m=1) accumulates here. Senders chunk
+    // by default -- kitty's own client uses 4096-byte pieces -- so this is the
+    // normal path for anything bigger than a thumbnail, not an edge case.
+    struct KittyTransfer {
+        bool active = false;
+        std::string controls; // the first chunk's control data governs
+        std::string data;     // payload decoded so far
+    };
+    KittyTransfer kitty_;
+
     // UTF-8 state variables to parse multi-byte characters
     int utf8_bytes_needed_ = 0;
     char32_t utf8_codepoint_ = 0;

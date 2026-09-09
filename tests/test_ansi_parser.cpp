@@ -1790,6 +1790,122 @@ static void test_sixel() {
     }
 }
 
+// Kitty graphics protocol: ESC _ G <key=value,...> ; <base64> ST.
+static void test_kitty_graphics() {
+    // Base64 of four RGBA pixels, all opaque red (FF 00 00 FF x4).
+    const char* red4 = "/wAA//8AAP//AAD//wAA/w==";
+
+    // Transmit and display in one go.
+    {
+        TerminalGrid g; g.resize(80, 24);
+        g.set_cell_pixel_size(10, 20);
+        ANSIParser p;
+        feed(p, g, std::string("\x1b_Ga=T,f=32,s=2,v=2,i=5;") + red4 + "\x1b\\");
+        CHECK(g.images().image_count() == 1);
+        CHECK(g.images().has_image(5));
+        CHECK(g.images().placements().size() == 1);
+        const TerminalImage* img = g.images().find(5);
+        CHECK(img->width == 2 && img->height == 2);
+        CHECK(img->pixels[0] == (0xFFu << 24 | 0xFFu)); // RGBA32 red
+        // Unlike sixel, the cursor does not move: the app is positioning the
+        // image itself.
+        CHECK(g.get_cursor_row() == 0 && g.get_cursor_col() == 0);
+        CHECK(g.take_pending_reply() == "\x1b_Gi=5;OK\x1b\\");
+    }
+
+    // Transmit only, then place separately.
+    {
+        TerminalGrid g; g.resize(80, 24);
+        g.set_cell_pixel_size(10, 20);
+        ANSIParser p;
+        feed(p, g, std::string("\x1b_Ga=t,f=32,s=2,v=2,i=9,q=2;") + red4 + "\x1b\\");
+        CHECK(g.images().has_image(9));
+        CHECK(g.images().placements().empty());
+        CHECK(!g.has_pending_reply()); // q=2 silences everything
+
+        feed(p, g, "\x1b[5;3H");
+        feed(p, g, "\x1b_Ga=p,i=9,p=1,c=4,r=2,q=2\x1b\\");
+        CHECK(g.images().placements().size() == 1);
+        CHECK(g.images().placements()[0].col == 2);
+        CHECK(g.images().placements()[0].cols == 4);
+        CHECK(g.images().placements()[0].rows == 2);
+        CHECK(g.images().placements()[0].placement_id == 1);
+    }
+
+    // Chunked transmission, which is how any real image arrives.
+    {
+        TerminalGrid g; g.resize(80, 24);
+        g.set_cell_pixel_size(10, 20);
+        ANSIParser p;
+        feed(p, g, "\x1b_Ga=T,f=32,s=2,v=2,i=3,m=1;/wAA//8AAP8=\x1b\\");
+        CHECK(g.images().image_count() == 0); // nothing until the last chunk
+        feed(p, g, "\x1b_Gm=0;/wAA//8AAP8=\x1b\\");
+        CHECK(g.images().has_image(3));
+        CHECK(g.images().find(3)->width == 2);
+        CHECK(g.images().placements().size() == 1);
+    }
+
+    // 24-bit raw gets an opaque alpha.
+    {
+        TerminalGrid g; g.resize(80, 24);
+        ANSIParser p;
+        feed(p, g, "\x1b_Ga=t,f=24,s=1,v=1,i=2,q=2;AP8A\x1b\\"); // 00 FF 00
+        CHECK(g.images().find(2)->pixels[0] == (0xFFu << 24 | 0xFFu << 8));
+    }
+
+    // Delete: lowercase drops the placement, uppercase the pixels too.
+    {
+        TerminalGrid g; g.resize(80, 24);
+        g.set_cell_pixel_size(10, 20);
+        ANSIParser p;
+        feed(p, g, std::string("\x1b_Ga=T,f=32,s=2,v=2,i=4,q=2;") + red4 + "\x1b\\");
+        CHECK(g.images().placements().size() == 1);
+        feed(p, g, "\x1b_Ga=d,d=i,i=4,q=2\x1b\\");
+        CHECK(g.images().placements().empty());
+        CHECK(g.images().has_image(4)); // still placeable
+        feed(p, g, "\x1b_Ga=d,d=I,i=4,q=2\x1b\\");
+        CHECK(!g.images().has_image(4));
+    }
+
+    // Refusals are reported so the client can fall back rather than hang.
+    {
+        TerminalGrid g; g.resize(80, 24);
+        ANSIParser p;
+        feed(p, g, "\x1b_Ga=t,t=f,i=1;L3RtcC94\x1b\\");
+        std::string reply = g.take_pending_reply();
+        CHECK(reply.find("EBADF") != std::string::npos);
+        CHECK(g.images().image_count() == 0);
+
+        feed(p, g, "\x1b_Ga=t,f=32,o=z,s=2,v=2,i=1;AA==\x1b\\");
+        CHECK(g.take_pending_reply().find("EINVAL") != std::string::npos);
+
+        feed(p, g, "\x1b_Ga=p,i=999\x1b\\");
+        CHECK(g.take_pending_reply().find("ENOENT") != std::string::npos);
+
+        // s/v not matching the payload is refused rather than read past.
+        feed(p, g, "\x1b_Ga=t,f=32,s=100,v=100,i=1;AA==\x1b\\");
+        CHECK(g.take_pending_reply().find("EINVAL") != std::string::npos);
+    }
+
+    // A capability probe gets an answer, which is how a client discovers the
+    // protocol exists at all.
+    {
+        TerminalGrid g; g.resize(80, 24);
+        ANSIParser p;
+        feed(p, g, "\x1b_Ga=q,i=1\x1b\\");
+        CHECK(g.take_pending_reply() == "\x1b_Gi=1;OK\x1b\\");
+    }
+
+    // An APC that is not a graphics command is consumed and ignored.
+    {
+        TerminalGrid g; g.resize(80, 24);
+        ANSIParser p;
+        feed(p, g, "\x1b_Xsomething\x1b\\hello");
+        CHECK(g.images().image_count() == 0);
+        CHECK(row_text(g, 0) == "hello");
+    }
+}
+
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
@@ -1847,6 +1963,7 @@ int main() {
     test_grapheme_clusters();
     test_image_placements();
     test_sixel();
+    test_kitty_graphics();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;

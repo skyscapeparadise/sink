@@ -1,5 +1,7 @@
 #include "terminal_images.hpp"
 
+#include <SDL3_image/SDL_image.h>
+
 #include <algorithm>
 #include <cmath>
 
@@ -404,5 +406,37 @@ bool decode_sixel(const char* data, size_t size, bool background_transparent,
     out_pixels = std::move(pixels);
     out_width = width;
     out_height = height;
+    return true;
+}
+
+bool decode_png(const void* data, size_t size,
+                std::vector<uint32_t>& out_pixels, int& out_width, int& out_height) {
+    if (!data || size == 0) return false;
+    SDL_IOStream* io = SDL_IOFromConstMem(data, size);
+    if (!io) return false;
+    // true: the stream is closed for us however this turns out.
+    SDL_Surface* surf = IMG_Load_IO(io, true);
+    if (!surf) return false;
+
+    if (surf->w <= 0 || surf->h <= 0 ||
+        static_cast<size_t>(surf->w) * surf->h > TerminalImages::kMaxImagePixels) {
+        SDL_DestroySurface(surf);
+        return false;
+    }
+
+    SDL_Surface* rgba = SDL_ConvertSurface(surf, SDL_PIXELFORMAT_RGBA32);
+    SDL_DestroySurface(surf);
+    if (!rgba) return false;
+
+    out_width = rgba->w;
+    out_height = rgba->h;
+    out_pixels.assign(static_cast<size_t>(out_width) * out_height, 0);
+    // Row by row: a surface's pitch is not necessarily its width in bytes.
+    for (int y = 0; y < out_height; ++y) {
+        const uint32_t* src = reinterpret_cast<const uint32_t*>(
+            static_cast<const uint8_t*>(rgba->pixels) + static_cast<size_t>(y) * rgba->pitch);
+        std::copy(src, src + out_width, out_pixels.begin() + static_cast<size_t>(y) * out_width);
+    }
+    SDL_DestroySurface(rgba);
     return true;
 }
