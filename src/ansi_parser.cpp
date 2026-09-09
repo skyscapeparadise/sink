@@ -811,10 +811,10 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
             // titles routinely carry the working directory and often the
             // command being run.
             //
-            // 19 (screen size) is omitted because sink does not know it. A
-            // program asking that wants to know how large it could become,
-            // and answering with the window's own size is a wrong answer
-            // dressed as a right one.
+            //
+            // 19 (screen size) *is* answered, but only from a real display
+            // measurement pushed in by the layout -- never from the window's
+            // own size, which would be a wrong answer dressed as a right one.
             int rows = grid.get_rows();
             int cols = grid.get_cols();
             int cw = grid.get_cell_pixel_width();
@@ -835,6 +835,12 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
                 case 18: // text area size in characters
                     grid.queue_reply("\x1b[8;" + std::to_string(rows) +
                                      ";" + std::to_string(cols) + "t");
+                    break;
+                case 19: // whole screen size in characters
+                    if (grid.get_screen_cols() > 0 && grid.get_screen_rows() > 0) {
+                        grid.queue_reply("\x1b[9;" + std::to_string(grid.get_screen_rows()) +
+                                         ";" + std::to_string(grid.get_screen_cols()) + "t");
+                    }
                     break;
                 default:
                     break;

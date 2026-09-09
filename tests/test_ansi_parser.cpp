@@ -1343,9 +1343,17 @@ static void test_xtwinops() {
     // Title read-back is refused, like OSC 52 read-back.
     feed(p, g, "\x1b[21t");
     CHECK(!g.has_pending_reply());
-    // As is the screen-size report, which sink does not know.
+
+    // Screen size is answered only from a real display measurement. Until the
+    // layout supplies one it stays silent rather than reporting the window.
     feed(p, g, "\x1b[19t");
     CHECK(!g.has_pending_reply());
+    g.set_screen_size_chars(240, 67);
+    feed(p, g, "\x1b[19t");
+    CHECK(g.take_pending_reply() == "\x1b[9;67;240t");
+    // ...and it stays distinct from the text area, which is the point of it.
+    feed(p, g, "\x1b[18t");
+    CHECK(g.take_pending_reply() == "\x1b[8;24;80t");
 }
 
 // DECRQM lets a program ask whether a mode is set instead of setting it and

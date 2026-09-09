@@ -456,6 +456,20 @@ static void layout_pane_node(AppState* state, TerminalWindow* tw, PaneNode* node
         int cell_px_w = static_cast<int>(std::lround(tw->cell_w * state->display_scale));
         int cell_px_h = static_cast<int>(std::lround(tw->cell_h * state->display_scale));
         pane->terminal.set_cell_pixel_size(cell_px_w, cell_px_h);
+
+        // How many cells the display this window is on would hold, for the
+        // XTWINOPS screen-size report. Display bounds come back in the same
+        // points cell_w/cell_h are in, so no scaling is involved. A program
+        // asking wants to know how large it could grow, so this is the whole
+        // display rather than the usable area -- and it is the display the
+        // window is actually on, not the primary one.
+        SDL_Rect display_bounds;
+        if (tw->cell_w > 0.0f && tw->cell_h > 0.0f &&
+            SDL_GetDisplayBounds(SDL_GetDisplayForWindow(tw->window), &display_bounds)) {
+            pane->terminal.set_screen_size_chars(
+                static_cast<int>(display_bounds.w / tw->cell_w),
+                static_cast<int>(display_bounds.h / tw->cell_h));
+        }
         if (cols != pane->terminal.get_cols() || rows != pane->terminal.get_rows()) {
             std::lock_guard<std::mutex> lock(pane->grid_mutex);
             pane->terminal.resize(cols, rows);

@@ -360,6 +360,13 @@ public:
     int get_cell_pixel_width() const { return cell_px_w_; }
     int get_cell_pixel_height() const { return cell_px_h_; }
 
+    // How many cells the whole display would hold, for the XTWINOPS screen
+    // size report. Pushed in by the layout for the same reason the cell size
+    // is: the grid knows nothing about windows or monitors. 0 means unknown.
+    void set_screen_size_chars(int cols, int rows) { screen_cols_ = cols; screen_rows_ = rows; }
+    int get_screen_cols() const { return screen_cols_; }
+    int get_screen_rows() const { return screen_rows_; }
+
     void queue_reply(const std::string& bytes);
     bool has_pending_reply() const { return !pending_reply_.empty(); }
     std::string take_pending_reply();
@@ -500,6 +507,8 @@ private:
     // Queued shell replies; see queue_reply().
     int cell_px_w_ = 0;
     int cell_px_h_ = 0;
+    int screen_cols_ = 0;
+    int screen_rows_ = 0;
     std::string pending_reply_;
     static constexpr size_t kMaxPendingReplyBytes = 4096;
 
