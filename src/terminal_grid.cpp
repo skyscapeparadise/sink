@@ -505,6 +505,80 @@ int TerminalGrid::write_run(const char* ascii, int n) {
     return n;
 }
 
+// Appends a cell's text as UTF-8: one codepoint, or the whole cluster. Control
+// cells and blanks are the caller's business; this only widens what a cell can
+// contain.
+void TerminalGrid::append_cell_utf8(const Cell& cell, std::string& out) const {
+    int n = 0;
+    const char32_t* text = cell_text(cell, n);
+    for (int i = 0; i < n; ++i) out += utf32_to_utf8(text[i]);
+}
+
+const char32_t* TerminalGrid::cell_text(const Cell& cell, int& count) const {
+    if (is_cluster_ref(cell.codepoint)) {
+        uint32_t i = cluster_index_of(cell.codepoint);
+        if (i < clusters_.size()) {
+            count = static_cast<int>(clusters_[i].size());
+            return clusters_[i].data();
+        }
+        count = 0; // dangling reference: renders as nothing
+        return nullptr;
+    }
+    count = 1;
+    return &cell.codepoint;
+}
+
+std::u32string TerminalGrid::cell_string(const Cell& cell) const {
+    int n = 0;
+    const char32_t* text = cell_text(cell, n);
+    return std::u32string(text, text + n);
+}
+
+char32_t TerminalGrid::cell_base(const Cell& cell) const {
+    int n = 0;
+    const char32_t* text = cell_text(cell, n);
+    return n > 0 ? text[0] : U' ';
+}
+
+// Column holding the character a combining mark or ZWJ attaches to. That is
+// the cell just written: with a wrap deferred the cursor is still parked on
+// it, otherwise it sits one to the left -- or two, if that character was
+// double-width.
+int TerminalGrid::combining_base_col() const {
+    if (cursor_row_ < 0 || cursor_row_ >= rows_ || cols_ <= 0) return -1;
+    int base_col = wrap_pending_ ? cursor_col_ : cursor_col_ - 1;
+    const Cell* row = row_data(cursor_row_);
+    if (base_col > 0 && (row[base_col].attrs & ATTR_WIDE_CONT)) base_col--;
+    return (base_col >= 0 && base_col < cols_) ? base_col : -1;
+}
+
+void TerminalGrid::append_to_cluster(int base_col, char32_t cp) {
+    if (base_col < 0 || base_col >= cols_) return;
+    Cell& cell = row_data(cursor_row_)[base_col];
+
+    std::u32string next;
+    if (is_cluster_ref(cell.codepoint)) {
+        uint32_t i = cluster_index_of(cell.codepoint);
+        if (i >= clusters_.size()) return; // dangling; nothing to extend
+        if (clusters_[i].size() >= kMaxClusterLen) return; // bounded
+        next = clusters_[i];
+    } else {
+        next = std::u32string(1, cell.codepoint);
+    }
+    next += cp;
+
+    auto it = cluster_ids_.find(next);
+    if (it != cluster_ids_.end()) {
+        cell.codepoint = kClusterTag | static_cast<char32_t>(it->second);
+        return;
+    }
+    if (clusters_.size() >= kMaxClusters) return; // full: drop the mark
+    clusters_.push_back(next);
+    uint32_t id = static_cast<uint32_t>(clusters_.size() - 1);
+    cluster_ids_.emplace(std::move(next), id);
+    cell.codepoint = kClusterTag | static_cast<char32_t>(id);
+}
+
 void TerminalGrid::write_character(char32_t codepoint) {
     // Deferred auto-wrap (xenl): if wrap is pending from a previous char hitting the rightmost column, wrap now
     if (wrap_pending_) {
@@ -522,6 +596,33 @@ void TerminalGrid::write_character(char32_t codepoint) {
         cursor_col_ = 0;
     }
     
+    // ZERO WIDTH JOINER. It carries no width of its own and binds the
+    // character after it into the same visible character -- which is how
+    // family and profession emoji are built. Without this each part of
+    // MAN ZWJ WOMAN ZWJ GIRL ZWJ BOY took its own cell, so one emoji rendered
+    // as four across eight columns.
+    // ZWJ and ZWNJ. Neither has a width; both belong to the cluster they
+    // follow. ZWJ additionally binds the character *after* it into the same
+    // cell, which is how family and profession emoji are built -- without it
+    // MAN ZWJ WOMAN ZWJ GIRL ZWJ BOY took four cells across eight columns and
+    // rendered as four separate people.
+    if (codepoint == 0x200D || codepoint == 0x200C) {
+        int base_col = combining_base_col();
+        if (base_col >= 0) {
+            append_to_cluster(base_col, codepoint);
+            zwj_pending_ = (codepoint == 0x200D);
+        }
+        return;
+    }
+    if (zwj_pending_) {
+        zwj_pending_ = false;
+        int base_col = combining_base_col();
+        if (base_col >= 0) {
+            append_to_cluster(base_col, codepoint);
+            return;
+        }
+    }
+
     // A combining mark carries no width: it composes onto the character
     // already written rather than taking a cell. macOS hands out filenames in
     // NFD, so `ls` in any directory with accented names produces exactly these
@@ -538,19 +639,27 @@ void TerminalGrid::write_character(char32_t codepoint) {
                 base_col--;
             }
             if (base_col >= 0 && base_col < cols_) {
-                char32_t composed = compose_pair(row[base_col].codepoint, codepoint);
+                char32_t composed = is_cluster_ref(row[base_col].codepoint)
+                                        ? 0
+                                        : compose_pair(row[base_col].codepoint, codepoint);
                 if (composed) {
+                    // A precomposed form exists, so one codepoint still says
+                    // it: 'e' + U+0301 becomes U+00E9 and stays a plain cell.
                     row[base_col].codepoint = composed;
+                } else {
+                    // No precomposed form -- stacked marks, Devanagari, Hebrew
+                    // points, variation selectors. The mark used to be dropped
+                    // here, because one codepoint per cell could not say
+                    // "base plus mark". The cell now holds a cluster and the
+                    // whole sequence is shaped together at render time.
+                    append_to_cluster(base_col, codepoint);
                 }
-                // No precomposed form (stacked marks, Devanagari, Hebrew
-                // points): the mark is dropped. Rendering it would need the
-                // glyph drawn over its base, which this atlas cannot express,
-                // and giving it a cell of its own -- the previous behaviour --
-                // misaligns everything after it on the line.
             }
         }
         return;
     }
+
+    zwj_pending_ = false;
 
     const int width = char_display_width(codepoint);
 
@@ -1463,14 +1572,22 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
                 bg_indices_.push_back(base_idx + 3);
             }
 
+            // A cluster cell holds several codepoints that form one visible
+            // character; it is rendered as a shaped unit further down and
+            // takes no part in ligature substitution.
+            int cp_count = 0;
+            const char32_t* cp_text = cell_text(cell, cp_count);
+            const bool is_cluster_cell = cp_count > 1;
+            const char32_t base_cp = cp_count > 0 ? cp_text[0] : 32;
+
             // Ligature detection & Codepoint substitution
-            char32_t render_cp = cell.codepoint;
+            char32_t render_cp = base_cp;
             bool skip_text = false;
 
-            if (enable_ligatures_ && c < cols_ - 1) {
+            if (enable_ligatures_ && !is_cluster_cell && c < cols_ - 1) {
                 const Cell& next_cell = cell_of(c + 1);
-                char32_t c1 = cell.codepoint;
-                char32_t c2 = next_cell.codepoint;
+                char32_t c1 = base_cp;
+                char32_t c2 = cell_base(next_cell);
                 if (c1 == '-' && c2 == '>') render_cp = 0x2192; // →
                 else if (c1 == '=' && c2 == '>') render_cp = 0x21D2; // ⇒
                 else if (c1 == '!' && c2 == '=') render_cp = 0x2260; // ≠
@@ -1481,10 +1598,10 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
                 else if (c1 == '<' && c2 == '<') render_cp = 0x226A; // ≪
                 else if (c1 == '>' && c2 == '>') render_cp = 0x226B; // ≫
             }
-            if (enable_ligatures_ && c > 0) {
+            if (enable_ligatures_ && !is_cluster_cell && c > 0) {
                 const Cell& prev_cell = cell_of(c - 1);
-                char32_t p1 = prev_cell.codepoint;
-                char32_t p2 = cell.codepoint;
+                char32_t p1 = cell_base(prev_cell);
+                char32_t p2 = base_cp;
                 if ((p1 == '-' && p2 == '>') || (p1 == '=' && p2 == '>') ||
                     (p1 == '!' && p2 == '=') || (p1 == '<' && p2 == '=') ||
                     (p1 == '>' && p2 == '=') || (p1 == '=' && p2 == '=') ||
@@ -1498,19 +1615,33 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
             // A double-width glyph is drawn across both of its cells. The
             // trailing half holds codepoint 0 and so is skipped by the guard
             // below without needing a check of its own.
-            bool is_wide = (char_display_width(cell.codepoint) == 2);
+            bool is_wide = (char_display_width(base_cp) == 2);
 
             if (!skip_text && render_cp != 32 && render_cp != 0) {
-                bool is_ligature = (render_cp != cell.codepoint && render_cp >= 0x2000);
+                bool is_ligature = (render_cp != base_cp && render_cp >= 0x2000);
                 // Ligature substitute glyphs are rasterized from a ~2x-size
                 // font instance so the stretch below (to visually span two
                 // character cells) is a near-1:1 blit instead of a ~2x
                 // upscale -- see FontManager::get_ligature_glyph().
-                const GlyphInfo* glyph = is_ligature
-                    ? font_manager.get_ligature_glyph(renderer, render_cp)
-                    : font_manager.get_glyph(renderer, render_cp,
-                                             (cell.attrs & ATTR_BOLD) != 0,
-                                             (cell.attrs & ATTR_ITALIC) != 0);
+                // A cluster is shaped as a whole so the marks land on their
+                // base and a ZWJ sequence becomes the one emoji it denotes.
+                // If it will not rasterize, fall back to the base character
+                // alone, which is what this drew before clusters existed.
+                std::string cluster_utf8;
+                const GlyphInfo* glyph = nullptr;
+                if (is_cluster_cell) {
+                    for (int i = 0; i < cp_count; ++i) cluster_utf8 += utf32_to_utf8(cp_text[i]);
+                    glyph = font_manager.get_cluster_glyph(renderer, cluster_utf8,
+                                                           (cell.attrs & ATTR_BOLD) != 0,
+                                                           (cell.attrs & ATTR_ITALIC) != 0);
+                }
+                if (!glyph) {
+                    glyph = is_ligature
+                        ? font_manager.get_ligature_glyph(renderer, render_cp)
+                        : font_manager.get_glyph(renderer, render_cp,
+                                                 (cell.attrs & ATTR_BOLD) != 0,
+                                                 (cell.attrs & ATTR_ITALIC) != 0);
+                }
                 if (glyph && glyph->src_rect.w > 0.0f && glyph->src_rect.h > 0.0f) {
                     // Only *unstyled* ASCII glyphs live in the static atlas
                     // (FontManager::build_atlas only ever rasterizes the
@@ -1521,7 +1652,8 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
                     // sampling the static atlas at dynamic-atlas coordinates
                     // (or vice versa) -- i.e. reading whatever unrelated
                     // glyph happens to sit there, not a missing/blank glyph.
-                    bool is_ascii_regular = render_cp >= 32 && render_cp <= 126 &&
+                    bool is_ascii_regular = !is_cluster_cell &&
+                                            render_cp >= 32 && render_cp <= 126 &&
                                             !(cell.attrs & (ATTR_BOLD | ATTR_ITALIC));
                     bool is_dynamic = !is_ascii_regular;
                     float tex_w = is_dynamic ? dyn_atlas_w : atlas_w;
@@ -1536,7 +1668,7 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
                         float glyph_w = glyph->src_rect.w;
                         float glyph_h = glyph->src_rect.h;
 
-                        if (glyph->is_color || is_ligature || is_wide) {
+                        if (glyph->is_color || is_ligature || is_wide || is_cluster_cell) {
                             float target_w = (is_ligature || is_wide) ? (cell_w * 2.0f) : cell_w;
                             // Scaling purely to hit the width target assumes
                             // the glyph's natural aspect ratio already fits
@@ -1968,10 +2100,10 @@ void TerminalGrid::select_word_at(int col, int row) {
     int start = std::clamp(col, 0, cols_ - 1);
     Cell clicked_cell = get_cell_at(start, row);
     
-    if (!is_word_delimiter(clicked_cell.codepoint)) {
+    if (!is_word_delimiter(cell_base(clicked_cell))) {
         while (start > 0) {
             Cell cell = get_cell_at(start - 1, row);
-            if (is_word_delimiter(cell.codepoint)) {
+            if (is_word_delimiter(cell_base(cell))) {
                 break;
             }
             start--;
@@ -1980,7 +2112,7 @@ void TerminalGrid::select_word_at(int col, int row) {
         int end = std::clamp(col, 0, cols_ - 1);
         while (end < cols_ - 1) {
             Cell cell = get_cell_at(end + 1, row);
-            if (is_word_delimiter(cell.codepoint)) {
+            if (is_word_delimiter(cell_base(cell))) {
                 break;
             }
             end++;
@@ -2094,7 +2226,7 @@ std::string TerminalGrid::get_selected_text() const {
                 // Skip the trailing half of a double-width pair: it holds no
                 // codepoint of its own and would otherwise emit a NUL byte.
                 if (!(row_cells[c].attrs & ATTR_WIDE_CONT)) {
-                    text += utf32_to_utf8(row_cells[c].codepoint);
+                    append_cell_utf8(row_cells[c], text);
                 }
             }
             
@@ -2172,11 +2304,12 @@ std::string TerminalGrid::get_current_line_text() const {
     for (int r = p_start_row; r <= p_end_row; ++r) {
         int start_col = (r == p_start_row && prompt_boundary_col_ >= 0) ? prompt_boundary_col_ : 0;
         for (int c = start_col; c < cols_; ++c) {
-            char32_t cp = row_data(r)[c].codepoint;
-            if (cp >= 32 && cp <= 126) {
+            const Cell& cell = row_data(r)[c];
+            char32_t cp = cell_base(cell);
+            if (cp >= 32 && cp <= 126 && !is_cluster_ref(cell.codepoint)) {
                 line += static_cast<char>(cp);
-            } else if (cp > 126) {
-                line += utf32_to_utf8(cp);
+            } else if (cp > 126 || is_cluster_ref(cell.codepoint)) {
+                append_cell_utf8(cell, line);
             }
         }
     }
@@ -2255,9 +2388,10 @@ void TerminalGrid::set_search_query(const std::string& query) {
     int total_rows = total_history + rows_;
 
     // Folded view of one cell. Control cells read as a space, matching what
-    // the grid draws for them.
-    auto cell_char = [](const Cell& cell) {
-        char32_t cp = cell.codepoint;
+    // the grid draws. A cluster matches on its base character, so searching
+    // for a plain letter still finds one carrying a combining mark.
+    auto cell_char = [this](const Cell& cell) {
+        char32_t cp = cell_base(cell);
         return search_fold(cp < 32 ? U' ' : cp);
     };
 

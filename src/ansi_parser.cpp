@@ -299,15 +299,18 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                         break;   // NA_PRINT: fall through to the write path
                 }
             } else if (c >= 0x200B) {
-                // Variation selectors and zero-width characters occupy no cell.
-                // All of them sit above 0x200B, so ASCII never reaches this
-                // test -- which is why it is guarded rather than applied to
-                // every character as it was before.
-                if ((c >= 0xFE00 && c <= 0xFE0F) ||
-                    (c >= 0xE0100 && c <= 0xE01EF) ||
-                    (c >= 0x200B && c <= 0x200D) ||
-                    c == 0x2060 ||
-                    c == 0xFEFF) {
+                // Zero-width characters that carry no meaning for the cell
+                // they land next to: a break opportunity, a word joiner, a
+                // byte-order mark. Dropped, as they always were.
+                //
+                // The joiners and the variation selectors used to be dropped
+                // here too, and must not be: they are part of the grapheme
+                // cluster they follow, and the grid now attaches them to it
+                // rather than giving them a cell of their own. Dropping the
+                // ZWJ is what made a family emoji render as four separate
+                // people, and dropping U+FE0F is what left emoji in their
+                // text presentation.
+                if (c == 0x200B || c == 0x2060 || c == 0xFEFF) {
                     return;
                 }
             }

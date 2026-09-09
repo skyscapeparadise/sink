@@ -32,6 +32,19 @@ public:
     // family of weight-specific files.
     const GlyphInfo* get_glyph(SDL_Renderer* renderer, char32_t codepoint, bool cell_bold = false, bool cell_italic = false) const;
 
+    // A grapheme cluster -- several codepoints that form one visible character
+    // -- rasterized as a unit. TTF_RenderText_Blended shapes the whole UTF-8
+    // string through HarfBuzz, which is what puts a combining mark over its
+    // base and turns a ZWJ sequence into the single emoji it denotes. Doing
+    // that per codepoint, which is all get_glyph() can do, produces the pieces
+    // side by side instead.
+    //
+    // Cached by the cluster's bytes rather than a codepoint, since that is the
+    // identity here. Returns null if the cluster will not rasterize, and the
+    // caller falls back to drawing the base character alone.
+    const GlyphInfo* get_cluster_glyph(SDL_Renderer* renderer, const std::string& utf8,
+                                       bool cell_bold = false, bool cell_italic = false) const;
+
     // Same codepoint, rasterized from a font instance loaded at ~2x point
     // size, for ligature substitute glyphs (e.g. "->" drawn as a single
     // arrow) that need to visually span two character cells. Terminal_grid
@@ -96,6 +109,9 @@ private:
     // same codepoint key. Ligatures are only ever rasterized from the
     // regular face (see get_ligature_glyph).
     mutable std::unordered_map<char32_t, GlyphInfo> ligature_glyph_cache_;
+    // One per style, like dynamic_glyph_cache_, and cleared with it whenever
+    // the shared atlas is reset.
+    mutable std::unordered_map<std::string, GlyphInfo> cluster_glyph_cache_[4];
 
     // Fast O(1) ASCII glyph cache -- regular style only (see above)
     GlyphInfo ascii_cache_[128];

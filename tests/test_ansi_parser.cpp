@@ -298,11 +298,21 @@ static void test_combining_marks() {
     CHECK(g2.get_cell_at(0, 0).codepoint == 32);
     CHECK(g2.get_cursor_col() == 0);
 
-    // Marks compose onto a double-width base without disturbing its pair.
+    // Marks attach to a double-width base without disturbing its pair. There
+    // is no precomposed form here, so the cell becomes a cluster -- it used to
+    // drop the mark entirely.
     TerminalGrid g3; g3.resize(20, 4);
     ANSIParser p3;
     feed(p3, g3, "\xe4\xbd\xa0\xcc\x81");        // CJK then a mark
-    CHECK(g3.get_cell_at(0, 0).codepoint == 0x4F60); // no composed form, base intact
+    {
+        // cell_string, not cell_text: get_cell_at returns by value, and
+        // cell_text hands back a pointer into the Cell for an ordinary one.
+        std::u32string t = g3.cell_string(g3.get_cell_at(0, 0));
+        CHECK(t.size() == 2);
+        CHECK(t[0] == 0x4F60);
+        CHECK(t[1] == 0x0301);
+    }
+    CHECK(g3.cell_base(g3.get_cell_at(0, 0)) == 0x4F60);
     CHECK((g3.get_cell_at(1, 0).attrs & ATTR_WIDE_CONT) != 0);
     CHECK(g3.get_cursor_col() == 2);
 }
@@ -1493,6 +1503,111 @@ static void test_kitty_keyboard_flags() {
     CHECK(!g.has_pending_reply());
 }
 
+// Grapheme clusters: several codepoints that form one visible character. A
+// cell holds one codepoint, so these used to be dropped (marks with no
+// precomposed form, variation selectors) or given a cell each (ZWJ sequences).
+static void test_grapheme_clusters() {
+    auto cluster_of = [](const std::string& bytes, int col = 0) {
+        TerminalGrid g; g.resize(20, 2);
+        ANSIParser p;
+        feed(p, g, bytes);
+        return g.cell_string(g.get_cell_at(col, 0));
+    };
+    auto cursor_after = [](const std::string& bytes) {
+        TerminalGrid g; g.resize(20, 2);
+        ANSIParser p;
+        feed(p, g, bytes);
+        return g.get_cursor_col();
+    };
+
+    const std::string man   = "\xf0\x9f\x91\xa8";
+    const std::string woman = "\xf0\x9f\x91\xa9";
+    const std::string girl  = "\xf0\x9f\x91\xa7";
+    const std::string boy   = "\xf0\x9f\x91\xa6";
+    const std::string zwj   = "\xe2\x80\x8d";
+
+    // A family emoji is one character occupying two columns, not four
+    // characters occupying eight.
+    const std::string family = man + zwj + woman + zwj + girl + zwj + boy;
+    CHECK(cursor_after(family) == 2);
+    {
+        std::u32string t = cluster_of(family);
+        CHECK(t.size() == 7);
+        CHECK(t[0] == 0x1F468);
+        CHECK(t[1] == 0x200D);
+        CHECK(t[6] == 0x1F466);
+    }
+
+    // A precomposed form still collapses to a single codepoint rather than
+    // becoming a cluster -- 'e' + U+0301 is U+00E9, as it always was.
+    {
+        std::u32string t = cluster_of("e\xcc\x81");
+        CHECK(t.size() == 1);
+        CHECK(t[0] == 0x00E9);
+    }
+
+    // One with no precomposed form is kept as a cluster instead of dropped.
+    {
+        std::u32string t = cluster_of("a\xcd\x88");
+        CHECK(t.size() == 2);
+        CHECK(t[0] == U'a');
+        CHECK(t[1] == 0x0348);
+    }
+
+    // A variation selector selects emoji presentation and must survive.
+    {
+        std::u32string t = cluster_of("\xe2\x9d\xa4\xef\xb8\x8f");
+        CHECK(t.size() == 2);
+        CHECK(t[1] == 0xFE0F);
+    }
+    CHECK(cursor_after("\xe2\x9d\xa4\xef\xb8\x8f") == 1);
+
+    // ZWNJ joins the cluster too, but unlike ZWJ does not pull in the
+    // character after it.
+    {
+        std::u32string t = cluster_of("a\xe2\x80\x8c" "b");
+        CHECK(t.size() == 2);
+        CHECK(t[1] == 0x200C);
+    }
+    CHECK(cursor_after("a\xe2\x80\x8c" "b") == 2);
+
+    // Zero-width characters that are not part of a cluster stay dropped.
+    for (const char* zw : {"\xe2\x80\x8b", "\xe2\x81\xa0", "\xef\xbb\xbf"}) {
+        std::u32string t = cluster_of(std::string("a") + zw);
+        CHECK(t.size() == 1);
+        CHECK(t[0] == U'a');
+    }
+
+    // A cluster cannot grow without bound off a stream of marks.
+    {
+        std::string many = "a";
+        for (int i = 0; i < 200; ++i) many += "\xcd\x88";
+        CHECK(cluster_of(many).size() <= 32);
+    }
+
+    // Copying a cluster cell gives back the codepoints that made it, so a
+    // round trip through the clipboard preserves the character.
+    {
+        TerminalGrid g; g.resize(20, 2);
+        ANSIParser p;
+        feed(p, g, family);
+        g.start_selection(0, 0);
+        g.update_selection(1, 0);
+        g.end_selection();
+        CHECK(g.get_selected_text() == family);
+    }
+
+    // The cell after a cluster is unaffected, and a wide cluster still marks
+    // its second column as the trailing half of the pair.
+    {
+        TerminalGrid g; g.resize(20, 2);
+        ANSIParser p;
+        feed(p, g, family + "X");
+        CHECK((g.get_cell_at(1, 0).attrs & ATTR_WIDE_CONT) != 0);
+        CHECK(g.cell_base(g.get_cell_at(2, 0)) == U'X');
+    }
+}
+
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
@@ -1547,6 +1662,7 @@ int main() {
     test_xtwinops();
     test_decrqm();
     test_kitty_keyboard_flags();
+    test_grapheme_clusters();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;

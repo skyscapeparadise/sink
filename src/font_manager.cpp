@@ -61,6 +61,7 @@ void FontManager::cleanup() {
     }
     glyph_cache_.clear();
     for (auto& cache : dynamic_glyph_cache_) cache.clear();
+    for (auto& cache : cluster_glyph_cache_) cache.clear();
     ligature_glyph_cache_.clear();
     std::fill_n(has_ascii_cache_, 128, false);
     dynamic_x_ = 0;
@@ -101,6 +102,7 @@ bool FontManager::load_font(SDL_Renderer* renderer, const std::string& font_path
     }
     glyph_cache_.clear();
     for (auto& cache : dynamic_glyph_cache_) cache.clear();
+    for (auto& cache : cluster_glyph_cache_) cache.clear();
     ligature_glyph_cache_.clear();
     dynamic_x_ = 0;
     dynamic_y_ = 0;
@@ -507,6 +509,85 @@ const GlyphInfo* FontManager::get_glyph(SDL_Renderer* renderer, char32_t codepoi
 // whole screen on every frame from then on -- a screenful of distinct CJK
 // measured at 152ms/frame, indefinitely, because nothing stayed cached long
 // enough to be reused.
+const GlyphInfo* FontManager::get_cluster_glyph(SDL_Renderer* renderer, const std::string& utf8,
+                                                bool cell_bold, bool cell_italic) const {
+    const int style = style_index(cell_bold, cell_italic);
+    auto it = cluster_glyph_cache_[style].find(utf8);
+    if (it != cluster_glyph_cache_[style].end()) return &it->second;
+
+    if (!renderer || !dynamic_atlas_texture_ || utf8.empty()) return nullptr;
+
+    // Shaped by whichever face has the base character, so a cluster whose base
+    // came from a fallback is rendered by that same fallback rather than being
+    // dropped by the configured font.
+    TTF_Font* font = font_for_style(style);
+    SDL_Color white = {255, 255, 255, 255};
+    SDL_Surface* surf = TTF_RenderText_Blended(font, utf8.data(), utf8.size(), white);
+    if (!surf || surf->w <= 0 || surf->h <= 0) {
+        if (surf) SDL_DestroySurface(surf);
+        // Try the fallback chain on the cluster's base character. Emoji ZWJ
+        // sequences in particular will not come from the text face.
+        unsigned char b = static_cast<unsigned char>(utf8[0]);
+        char32_t base = b;
+        if (b >= 0xF0 && utf8.size() >= 4) {
+            base = ((b & 0x07u) << 18) | ((utf8[1] & 0x3Fu) << 12) |
+                   ((utf8[2] & 0x3Fu) << 6) | (utf8[3] & 0x3Fu);
+        } else if (b >= 0xE0 && utf8.size() >= 3) {
+            base = ((b & 0x0Fu) << 12) | ((utf8[1] & 0x3Fu) << 6) | (utf8[2] & 0x3Fu);
+        } else if (b >= 0xC0 && utf8.size() >= 2) {
+            base = ((b & 0x1Fu) << 6) | (utf8[1] & 0x3Fu);
+        }
+        TTF_Font* alt = nullptr;
+        if (is_emoji_codepoint(base) && emoji_font_ && TTF_FontHasGlyph(emoji_font_, base)) {
+            alt = emoji_font_;
+        } else {
+            alt = first_fallback_with(base);
+        }
+        if (!alt) return nullptr;
+        surf = TTF_RenderText_Blended(alt, utf8.data(), utf8.size(), white);
+        if (!surf || surf->w <= 0 || surf->h <= 0) {
+            if (surf) SDL_DestroySurface(surf);
+            return nullptr;
+        }
+        font = alt;
+    }
+
+    int w = surf->w;
+    int h = surf->h;
+    if (dynamic_x_ + w + 4 > kDynamicAtlasSize) {
+        dynamic_x_ = 0;
+        dynamic_y_ += dynamic_row_h_ + 4;
+        dynamic_row_h_ = 0;
+    }
+    if (dynamic_y_ + h + 4 > kDynamicAtlasSize && !reset_dynamic_atlas()) {
+        SDL_DestroySurface(surf);
+        return nullptr;
+    }
+
+    SDL_Rect dst_rect = { dynamic_x_, dynamic_y_, w, h };
+    SDL_Surface* converted = SDL_ConvertSurface(surf, SDL_PIXELFORMAT_RGBA32);
+    if (converted) {
+        SDL_UpdateTexture(dynamic_atlas_texture_, &dst_rect, converted->pixels, converted->pitch);
+        SDL_DestroySurface(converted);
+    } else {
+        SDL_UpdateTexture(dynamic_atlas_texture_, &dst_rect, surf->pixels, surf->pitch);
+    }
+
+    GlyphInfo info;
+    info.src_rect = { static_cast<float>(dynamic_x_), static_cast<float>(dynamic_y_),
+                      static_cast<float>(w), static_cast<float>(h) };
+    info.advance = static_cast<float>(w);
+    // Colour faces are the emoji ones, and their glyphs must not be tinted.
+    info.is_color = (font == emoji_font_);
+
+    dynamic_x_ += w + 4;
+    dynamic_row_h_ = std::max(dynamic_row_h_, h);
+    SDL_DestroySurface(surf);
+
+    cluster_glyph_cache_[style][utf8] = info;
+    return &cluster_glyph_cache_[style][utf8];
+}
+
 bool FontManager::reset_dynamic_atlas() const {
     if (dynamic_resets_this_frame_ > 0) return false;
     dynamic_resets_this_frame_++;
@@ -517,6 +598,7 @@ bool FontManager::reset_dynamic_atlas() const {
     dynamic_y_ = 0;
     dynamic_row_h_ = 0;
     for (auto& cache : dynamic_glyph_cache_) cache.clear();
+    for (auto& cache : cluster_glyph_cache_) cache.clear();
     ligature_glyph_cache_.clear();
 
     std::vector<uint32_t> empty_pixels(static_cast<size_t>(kDynamicAtlasSize) * kDynamicAtlasSize, 0);

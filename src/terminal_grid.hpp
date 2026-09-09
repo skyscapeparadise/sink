@@ -61,6 +61,20 @@ struct Cell {
     uint32_t hyperlink_id = 0; // 0 = no link; see TerminalGrid::get_hyperlink_uri
 };
 
+// A cell holds one codepoint, and plenty of text needs more than one to make a
+// single visible character: a base with stacking marks that have no
+// precomposed form, and the ZWJ sequences behind family and profession emoji.
+//
+// Rather than grow Cell -- whose size is the reason scroll_up() is as cheap as
+// it is; see the note on its layout above -- the top bit of `codepoint` tags
+// the remainder as an index into the grid's cluster table instead of a literal
+// codepoint. Unicode needs 21 bits, so the tag is free and Cell stays 20 bytes.
+inline constexpr char32_t kClusterTag = 0x80000000u;
+inline bool is_cluster_ref(char32_t cp) { return (cp & kClusterTag) != 0; }
+inline uint32_t cluster_index_of(char32_t cp) {
+    return static_cast<uint32_t>(cp & ~kClusterTag);
+}
+
 // Columns a codepoint occupies: 2 for East Asian Wide/Fullwidth and emoji
 // presentation, 1 otherwise.
 //
@@ -186,6 +200,25 @@ public:
     // pointing at the same directory) don't grow the table per-cell.
     void set_current_hyperlink(const std::string& uri);
     const std::string& get_hyperlink_uri(uint32_t id) const;
+
+    // The codepoints a cell renders as: its own, or the whole sequence when it
+    // holds a cluster. `count` comes back as the length; a cell referring to a
+    // cluster that no longer exists reports zero, which renders as nothing.
+    //
+    // For an ordinary cell the pointer is into `cell` itself, so it is only
+    // valid while that Cell is -- do not call this on a temporary. get_cell_at()
+    // returns by value, so pair it with cell_string() instead.
+    const char32_t* cell_text(const Cell& cell, int& count) const;
+
+    // Same contents, copied. Safe with a temporary Cell.
+    std::u32string cell_string(const Cell& cell) const;
+
+    // First codepoint of a cell, which is what decides its width and what
+    // anything treating a cell as a single character should look at.
+    char32_t cell_base(const Cell& cell) const;
+
+    // Appends a cell's text as UTF-8 -- one codepoint, or a whole cluster.
+    void append_cell_utf8(const Cell& cell, std::string& out) const;
 
     // Scrollback view control helpers
     void scroll_view(int delta);
@@ -593,6 +626,28 @@ private:
     std::vector<std::string> hyperlink_uris_;
     std::unordered_map<std::string, uint32_t> hyperlink_id_by_uri_;
     static constexpr size_t kMaxHyperlinkTableSize = 100000;
+
+    // Multi-codepoint cell contents, deduplicated: the same emoji appearing a
+    // thousand times costs one entry. Deduplication is what keeps this small
+    // enough not to need eviction, since nothing here is ever freed when
+    // scrollback is trimmed -- a cell in history may still refer to it.
+    //
+    // Once full, new clusters stop being created and further marks are
+    // dropped, which is what the code did for all of them before this existed.
+    // The alternative -- clearing and reusing indices -- would make old cells
+    // silently render whatever new text landed on their index, and showing the
+    // wrong character is worse than showing one fewer mark.
+    std::vector<std::u32string> clusters_;
+    std::unordered_map<std::u32string, uint32_t> cluster_ids_;
+    static constexpr size_t kMaxClusters = 100000;
+    static constexpr size_t kMaxClusterLen = 32;
+
+    // Set by a ZWJ, consumed by the character after it, which joins the cell
+    // before rather than taking one of its own.
+    bool zwj_pending_ = false;
+
+    int combining_base_col() const;
+    void append_to_cluster(int base_col, char32_t cp);
     
     // Batch rendering buffers
     std::vector<SDL_Vertex> bg_vertices_;
