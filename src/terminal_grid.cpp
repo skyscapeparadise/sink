@@ -106,7 +106,7 @@ static std::string utf32_to_utf8(char32_t codepoint) {
     return out;
 }
 
-TerminalGrid::TerminalGrid() {}
+TerminalGrid::TerminalGrid() { reset_palette(); }
 
 TerminalGrid::~TerminalGrid() {}
 
@@ -1081,6 +1081,7 @@ void TerminalGrid::full_reset() {
     reset_default_fg();
     reset_default_bg();
     reset_default_cursor_color();
+    reset_palette();
     current_fg_ = default_fg_;
     current_bg_ = default_bg_;
     current_fg_packed_ = pack_color(current_fg_);
@@ -1345,6 +1346,52 @@ void TerminalGrid::place_image_at_cursor(uint64_t image_id, int pixel_w, int pix
         }
     }
     cursor_col_ = 0;
+}
+
+// The palette sink ships with. 0-15 are chosen rather than derived; the rest
+// is the xterm arrangement, which every application's colour arithmetic
+// assumes: a 6x6x6 cube on the levels 0, 95, 135, 175, 215, 255, then a
+// 24-step greyscale ramp.
+SDL_FColor TerminalGrid::default_palette_color(int index) {
+    static const SDL_FColor named[16] = {
+        {0.05f, 0.05f, 0.05f, 1.0f},  {0.85f, 0.15f, 0.15f, 1.0f},
+        {0.15f, 0.85f, 0.15f, 1.0f},  {0.85f, 0.75f, 0.15f, 1.0f},
+        {0.15f, 0.15f, 0.85f, 1.0f},  {0.85f, 0.15f, 0.85f, 1.0f},
+        {0.15f, 0.85f, 0.85f, 1.0f},  {0.85f, 0.85f, 0.85f, 1.0f},
+        {0.30f, 0.30f, 0.30f, 1.0f},  {1.00f, 0.30f, 0.30f, 1.0f},
+        {0.30f, 1.00f, 0.30f, 1.0f},  {1.00f, 1.00f, 0.30f, 1.0f},
+        {0.30f, 0.30f, 1.00f, 1.0f},  {1.00f, 0.30f, 1.00f, 1.0f},
+        {0.30f, 1.00f, 1.00f, 1.0f},  {1.00f, 1.00f, 1.00f, 1.0f},
+    };
+    index = std::clamp(index, 0, 255);
+    if (index < 16) return named[index];
+    if (index < 232) {
+        int n = index - 16;
+        int levels[3] = { n / 36, (n / 6) % 6, n % 6 };
+        float rgb[3];
+        for (int i = 0; i < 3; ++i) {
+            rgb[i] = (levels[i] == 0 ? 0 : levels[i] * 40 + 55) / 255.0f;
+        }
+        return { rgb[0], rgb[1], rgb[2], 1.0f };
+    }
+    float v = (8 + 10 * (index - 232)) / 255.0f;
+    return { v, v, v, 1.0f };
+}
+
+const SDL_FColor& TerminalGrid::palette_color(int index) const {
+    return palette_[std::clamp(index, 0, 255)];
+}
+
+void TerminalGrid::set_palette_color(int index, const SDL_FColor& c) {
+    if (index >= 0 && index < 256) palette_[index] = c;
+}
+
+void TerminalGrid::reset_palette_color(int index) {
+    if (index >= 0 && index < 256) palette_[index] = default_palette_color(index);
+}
+
+void TerminalGrid::reset_palette() {
+    for (int i = 0; i < 256; ++i) palette_[i] = default_palette_color(i);
 }
 
 void TerminalGrid::reset_default_fg() { default_fg_ = kDefaultFg; }

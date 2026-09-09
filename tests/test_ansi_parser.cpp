@@ -1979,6 +1979,58 @@ static void test_osc_colors() {
     CHECK(g.get_default_bg().a == 0.0f);
 }
 
+// OSC 4: the 256-colour palette, which themes recolour at runtime.
+static void test_osc_palette() {
+    TerminalGrid g; g.resize(20, 4);
+    ANSIParser p;
+
+    // Query an entry. Index 1 is red in the shipped palette.
+    feed(p, g, "\x1b]4;1;?\x1b\\");
+    std::string reply = g.take_pending_reply();
+    CHECK(reply.compare(0, 7, "\x1b]4;1;") == 0 || reply.find("\x1b]4;1;") == 0);
+    CHECK(reply.find("rgb:") != std::string::npos);
+
+    // Set one, and see it in the SGR colour that uses it.
+    feed(p, g, "\x1b]4;1;#00ff00\x1b\\");
+    CHECK(g.palette_color(1).g == 1.0f);
+    CHECK(g.palette_color(1).r == 0.0f);
+    feed(p, g, "\x1b[31mX");
+    CHECK(g.get_cell_at(0, 0).fg.g > 250);
+    CHECK(g.get_cell_at(0, 0).fg.r < 5);
+
+    // Several pairs in one sequence.
+    feed(p, g, "\x1b]4;2;#0000ff;3;#ff00ff\x1b\\");
+    CHECK(g.palette_color(2).b == 1.0f);
+    CHECK(g.palette_color(3).r == 1.0f && g.palette_color(3).b == 1.0f);
+
+    // Entries above 15 are reachable too -- the cube and the grey ramp are
+    // real entries now, not arithmetic.
+    feed(p, g, "\x1b]4;200;#123456\x1b\\");
+    CHECK(g.palette_color(200).r > 0.06f && g.palette_color(200).r < 0.08f);
+    feed(p, g, "\x1b[38;5;200mY");
+    CHECK(g.get_cell_at(1, 0).fg.b > 0x50);
+
+    // Reset one entry, then all of them.
+    feed(p, g, "\x1b]104;1\x1b\\");
+    CHECK(g.palette_color(1).r > 0.8f); // red again
+    CHECK(g.palette_color(2).b == 1.0f); // untouched
+    feed(p, g, "\x1b]104\x1b\\");
+    CHECK(g.palette_color(2).b < 0.9f);
+    CHECK(g.palette_color(200).r > 0.9f); // back to the cube value
+
+    // Out-of-range and malformed entries change nothing.
+    SDL_FColor before = g.palette_color(5);
+    feed(p, g, "\x1b]4;999;#000000\x1b\\");
+    feed(p, g, "\x1b]4;5;nonsense\x1b\\");
+    CHECK(g.palette_color(5).r == before.r);
+    CHECK(!g.has_pending_reply());
+
+    // RIS restores the whole palette.
+    feed(p, g, "\x1b]4;7;#000000\x1b\\");
+    feed(p, g, "\x1b" "c");
+    CHECK(g.palette_color(7).r > 0.8f);
+}
+
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
@@ -2038,6 +2090,7 @@ int main() {
     test_sixel();
     test_kitty_graphics();
     test_osc_colors();
+    test_osc_palette();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;

@@ -53,44 +53,10 @@ ANSIParser::ANSIParser() {}
 
 ANSIParser::~ANSIParser() {}
 
-// Standard ANSI 16-color palette (indices 0-15 of the xterm-256 palette)
-static const SDL_FColor ansi_colors[16] = {
-    {0.05f, 0.05f, 0.05f, 1.0f},     // 0: Black
-    {0.85f, 0.15f, 0.15f, 1.0f},     // 1: Red
-    {0.15f, 0.85f, 0.15f, 1.0f},     // 2: Green
-    {0.85f, 0.75f, 0.15f, 1.0f},     // 3: Yellow
-    {0.15f, 0.15f, 0.85f, 1.0f},     // 4: Blue
-    {0.85f, 0.15f, 0.85f, 1.0f},     // 5: Magenta
-    {0.15f, 0.85f, 0.85f, 1.0f},     // 6: Cyan
-    {0.85f, 0.85f, 0.85f, 1.0f},     // 7: White
-    {0.30f, 0.30f, 0.30f, 1.0f},     // 8: Bright Black (Grey)
-    {1.00f, 0.30f, 0.30f, 1.0f},     // 9: Bright Red
-    {0.30f, 1.00f, 0.30f, 1.0f},     // 10: Bright Green
-    {1.00f, 1.00f, 0.30f, 1.0f},     // 11: Bright Yellow
-    {0.30f, 0.30f, 1.00f, 1.0f},     // 12: Bright Blue
-    {1.00f, 0.30f, 1.00f, 1.0f},     // 13: Bright Magenta
-    {0.30f, 1.00f, 1.00f, 1.0f},     // 14: Bright Cyan
-    {1.00f, 1.00f, 1.00f, 1.0f}      // 15: Bright White
-};
-
-// xterm 256-color palette lookup: 0-15 named colors, 16-231 a 6x6x6 RGB
-// cube (levels 0,95,135,175,215,255), 232-255 a 24-step grayscale ramp.
-static SDL_FColor xterm_256_color(int idx) {
-    idx = std::clamp(idx, 0, 255);
-    if (idx < 16) {
-        return ansi_colors[idx];
-    }
-    if (idx < 232) {
-        int n = idx - 16;
-        int levels[3] = { n / 36, (n / 6) % 6, n % 6 };
-        float rgb[3];
-        for (int i = 0; i < 3; ++i) {
-            rgb[i] = (levels[i] == 0 ? 0 : levels[i] * 40 + 55) / 255.0f;
-        }
-        return { rgb[0], rgb[1], rgb[2], 1.0f };
-    }
-    float v = (8 + 10 * (idx - 232)) / 255.0f;
-    return { v, v, v, 1.0f };
+// The palette lives on the grid now, so that OSC 4 can change it. This is the
+// same lookup it always was, just reading state instead of a static table.
+static SDL_FColor xterm_256_color(const TerminalGrid& grid, int idx) {
+    return grid.palette_color(idx);
 }
 
 void ANSIParser::reset_csi() {
@@ -897,6 +863,69 @@ void ANSIParser::dispatch_osc(TerminalGrid& grid) {
         case 2: // set window title
             grid.set_window_title(pt);
             break;
+        case 4: {
+            // OSC 4 ; index ; spec [; index ; spec ...] -- set or query
+            // palette entries. Themes use it to recolour the 256-colour
+            // palette at runtime; "?" in place of a spec asks instead.
+            size_t start = 0;
+            while (start < pt.size()) {
+                size_t mid = pt.find(';', start);
+                if (mid == std::string::npos) break;
+                size_t end = pt.find(';', mid + 1);
+                std::string index_text = pt.substr(start, mid - start);
+                std::string spec = pt.substr(mid + 1, end == std::string::npos
+                                                          ? std::string::npos
+                                                          : end - mid - 1);
+                int index = -1;
+                if (!index_text.empty()) {
+                    index = 0;
+                    for (char ch : index_text) {
+                        if (ch < '0' || ch > '9') { index = -1; break; }
+                        index = index * 10 + (ch - '0');
+                        if (index > 255) { index = -1; break; }
+                    }
+                }
+                if (index >= 0) {
+                    if (spec == "?") {
+                        grid.queue_reply("\x1b]4;" + std::to_string(index) + ";" +
+                                         format_color_spec(grid.palette_color(index)) +
+                                         (str_ended_with_bel_ ? "\x07" : "\x1b\\"));
+                    } else {
+                        SDL_FColor parsed;
+                        if (parse_color_spec(spec, parsed)) grid.set_palette_color(index, parsed);
+                    }
+                }
+                if (end == std::string::npos) break;
+                start = end + 1;
+            }
+            break;
+        }
+        case 104: {
+            // Reset palette entries, or the whole palette when no index is
+            // given -- which is how a shell tidies up after a theme.
+            if (pt.empty()) {
+                grid.reset_palette();
+                break;
+            }
+            size_t start = 0;
+            while (start <= pt.size()) {
+                size_t end = pt.find(';', start);
+                std::string item = pt.substr(start, end == std::string::npos
+                                                        ? std::string::npos
+                                                        : end - start);
+                int index = 0;
+                bool ok = !item.empty();
+                for (char ch : item) {
+                    if (ch < '0' || ch > '9') { ok = false; break; }
+                    index = index * 10 + (ch - '0');
+                    if (index > 255) { ok = false; break; }
+                }
+                if (ok) grid.reset_palette_color(index);
+                if (end == std::string::npos) break;
+                start = end + 1;
+            }
+            break;
+        }
         case 10:   // default foreground
         case 11:   // default background
         case 12: { // cursor colour
@@ -1086,7 +1115,7 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
             auto apply_base_fg = [&]() {
                 if (fg_base_index_ >= 0) {
                     int idx = fg_base_index_ + ((attrs & ATTR_BOLD) ? 8 : 0);
-                    grid.set_current_fg(ansi_colors[idx]);
+                    grid.set_current_fg(grid.palette_color(idx));
                 }
             };
             auto reset_all = [&]() {
@@ -1134,13 +1163,13 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
                     fg_base_index_ = param - 30;
                     apply_base_fg();
                 } else if (param >= 40 && param <= 47) {
-                    grid.set_current_bg(ansi_colors[param - 40]);
+                    grid.set_current_bg(grid.palette_color(param - 40));
                 } else if (param >= 90 && param <= 97) {
                     // Explicit bright: not subject to bold re-brightening
                     fg_base_index_ = -1;
-                    grid.set_current_fg(ansi_colors[param - 90 + 8]);
+                    grid.set_current_fg(grid.palette_color(param - 90 + 8));
                 } else if (param >= 100 && param <= 107) {
-                    grid.set_current_bg(ansi_colors[param - 100 + 8]);
+                    grid.set_current_bg(grid.palette_color(param - 100 + 8));
                 } else if (param == 38 || param == 48) {
                     if (param == 38) fg_base_index_ = -1;
                     // Extended color: 38/48;2;R;G;B (24-bit truecolor) or
@@ -1154,7 +1183,7 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
                         else       grid.set_current_bg({r, g, b, 1.0f});
                         i += 4;
                     } else if (i + 2 < csi_params_.size() && csi_params_[i + 1] == 5) {
-                        SDL_FColor color = xterm_256_color(csi_params_[i + 2]);
+                        SDL_FColor color = xterm_256_color(grid, csi_params_[i + 2]);
                         if (is_fg) grid.set_current_fg(color);
                         else       grid.set_current_bg(color);
                         i += 2;

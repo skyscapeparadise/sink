@@ -214,6 +214,20 @@ public:
     // the two are the same thing.
     const SDL_FColor& get_reported_bg() const { return reported_bg_; }
 
+    // The 256-colour palette: 0-15 the named colours, 16-231 the 6x6x6 cube,
+    // 232-255 the greyscale ramp. Grid state rather than a table in the parser
+    // so OSC 4 can change entries.
+    //
+    // Known limitation: cells store resolved colours, not palette indices, so
+    // changing an entry recolours nothing already on screen. Applications
+    // overwhelmingly set their palette before drawing, so this shows up
+    // rarely, but storing indices instead would mean widening Cell -- the same
+    // trade the grapheme cluster tag was built to avoid.
+    const SDL_FColor& palette_color(int index) const;
+    void set_palette_color(int index, const SDL_FColor& c);
+    void reset_palette_color(int index);
+    void reset_palette();
+
     // Restores the built-in defaults, for RIS and for OSC 110/111/112.
     void reset_default_fg();
     void reset_default_bg();
@@ -682,6 +696,9 @@ private:
     static constexpr SDL_FColor kDefaultBg{0.0f, 0.0f, 0.0f, 0.0f};
     static constexpr SDL_FColor kDefaultReportedBg{0.05f, 0.05f, 0.06f, 1.0f};
     static constexpr SDL_FColor kDefaultCursor{1.0f, 1.0f, 1.0f, 1.0f};
+    SDL_FColor palette_[256];
+    static SDL_FColor default_palette_color(int index);
+
     SDL_FColor default_fg_ = kDefaultFg;
     SDL_FColor default_bg_ = kDefaultBg;
     SDL_FColor reported_bg_ = kDefaultReportedBg;
