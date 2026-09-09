@@ -501,6 +501,12 @@ public:
     void kbd_push_flags(int flags);          // CSI > flags u
     void kbd_pop_flags(int count);           // CSI < count u
 
+    // Working directory, as last reported by the shell through OSC 7. Empty
+    // until a shell reports one -- plenty never do, since it takes a hook in
+    // the prompt -- so callers must have a fallback.
+    void set_working_directory(const std::string& path) { working_directory_ = path; }
+    const std::string& get_working_directory() const { return working_directory_; }
+
     // OSC 133 shell-integration prompt marks and jump navigation
     void mark_prompt_row();
     bool is_prompt_row(int row) const {
@@ -641,6 +647,8 @@ private:
     // Clipboard state (OSC 52)
     std::string pending_clipboard_text_;
     bool clipboard_dirty_ = false;
+
+    std::string working_directory_;
 
     // Queued shell replies; see queue_reply().
     int cell_px_w_ = 0;

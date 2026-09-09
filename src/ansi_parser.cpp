@@ -1,4 +1,5 @@
 #include "ansi_parser.hpp"
+#include <unistd.h>
 #include <cstdio>
 #include <cmath>
 #include <cstdlib>
@@ -863,6 +864,60 @@ void ANSIParser::dispatch_osc(TerminalGrid& grid) {
         case 2: // set window title
             grid.set_window_title(pt);
             break;
+        case 7: {
+            // OSC 7 ; file://host/path -- the shell reporting where it is, so
+            // a new tab or split can start in the same place instead of
+            // wherever sink itself was launched from.
+            //
+            // The host half is checked rather than ignored: a path from a
+            // machine on the far end of an ssh session names nothing here, and
+            // opening a local directory that happens to share its name would
+            // be worse than opening none. Empty, "localhost" and this
+            // machine's own name are accepted.
+            const std::string prefix = "file://";
+            if (pt.compare(0, prefix.size(), prefix) != 0) break;
+            size_t path_start = pt.find('/', prefix.size());
+            if (path_start == std::string::npos) break;
+            std::string host = pt.substr(prefix.size(), path_start - prefix.size());
+            if (!host.empty() && host != "localhost") {
+                char self[256] = {0};
+                if (gethostname(self, sizeof(self) - 1) != 0) break;
+                std::string local(self);
+                // Compare up to the first dot either side, so "mac.local"
+                // and "mac" are the same machine.
+                std::string a = host.substr(0, host.find('.'));
+                std::string b = local.substr(0, local.find('.'));
+                if (a != b) break;
+            }
+
+            // Percent-decoding. A path is arbitrary bytes, and the shell hooks
+            // that emit this escape anything outside the unreserved set.
+            std::string path;
+            for (size_t i = path_start; i < pt.size(); ++i) {
+                if (pt[i] == '%' && i + 2 < pt.size()) {
+                    auto nybble = [](char ch) -> int {
+                        if (ch >= '0' && ch <= '9') return ch - '0';
+                        if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+                        if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+                        return -1;
+                    };
+                    int hi = nybble(pt[i + 1]), lo = nybble(pt[i + 2]);
+                    if (hi >= 0 && lo >= 0) {
+                        path += static_cast<char>(hi * 16 + lo);
+                        i += 2;
+                        continue;
+                    }
+                }
+                path += pt[i];
+            }
+
+            // Must be an absolute path, and must not smuggle a NUL -- this
+            // ends up as an argument to chdir() in a forked child.
+            if (path.empty() || path[0] != '/') break;
+            if (path.find('\0') != std::string::npos) break;
+            grid.set_working_directory(path);
+            break;
+        }
         case 4: {
             // OSC 4 ; index ; spec [; index ; spec ...] -- set or query
             // palette entries. Themes use it to recolour the 256-colour

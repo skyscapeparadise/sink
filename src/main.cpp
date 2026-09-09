@@ -495,8 +495,17 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     tw->fpane().terminal.resize(cols, rows);
     tw->fpane().terminal.clear_screen();
 
+    // A new window or tab starts where the focused pane of the window it was
+    // opened from is. Empty when there is no such pane -- the first window --
+    // or when that shell never reported a directory, in which case the child
+    // inherits sink's own and the existing home-directory fallback applies.
+    std::string inherit_cwd;
+    if (state->active_window) {
+        inherit_cwd = state->active_window->fpane().terminal.get_working_directory();
+    }
+
     // Start Pseudo-Terminal process connection
-    if (!tw->fpane().pty.spawn(cols, rows)) {
+    if (!tw->fpane().pty.spawn(cols, rows, inherit_cwd)) {
         std::cerr << "Failed to initialize PTY shell context" << std::endl;
     }
 
@@ -664,6 +673,11 @@ static void split_focused_pane(AppState* state, TerminalWindow* tw, bool vertica
     PaneNode* leaf = find_leaf(tw->root.get(), tw->focused);
     if (!leaf) return;
 
+    // Start the new shell where the one being split is, if that shell
+    // reported it (OSC 7). Splitting a pane to run something alongside what
+    // is already there is the case this exists for.
+    std::string inherit_cwd = leaf->pane->terminal.get_working_directory();
+
     auto new_pane = std::make_unique<Pane>();
     new_pane->terminal.set_enable_ligatures(state->ligatures_enabled);
     new_pane->terminal.set_max_scrollback(static_cast<size_t>(state->scrollback_lines));
@@ -676,7 +690,7 @@ static void split_focused_pane(AppState* state, TerminalWindow* tw, bool vertica
                                     : leaf->pane->terminal.get_rows() / 2);
     new_pane->terminal.resize(cols, rows);
     new_pane->terminal.clear_screen();
-    if (!new_pane->pty.spawn(cols, rows)) {
+    if (!new_pane->pty.spawn(cols, rows, inherit_cwd)) {
         std::cerr << "split: failed to spawn PTY for new pane" << std::endl;
         return;
     }

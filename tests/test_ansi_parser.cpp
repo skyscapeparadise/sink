@@ -2031,6 +2031,45 @@ static void test_osc_palette() {
     CHECK(g.palette_color(7).r > 0.8f);
 }
 
+// OSC 7: the shell reporting where it is, so a new tab or split can start in
+// the same directory instead of wherever sink was launched from.
+static void test_osc_cwd() {
+    TerminalGrid g; g.resize(20, 4);
+    ANSIParser p;
+    CHECK(g.get_working_directory().empty());
+
+    feed(p, g, "\x1b]7;file://localhost/Users/kady/Projects/sink\x1b\\");
+    CHECK(g.get_working_directory() == "/Users/kady/Projects/sink");
+
+    // No host at all is the other common spelling.
+    feed(p, g, "\x1b]7;file:///tmp\x1b\\");
+    CHECK(g.get_working_directory() == "/tmp");
+
+    // Percent-decoding, since the shell hooks that emit this escape anything
+    // outside the unreserved set.
+    feed(p, g, "\x1b]7;file:///Users/kady/My%20Documents/a%2Bb\x1b\\");
+    CHECK(g.get_working_directory() == "/Users/kady/My Documents/a+b");
+
+    // A path from another machine names nothing here, so it is refused rather
+    // than opening a local directory that happens to share its name.
+    std::string before = g.get_working_directory();
+    feed(p, g, "\x1b]7;file://some-other-box/Users/kady\x1b\\");
+    CHECK(g.get_working_directory() == before);
+
+    // Relative paths and NUL-smuggling are refused: this ends up as an
+    // argument to chdir() in a forked child.
+    feed(p, g, "\x1b]7;file://localhost" "relative/path\x1b\\");
+    CHECK(g.get_working_directory() == before);
+    feed(p, g, std::string("\x1b]7;file:///tmp/a%00b\x1b\\"));
+    CHECK(g.get_working_directory() == before);
+
+    // Malformed sequences leave it alone rather than clearing it.
+    feed(p, g, "\x1b]7;not-a-uri\x1b\\");
+    CHECK(g.get_working_directory() == before);
+    feed(p, g, "\x1b]7;\x1b\\");
+    CHECK(g.get_working_directory() == before);
+}
+
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
@@ -2091,6 +2130,7 @@ int main() {
     test_kitty_graphics();
     test_osc_colors();
     test_osc_palette();
+    test_osc_cwd();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;

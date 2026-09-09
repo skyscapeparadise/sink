@@ -22,7 +22,7 @@ PTYBridge::~PTYBridge() {
     shutdown();
 }
 
-bool PTYBridge::spawn(int cols, int rows) {
+bool PTYBridge::spawn(int cols, int rows, const std::string& cwd) {
     struct winsize ws;
     ws.ws_row = static_cast<unsigned short>(rows);
     ws.ws_col = static_cast<unsigned short>(cols);
@@ -47,6 +47,14 @@ bool PTYBridge::spawn(int cols, int rows) {
         setenv("TERM", "xterm-256color", 1);
         setenv("LANG", "en_US.UTF-8", 1);
         setenv("LC_ALL", "en_US.UTF-8", 1);
+
+        // Start where the caller asked, if it asked. A failure here is not
+        // fatal -- the directory may have been deleted since the shell that
+        // reported it last ran -- so fall through to the checks below and
+        // start somewhere sane instead.
+        if (!cwd.empty()) {
+            chdir(cwd.c_str());
+        }
 
         // Change working directory to user home if launched with root directory (Finder launch default)
         char cwd_buf[1024];
