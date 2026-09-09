@@ -550,6 +550,12 @@ static void destroy_terminal_window(TerminalWindow* tw) {
     tw->video_engine.close_video();
     tw->hue_shift.cleanup(); // must run before destroying the renderer it was created against
     tw->crt_shader.cleanup();
+    // Same rule for the panes' image textures. Their destructors run below as
+    // part of `delete tw`, which is after the renderer is gone -- they would
+    // otherwise be destroying textures against a dead device.
+    for (Pane* pane : all_panes(tw)) {
+        pane->terminal.images().release_textures();
+    }
     if (tw->renderer) {
         SDL_DestroyRenderer(tw->renderer);
     }
@@ -826,6 +832,12 @@ static bool recreate_renderer_for_hdr_console(AppState* state, TerminalWindow* t
     tw->hue_shift.cleanup();
     tw->crt_shader.cleanup();
     tw->font_manager.cleanup();
+    // Inline images hold textures too. Only the textures go: the decoded
+    // pixels stay, so every image re-uploads against the new renderer the
+    // next time it is drawn and nothing on screen is lost to the toggle.
+    for (Pane* pane : all_panes(tw)) {
+        pane->terminal.images().release_textures();
+    }
 
     if (tw->renderer) {
         SDL_DestroyRenderer(tw->renderer);
