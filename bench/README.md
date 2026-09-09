@@ -243,24 +243,45 @@ back-to-back *averages* here varied by 2x, while the minima are stable to
 within a few percent. The average is printed alongside as a sanity check, but
 compare on the minimum.
 
-Results (Apple Silicon, 2026-08-29, Metal renderer, 200x50 = 10,000 cells):
+Results (Apple Silicon, 2026-09-08, Metal renderer, 200x50 = 10,000 cells):
 
 | scene | ms/frame | implied ceiling |
 |---|---|---|
-| blank grid | 0.113 | ~8900 fps |
-| plain text | 0.292 | ~3400 fps |
-| SGR-heavy | 0.213 | ~4700 fps |
-| UTF-8 heavy | 0.245 | ~4100 fps |
+| blank grid | 0.095 | ~10500 fps |
+| plain text | 0.220 | ~4500 fps |
+| SGR-heavy | 0.201 | ~5000 fps |
+| UTF-8 heavy | 0.174 | ~5700 fps |
+| distinct CJK screenful | 0.301 | ~3300 fps |
+| scrollback (deep) | 0.231 | ~4300 fps |
+| scrollback + search | 0.316 | ~3200 fps |
 
-**The render path is not a bottleneck.** At 120Hz the frame budget is 8.3ms
-and the worst case here uses 0.63ms of it -- under 8%, on a grid larger than
-most windows. Sampling agrees: `render()` accounts for ~6% of the harness's
-own main-thread time, with the rest in `SDL_RenderPresent` and the event loop.
+**In steady state the render path is not a bottleneck.** At 120Hz the frame
+budget is 8.3ms and the worst case here uses 0.32ms of it.
 
-Within render(), the biggest single cost is the ligature scan (~44%), which
-calls `get_cell_at()` a second time per cell to re-fetch the previous cell
-rather than carrying it over from the previous iteration. Worth knowing, but
-it is 44% of something that is already 8% of a frame.
+That sentence used to be written without the qualifier, on the strength of
+the first four scenes alone, and it was wrong in a way an average could never
+have shown. Each of the last three scenes was added because it exposed a
+cliff the others could not reach:
+
+- **scrollback + search**: 271 ms/frame, 4 fps, for as long as the find bar
+  stayed open, because the per-cell match test scanned every match on every
+  cell. Now a per-row binary search.
+- **distinct CJK screenful**: 152 ms/frame, 7 fps, *indefinitely*. One screen
+  wanted more distinct glyphs than the 1024x1024 dynamic atlas held, so the
+  packer reset, dropped every cached glyph, and re-rasterized the whole screen
+  again next frame, forever. The atlas is 2048 now, with a one-reset-per-frame
+  budget so the case that still does not fit degrades to a bounded cost.
+- **scrollback (deep)**: never slow, but it had to be measured to establish
+  that -- the deque of separately allocated history rows was the first
+  suspect, and it was not the problem.
+
+The lesson worth keeping: a mean frame time says nothing about states the
+scenes do not reach. Add the scene before concluding a path is fine.
+
+Within render(), the ligature scan used to be the biggest single cost (~44%)
+because it called `get_cell_at()` twice more per cell to re-fetch its
+neighbours, each call re-deriving the row. The row is now resolved once per
+row and the neighbours are pointer offsets.
 
 ## pty_bench: the whole pipeline
 
