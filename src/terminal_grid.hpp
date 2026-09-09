@@ -140,6 +140,10 @@ public:
     // an alt screen never exited, a scroll region never widened -- until
     // output scrolls inside a few rows and the screen looks frozen.
     void full_reset();
+
+    // DECSTR (CSI ! p): a soft reset. Much narrower than full_reset() -- see
+    // the implementation for exactly what it does and does not touch.
+    void soft_reset();
     // Tab stops. HTS (ESC H) sets one at the cursor, TBC (CSI g) clears one or
     // all, and CHT/CBT (CSI I / CSI Z) walk between them. tab_forward(1) is
     // what a plain HT does.

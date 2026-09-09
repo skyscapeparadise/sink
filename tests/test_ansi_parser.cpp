@@ -1247,6 +1247,49 @@ static void test_rep() {
     CHECK(g4.get_cols() == 10); // completed at all, promptly
 }
 
+// DECSTR restores modes without disturbing the screen, which is the whole
+// difference between it and RIS.
+static void test_decstr() {
+    TerminalGrid g; g.resize(20, 10);
+    ANSIParser p;
+
+    feed(p, g, "hello\r\nworld");
+    feed(p, g, "\x1b[3;8r\x1b[?6h\x1b[?25l\x1b[5 q\x1b[1;31m\x1b(0");
+    CHECK(g.is_origin_mode());
+    CHECK(!g.is_cursor_visible());
+    CHECK(g.get_scroll_top() == 2);
+    CHECK(g.get_cursor_shape() == CursorShape::Bar);
+
+    feed(p, g, "\x1b[!p");
+
+    // Modes are back to defaults.
+    CHECK(!g.is_origin_mode());
+    CHECK(g.is_cursor_visible());
+    CHECK(g.get_scroll_top() == 0);
+    CHECK(g.get_scroll_bottom() == 9);
+    CHECK(g.get_cursor_shape() == CursorShape::Block);
+    CHECK(g.get_current_attrs() == 0);
+
+    // ...and the screen is untouched, unlike RIS.
+    CHECK(row_text(g, 0) == "hello");
+    CHECK(row_text(g, 1) == "world");
+
+    // DEC line drawing is cancelled: 'q' is a horizontal line while it is on
+    // and a plain letter afterwards.
+    feed(p, g, "\x1b[5;1Hq");
+    CHECK(g.get_cell_at(0, 4).codepoint == U'q');
+
+    // Without the '!' intermediate this is not DECSTR and must do nothing.
+    feed(p, g, "\x1b[?25l\x1b[p");
+    CHECK(!g.is_cursor_visible());
+    feed(p, g, "\x1b[!p");
+    CHECK(g.is_cursor_visible());
+
+    // RIS, by contrast, does clear the screen.
+    feed(p, g, "\x1b" "c");
+    CHECK(row_text(g, 0) == "");
+}
+
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
@@ -1297,6 +1340,7 @@ int main() {
     test_cnl_cpl();
     test_tab_stops();
     test_rep();
+    test_decstr();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;

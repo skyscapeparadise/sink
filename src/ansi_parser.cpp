@@ -687,6 +687,21 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
             grid.set_cursor_col(grid.get_cursor_col() - offset);
             break;
         }
+        case 'p': { // DECSTR (CSI ! p) -- Soft Terminal Reset
+            // The '!' intermediate is what makes this DECSTR rather than one
+            // of the several other sequences ending in 'p'; before
+            // intermediates were tracked it could not be recognised at all.
+            if (csi_intermediate_ == '!') {
+                grid.soft_reset();
+                // The parser's own carried state goes with it, as it does for
+                // RIS -- a half-finished charset designation surviving a reset
+                // would keep translating text the caller has just asked to
+                // stop translating.
+                g0_dec_graphics_ = false;
+                last_graphic_ = 0;
+            }
+            break;
+        }
         case 'b': { // REP -- Repeat the preceding graphic character
             if (last_graphic_ != 0) {
                 int n = get_count_param(0, 1);

@@ -346,6 +346,39 @@ void TerminalGrid::resize(int cols, int rows) {
     origin_mode_ = false;
 }
 
+void TerminalGrid::soft_reset() {
+    // DECSTR. The point of it is to restore known *modes* without disturbing
+    // what is on screen, so this deliberately does not do most of what
+    // full_reset() does: the screen contents, the scrollback, the alternate
+    // screen and the tab stops all survive. Clearing any of those would
+    // destroy exactly what a caller reaches for DECSTR to preserve.
+    //
+    // The cursor is left where it is. The VT510 reference lists a home for
+    // DECSTR, but the common use in practice is a program tidying its modes
+    // mid-session, and moving the cursor there visibly corrupts the line it
+    // was writing. xterm-compatible behaviour is the safer reading, and it is
+    // what programs are actually written against.
+    cursor_visible_ = true;
+    origin_mode_ = false;
+    scroll_top_ = 0;
+    scroll_bottom_ = rows_ - 1;
+    cursor_shape_ = CursorShape::Block;
+    wrap_pending_ = false;
+
+    // The saved cursor does go home -- DECSC/DECRC around a DECSTR should not
+    // restore a position from before it.
+    saved_cursor_col_ = 0;
+    saved_cursor_row_ = 0;
+
+    current_fg_ = {0.9f, 0.9f, 0.9f, 1.0f};
+    current_bg_ = {0.0f, 0.0f, 0.0f, 0.0f};
+    current_fg_packed_ = pack_color(current_fg_);
+    current_bg_packed_ = pack_color(current_bg_);
+    current_attrs_ = 0;
+    current_hyperlink_id_ = 0;
+    blank_row_valid_ = false;
+}
+
 void TerminalGrid::reset_tab_stops() {
     tab_stops_.assign(cols_ > 0 ? cols_ : 0, 0);
     for (int c = 8; c < cols_; c += 8) tab_stops_[c] = 1;
