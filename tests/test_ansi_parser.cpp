@@ -1085,6 +1085,42 @@ static void test_ich() {
     CHECK(row_text(g3, 0) == "hello");
 }
 
+// DECSCUSR shares its final byte with DECLL and is told apart only by the
+// space intermediate, which the CSI parser used to discard.
+static void test_decscusr() {
+    TerminalGrid g; g.resize(10, 2);
+    ANSIParser p;
+    CHECK(g.get_cursor_shape() == CursorShape::Block);
+
+    feed(p, g, "\x1b[5 q");
+    CHECK(g.get_cursor_shape() == CursorShape::Bar);
+    feed(p, g, "\x1b[3 q");
+    CHECK(g.get_cursor_shape() == CursorShape::Underline);
+    feed(p, g, "\x1b[2 q");
+    CHECK(g.get_cursor_shape() == CursorShape::Block);
+
+    // Blink and steady select the same shape; the blink bit is dropped.
+    feed(p, g, "\x1b[6 q");
+    CHECK(g.get_cursor_shape() == CursorShape::Bar);
+    feed(p, g, "\x1b[4 q");
+    CHECK(g.get_cursor_shape() == CursorShape::Underline);
+
+    // 0 is "default", which is a block.
+    feed(p, g, "\x1b[0 q");
+    CHECK(g.get_cursor_shape() == CursorShape::Block);
+
+    // Without the space intermediate this is DECLL, not DECSCUSR, and must
+    // not move the cursor shape.
+    feed(p, g, "\x1b[5 q");
+    CHECK(g.get_cursor_shape() == CursorShape::Bar);
+    feed(p, g, "\x1b[2q");
+    CHECK(g.get_cursor_shape() == CursorShape::Bar);
+
+    // RIS returns it to a block along with everything else.
+    feed(p, g, "\x1b" "c"); // split so 'c' is not read into the hex escape
+    CHECK(g.get_cursor_shape() == CursorShape::Block);
+}
+
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
@@ -1131,6 +1167,7 @@ int main() {
     test_search_matching();
     test_dsr_and_da();
     test_ich();
+    test_decscusr();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;

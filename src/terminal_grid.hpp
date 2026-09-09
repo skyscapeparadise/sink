@@ -76,6 +76,11 @@ bool is_combining_mark(char32_t cp);
 // no precomposed form. 'e' + U+0301 gives U+00E9.
 char32_t compose_pair(char32_t base, char32_t mark);
 
+// DECSCUSR cursor shapes (CSI Ps SP q). Editors switch between these to show
+// their mode -- a bar while inserting, a block while in normal mode -- so an
+// ignored DECSCUSR leaves vim users with no visible mode indicator at all.
+enum class CursorShape { Block, Underline, Bar };
+
 struct ScrollbackRow {
     std::vector<Cell> cells;
     bool wrapped = false;
@@ -199,6 +204,11 @@ public:
 
     void set_cursor_visible(bool visible) { cursor_visible_ = visible; }
     bool is_cursor_visible() const { return cursor_visible_; }
+
+    // Takes a raw DECSCUSR parameter (0-6); anything else falls back to a
+    // block, which is what the parameter's default means.
+    void set_cursor_shape(int decscusr_param);
+    CursorShape get_cursor_shape() const { return cursor_shape_; }
 
     // Synchronized output (DECSET/DECRST 2026). Apps that redraw a whole
     // frame -- neovim, helix, fzf, lazygit -- wrap the update in BSU/ESU so
@@ -476,6 +486,7 @@ private:
     bool selecting_ = false;
     bool alt_screen_active_ = false;
     bool cursor_visible_ = true;
+    CursorShape cursor_shape_ = CursorShape::Block;
     bool bracketed_paste_active_ = false;
     bool synchronized_output_ = false;
     bool focus_reporting_ = false;

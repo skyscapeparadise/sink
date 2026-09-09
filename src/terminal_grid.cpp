@@ -837,6 +837,7 @@ void TerminalGrid::full_reset() {
     scroll_top_ = 0;
     scroll_bottom_ = rows_ - 1;
     origin_mode_ = false;
+    cursor_shape_ = CursorShape::Block;
 
     scroll_offset_ = 0;
     display_scroll_offset_ = 0.0f;
@@ -1017,6 +1018,24 @@ void TerminalGrid::scroll_to_next_prompt() {
         }
     }
     scroll_offset_ = 0; // no prompt below: rejoin the live view
+}
+
+void TerminalGrid::set_cursor_shape(int decscusr_param) {
+    // 0/1 blinking block, 2 steady block, 3 blinking underline, 4 steady
+    // underline, 5 blinking bar, 6 steady bar.
+    //
+    // The blink half of each pair is parsed and then deliberately dropped.
+    // sink's cursor has always been steady, and honouring blink would mean
+    // that any shell emitting a cursor-shape reset -- which sends 0 or 1,
+    // "blinking block" -- starts the cursor blinking. That is a visible change
+    // to how the terminal looks arriving as a side effect of adding shape
+    // support, so it is a decision to make on its own. Terminals with a
+    // "disable cursor blink" preference present exactly this behaviour.
+    switch (decscusr_param) {
+        case 3: case 4: cursor_shape_ = CursorShape::Underline; break;
+        case 5: case 6: cursor_shape_ = CursorShape::Bar; break;
+        default:        cursor_shape_ = CursorShape::Block; break;
+    }
 }
 
 void TerminalGrid::queue_reply(const std::string& bytes) {
@@ -1588,13 +1607,24 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
         visual_cursor_row_ += (target_row - visual_cursor_row_) * 25.0f * dt;
     }
 
-    // 2. Render Opaque Block Cursor (Append to background draw call)
+    // 2. Render Opaque Cursor (Append to background draw call)
     if (cursor_visible_ &&
         visual_cursor_col_ >= 0.0f && visual_cursor_col_ < cols_ && visual_cursor_row_ >= 0.0f && visual_cursor_row_ < rows_) {
         float cx0 = start_x + visual_cursor_col_ * cell_w;
         float cy0 = start_y + visual_cursor_row_ * cell_h;
         float cx1 = cx0 + cell_w;
         float cy1 = cy0 + cell_h;
+
+        // DECSCUSR shape. Both thin forms take the same floor as the
+        // underline/strikethrough decorations do, so they stay visible at
+        // small cell sizes instead of thinning away to nothing.
+        if (cursor_shape_ == CursorShape::Underline) {
+            float thickness = std::max(2.0f * display_scale, cell_h * 0.12f);
+            cy0 = cy1 - thickness;
+        } else if (cursor_shape_ == CursorShape::Bar) {
+            float thickness = std::max(2.0f * display_scale, cell_w * 0.15f);
+            cx1 = cx0 + thickness;
+        }
         
         SDL_FColor cursor_color = {1.0f, 1.0f, 1.0f, 1.0f}; // Solid, fully opaque white block cursor
         int base_idx = static_cast<int>(bg_vertices_.size());

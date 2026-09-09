@@ -773,6 +773,15 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
             grid.insert_character(get_count_param(0, 1));
             break;
         }
+        case 'q': { // DECSCUSR -- Set Cursor Style
+            // The space intermediate is what separates this from DECLL
+            // (CSI Ps q, load LEDs), which sink has no LEDs to load. Before
+            // intermediates were tracked the two were the same sequence here.
+            if (csi_intermediate_ == ' ') {
+                grid.set_cursor_shape(get_param(0, 0));
+            }
+            break;
+        }
         case 'n': { // DSR -- Device Status Report
             // These are the sequences a terminal is obliged to answer. A
             // program that asks blocks until the reply arrives, so ignoring
