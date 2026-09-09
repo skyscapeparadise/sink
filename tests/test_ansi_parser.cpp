@@ -1050,9 +1050,12 @@ static void test_dsr_and_da() {
     CHECK(g.take_pending_reply() == "\x1b[?62;22c");
 
     // Secondary DA is a different request sharing the same final byte, and
-    // used to be indistinguishable from the primary one.
+    // used to be indistinguishable from the primary one. The version it
+    // carries comes from the build rather than being written out here, so a
+    // release bump does not have to remember this test.
     feed(p, g, "\x1b[>c");
-    CHECK(g.take_pending_reply() == "\x1b[>0;800;0c");
+    CHECK(g.take_pending_reply() ==
+          "\x1b[>0;" + std::to_string(SINK_VERSION_NUM) + ";0c");
 
     // A parameter the terminal does not recognise gets no answer rather than
     // a wrong one.
