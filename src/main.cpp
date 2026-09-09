@@ -451,10 +451,15 @@ static void layout_pane_node(AppState* state, TerminalWindow* tw, PaneNode* node
         if (!apply_grids) return;
         int cols = std::max(20, static_cast<int>((rect.w - 2 * state->padding) / tw->cell_w));
         int rows = std::max(5, static_cast<int>((rect.h - 2 * state->padding) / tw->cell_h));
+        // cell_w/cell_h are in points; the pty and the geometry reports both
+        // want real pixels, so scale back up.
+        int cell_px_w = static_cast<int>(std::lround(tw->cell_w * state->display_scale));
+        int cell_px_h = static_cast<int>(std::lround(tw->cell_h * state->display_scale));
+        pane->terminal.set_cell_pixel_size(cell_px_w, cell_px_h);
         if (cols != pane->terminal.get_cols() || rows != pane->terminal.get_rows()) {
             std::lock_guard<std::mutex> lock(pane->grid_mutex);
             pane->terminal.resize(cols, rows);
-            pane->pty.resize_pty(cols, rows);
+            pane->pty.resize_pty(cols, rows, cell_px_w, cell_px_h);
         }
         return;
     }

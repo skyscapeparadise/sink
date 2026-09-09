@@ -1290,6 +1290,43 @@ static void test_decstr() {
     CHECK(row_text(g, 0) == "");
 }
 
+// XTWINOPS: geometry reports are answered, window manipulation is not.
+static void test_xtwinops() {
+    TerminalGrid g; g.resize(80, 24);
+    ANSIParser p;
+
+    // Text area in characters, rows before columns.
+    feed(p, g, "\x1b[18t");
+    CHECK(g.take_pending_reply() == "\x1b[8;24;80t");
+
+    // Pixel reports stay silent until the layout has said how big a cell is.
+    feed(p, g, "\x1b[14t");
+    CHECK(!g.has_pending_reply());
+    feed(p, g, "\x1b[16t");
+    CHECK(!g.has_pending_reply());
+
+    g.set_cell_pixel_size(9, 18);
+    feed(p, g, "\x1b[16t");
+    CHECK(g.take_pending_reply() == "\x1b[6;18;9t");
+    feed(p, g, "\x1b[14t");
+    CHECK(g.take_pending_reply() == "\x1b[4;432;720t"); // 24*18, 80*9
+
+    // Window manipulation is not implemented and must stay silent rather
+    // than letting output move the user's window.
+    for (const char* seq : {"\x1b[1t", "\x1b[2t", "\x1b[3;0;0t", "\x1b[4;100;100t",
+                            "\x1b[5t", "\x1b[9;1t", "\x1b[10;1t"}) {
+        feed(p, g, seq);
+        CHECK(!g.has_pending_reply());
+    }
+
+    // Title read-back is refused, like OSC 52 read-back.
+    feed(p, g, "\x1b[21t");
+    CHECK(!g.has_pending_reply());
+    // As is the screen-size report, which sink does not know.
+    feed(p, g, "\x1b[19t");
+    CHECK(!g.has_pending_reply());
+}
+
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
@@ -1341,6 +1378,7 @@ int main() {
     test_tab_stops();
     test_rep();
     test_decstr();
+    test_xtwinops();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;

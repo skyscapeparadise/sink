@@ -15,8 +15,11 @@ public:
     bool spawn(int cols, int rows);
     void shutdown();
 
-    // Send resize dimensions to the OS pseudo-terminal
-    void resize_pty(int cols, int rows);
+    // Send resize dimensions to the OS pseudo-terminal. The pixel sizes fill
+    // in ws_xpixel/ws_ypixel, which were left at 0 before: programs that ask
+    // the kernel how big the window is in pixels (via TIOCGWINSZ) got zero and
+    // had to guess.
+    void resize_pty(int cols, int rows, int cell_px_w = 0, int cell_px_h = 0);
 
     // Write input bytes (characters or escapes) to the shell
     bool write_to_pty(const char* data, size_t size);

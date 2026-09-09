@@ -687,6 +687,50 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
             grid.set_cursor_col(grid.get_cursor_col() - offset);
             break;
         }
+        case 't': { // XTWINOPS -- window manipulation and geometry reports
+            // Only the reports are implemented, and deliberately so.
+            //
+            // The manipulation operations (1-9: move, resize, raise, lower,
+            // iconify, maximise) hand anything that can write to the terminal
+            // control of the user's window. xterm gates them behind
+            // allowWindowOps, off by default; sink simply does not have them.
+            //
+            // 21 (report window title) is omitted for the same reason OSC 52
+            // clipboard read-back is refused elsewhere in this file: it gives
+            // untrusted output a way to read back state it did not write, and
+            // titles routinely carry the working directory and often the
+            // command being run.
+            //
+            // 19 (screen size) is omitted because sink does not know it. A
+            // program asking that wants to know how large it could become,
+            // and answering with the window's own size is a wrong answer
+            // dressed as a right one.
+            int rows = grid.get_rows();
+            int cols = grid.get_cols();
+            int cw = grid.get_cell_pixel_width();
+            int ch = grid.get_cell_pixel_height();
+            switch (get_param(0, 0)) {
+                case 14: // text area size in pixels
+                    if (cw > 0 && ch > 0) {
+                        grid.queue_reply("\x1b[4;" + std::to_string(rows * ch) +
+                                         ";" + std::to_string(cols * cw) + "t");
+                    }
+                    break;
+                case 16: // character cell size in pixels
+                    if (cw > 0 && ch > 0) {
+                        grid.queue_reply("\x1b[6;" + std::to_string(ch) +
+                                         ";" + std::to_string(cw) + "t");
+                    }
+                    break;
+                case 18: // text area size in characters
+                    grid.queue_reply("\x1b[8;" + std::to_string(rows) +
+                                     ";" + std::to_string(cols) + "t");
+                    break;
+                default:
+                    break;
+            }
+            break;
+        }
         case 'p': { // DECSTR (CSI ! p) -- Soft Terminal Reset
             // The '!' intermediate is what makes this DECSTR rather than one
             // of the several other sequences ending in 'p'; before

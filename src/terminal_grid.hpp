@@ -353,6 +353,13 @@ public:
     // than the main loop sends them. A program waiting on a report blocks
     // until it arrives, so it can only ever have one outstanding; anything
     // past the cap is abuse rather than a request that will be missed.
+    // Pixel size of one cell, pushed in by the layout because the grid has no
+    // font of its own. 0 means unknown, in which case the pixel geometry
+    // reports stay silent rather than answering with a made-up number.
+    void set_cell_pixel_size(int w, int h) { cell_px_w_ = w; cell_px_h_ = h; }
+    int get_cell_pixel_width() const { return cell_px_w_; }
+    int get_cell_pixel_height() const { return cell_px_h_; }
+
     void queue_reply(const std::string& bytes);
     bool has_pending_reply() const { return !pending_reply_.empty(); }
     std::string take_pending_reply();
@@ -491,6 +498,8 @@ private:
     bool clipboard_dirty_ = false;
 
     // Queued shell replies; see queue_reply().
+    int cell_px_w_ = 0;
+    int cell_px_h_ = 0;
     std::string pending_reply_;
     static constexpr size_t kMaxPendingReplyBytes = 4096;
 

@@ -129,13 +129,13 @@ void PTYBridge::shutdown() {
     }
 }
 
-void PTYBridge::resize_pty(int cols, int rows) {
+void PTYBridge::resize_pty(int cols, int rows, int cell_px_w, int cell_px_h) {
     if (master_fd_ == -1) return;
     struct winsize ws;
     ws.ws_row = static_cast<unsigned short>(rows);
     ws.ws_col = static_cast<unsigned short>(cols);
-    ws.ws_xpixel = 0;
-    ws.ws_ypixel = 0;
+    ws.ws_xpixel = static_cast<unsigned short>(cols * cell_px_w);
+    ws.ws_ypixel = static_cast<unsigned short>(rows * cell_px_h);
     ioctl(master_fd_, TIOCSWINSZ, &ws);
 }
 
