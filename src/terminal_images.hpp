@@ -48,6 +48,18 @@ struct ImagePlacement {
     int z = 0;                 // draw order; negative sits behind text
 };
 
+// Decodes a sixel payload -- everything after the DCS introducer's 'q' -- into
+// RGBA pixels. `background_transparent` is what the introducer's P2 asked for:
+// with it set, pixels no sixel touched stay clear rather than being painted in
+// the current background colour.
+//
+// Returns false when nothing decodable was found. Malformed input stops at the
+// point it goes wrong and keeps whatever decoded cleanly up to there, because
+// a truncated image is a better outcome than none and the payload arrives from
+// a pty that can be cut off mid-stream.
+bool decode_sixel(const char* data, size_t size, bool background_transparent,
+                  std::vector<uint32_t>& out_pixels, int& out_width, int& out_height);
+
 class TerminalImages {
 public:
     ~TerminalImages();

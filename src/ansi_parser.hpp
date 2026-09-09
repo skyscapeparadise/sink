@@ -87,6 +87,15 @@ private:
     static constexpr size_t kOscMaxLen = 4096;
     void dispatch_osc(TerminalGrid& grid);
 
+    // DCS payloads are captured too now, because sixel arrives in one. Kept
+    // separate from the OSC buffer and capped far higher: an OSC carries a
+    // title or a URI, a sixel carries a picture, and even a modest one runs to
+    // hundreds of kilobytes.
+    bool str_is_dcs_ = false;
+    std::string dcs_buffer_;
+    static constexpr size_t kDcsMaxLen = 8u * 1024 * 1024;
+    void dispatch_dcs(TerminalGrid& grid);
+
     // UTF-8 state variables to parse multi-byte characters
     int utf8_bytes_needed_ = 0;
     char32_t utf8_codepoint_ = 0;

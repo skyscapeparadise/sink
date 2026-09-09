@@ -1,6 +1,7 @@
 #include "terminal_images.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 TerminalImages::~TerminalImages() {
     release_textures();
@@ -202,4 +203,206 @@ SDL_Texture* TerminalImages::texture_for(SDL_Renderer* renderer, uint64_t id) {
         return nullptr;
     }
     return image.texture;
+}
+
+// --- sixel ----------------------------------------------------------------
+//
+// A sixel is one character encoding a vertical strip of six pixels: bit 0 is
+// the topmost. Bands of six run left to right; '-' starts the next band, '$'
+// returns to the left margin of the current one. '#' selects or defines a
+// colour, '!' repeats the next sixel, '"' declares the raster size.
+
+namespace {
+
+// VT340 default palette, as RGB percentages -- which is how the format itself
+// expresses colour, so they are converted the same way a '#' definition is.
+constexpr uint8_t kSixelDefaultPalette[16][3] = {
+    {  0,  0,  0 }, { 20, 20, 80 }, { 80, 13, 13 }, { 20, 80, 20 },
+    { 80, 20, 80 }, { 20, 80, 80 }, { 80, 80, 20 }, { 53, 53, 53 },
+    { 26, 26, 26 }, { 33, 33, 60 }, { 60, 26, 26 }, { 33, 60, 33 },
+    { 60, 33, 60 }, { 33, 60, 60 }, { 60, 60, 33 }, { 80, 80, 80 },
+};
+
+inline uint8_t percent_to_byte(int percent) {
+    if (percent < 0) percent = 0;
+    if (percent > 100) percent = 100;
+    return static_cast<uint8_t>((percent * 255 + 50) / 100);
+}
+
+inline uint32_t pack_rgba(uint8_t r, uint8_t g, uint8_t b) {
+    // Matches SDL_PIXELFORMAT_RGBA32, which is byte-order R,G,B,A.
+    return static_cast<uint32_t>(r) | (static_cast<uint32_t>(g) << 8) |
+           (static_cast<uint32_t>(b) << 16) | (0xFFu << 24);
+}
+
+// HLS as sixel defines it: hue in degrees where 0 is blue, lightness and
+// saturation as percentages. Not the same convention as HSL elsewhere, which
+// is why this is spelled out rather than reached for from a library.
+uint32_t hls_to_rgba(int h, int l, int s) {
+    double lf = std::min(100, std::max(0, l)) / 100.0;
+    double sf = std::min(100, std::max(0, s)) / 100.0;
+    double hf = static_cast<double>(((h % 360) + 360) % 360);
+    hf = std::fmod(hf + 240.0, 360.0); // rotate so 0 degrees is blue
+    double c = (1.0 - std::fabs(2.0 * lf - 1.0)) * sf;
+    double x = c * (1.0 - std::fabs(std::fmod(hf / 60.0, 2.0) - 1.0));
+    double m = lf - c / 2.0;
+    double r = 0, g = 0, b = 0;
+    if (hf < 60)       { r = c; g = x; }
+    else if (hf < 120) { r = x; g = c; }
+    else if (hf < 180) { g = c; b = x; }
+    else if (hf < 240) { g = x; b = c; }
+    else if (hf < 300) { r = x; b = c; }
+    else               { r = c; b = x; }
+    auto q = [&](double v) { return static_cast<uint8_t>(std::lround((v + m) * 255.0)); };
+    return pack_rgba(q(r), q(g), q(b));
+}
+
+} // namespace
+
+bool decode_sixel(const char* data, size_t size, bool background_transparent,
+                  std::vector<uint32_t>& out_pixels, int& out_width, int& out_height) {
+    // Bounded independently of TerminalImages::kMaxImagePixels, since this
+    // allocates while decoding rather than at the end.
+    constexpr int kMaxDim = 8192;
+
+    std::vector<uint32_t> palette(256, pack_rgba(0, 0, 0));
+    for (int i = 0; i < 16; ++i) {
+        palette[i] = pack_rgba(percent_to_byte(kSixelDefaultPalette[i][0]),
+                               percent_to_byte(kSixelDefaultPalette[i][1]),
+                               percent_to_byte(kSixelDefaultPalette[i][2]));
+    }
+
+    const uint32_t background = background_transparent ? 0u : pack_rgba(0, 0, 0);
+    std::vector<uint32_t> pixels;
+    int width = 0, height = 0;
+    int x = 0, band_top = 0, color = 0;
+    int max_x = 0;
+
+    // Grows to fit as the image is drawn, since the raster attribute is
+    // optional and plenty of encoders omit it.
+    auto ensure = [&](int need_w, int need_h) -> bool {
+        if (need_w > kMaxDim || need_h > kMaxDim) return false;
+        if (need_w <= width && need_h <= height) return true;
+        int new_w = std::max(width, need_w);
+        int new_h = std::max(height, need_h);
+        if (static_cast<size_t>(new_w) * new_h > TerminalImages::kMaxImagePixels) return false;
+        std::vector<uint32_t> grown(static_cast<size_t>(new_w) * new_h, background);
+        for (int row = 0; row < height; ++row) {
+            std::copy(pixels.begin() + static_cast<size_t>(row) * width,
+                      pixels.begin() + static_cast<size_t>(row) * width + width,
+                      grown.begin() + static_cast<size_t>(row) * new_w);
+        }
+        pixels.swap(grown);
+        width = new_w;
+        height = new_h;
+        return true;
+    };
+
+    // Reads a ';'-separated parameter list, stopping at the first byte that
+    // starts neither a digit nor a separator.
+    auto read_params = [&](size_t& i, int* params, int max_params) -> int {
+        int count = 0;
+        while (count < max_params) {
+            long value = 0;
+            bool any = false;
+            while (i < size && data[i] >= '0' && data[i] <= '9') {
+                if (value < 1000000) value = value * 10 + (data[i] - '0');
+                any = true;
+                ++i;
+            }
+            params[count++] = any ? static_cast<int>(value) : 0;
+            if (i < size && data[i] == ';') { ++i; continue; }
+            break;
+        }
+        return count;
+    };
+
+    for (size_t i = 0; i < size;) {
+        unsigned char c = static_cast<unsigned char>(data[i]);
+        if (c == '"') {
+            ++i;
+            int params[4] = {0, 0, 0, 0};
+            int n = read_params(i, params, 4);
+            // Pan/Pad are the aspect ratio, which sink does not honour; Ph/Pv
+            // are a size hint, useful because it avoids repeated regrowth.
+            if (n >= 4 && params[2] > 0 && params[3] > 0) {
+                if (!ensure(params[2], params[3])) return false;
+            }
+        } else if (c == '#') {
+            ++i;
+            int params[5] = {0, 0, 0, 0, 0};
+            int n = read_params(i, params, 5);
+            int index = params[0] & 0xFF;
+            if (n >= 5) {
+                if (params[1] == 2) {
+                    palette[index] = pack_rgba(percent_to_byte(params[2]),
+                                               percent_to_byte(params[3]),
+                                               percent_to_byte(params[4]));
+                } else if (params[1] == 1) {
+                    palette[index] = hls_to_rgba(params[2], params[3], params[4]);
+                }
+            }
+            color = index;
+        } else if (c == '!') {
+            ++i;
+            int params[1] = {0};
+            read_params(i, params, 1);
+            int repeat = params[0] > 0 ? params[0] : 1;
+            if (i >= size) break;
+            unsigned char sx = static_cast<unsigned char>(data[i]);
+            if (sx < 0x3F || sx > 0x7E) { ++i; continue; }
+            ++i;
+            int bits = sx - 0x3F;
+            if (repeat > kMaxDim) repeat = kMaxDim;
+            if (!ensure(x + repeat, band_top + 6)) return !pixels.empty();
+            for (int r = 0; r < repeat; ++r, ++x) {
+                for (int b = 0; b < 6; ++b) {
+                    if (bits & (1 << b)) {
+                        pixels[static_cast<size_t>(band_top + b) * width + x] = palette[color];
+                    }
+                }
+            }
+            max_x = std::max(max_x, x);
+        } else if (c == '$') {
+            x = 0;
+            ++i;
+        } else if (c == '-') {
+            x = 0;
+            band_top += 6;
+            ++i;
+        } else if (c >= 0x3F && c <= 0x7E) {
+            int bits = c - 0x3F;
+            if (!ensure(x + 1, band_top + 6)) return !pixels.empty();
+            for (int b = 0; b < 6; ++b) {
+                if (bits & (1 << b)) {
+                    pixels[static_cast<size_t>(band_top + b) * width + x] = palette[color];
+                }
+            }
+            ++x;
+            max_x = std::max(max_x, x);
+            ++i;
+        } else {
+            ++i; // whitespace, newlines, anything else: skipped
+        }
+    }
+
+    if (pixels.empty() || width <= 0 || height <= 0) return false;
+
+    // Trim the right-hand side back to what was actually drawn, so a raster
+    // attribute wider than the content does not leave a band of background.
+    if (max_x > 0 && max_x < width) {
+        std::vector<uint32_t> trimmed(static_cast<size_t>(max_x) * height);
+        for (int row = 0; row < height; ++row) {
+            std::copy(pixels.begin() + static_cast<size_t>(row) * width,
+                      pixels.begin() + static_cast<size_t>(row) * width + max_x,
+                      trimmed.begin() + static_cast<size_t>(row) * max_x);
+        }
+        pixels.swap(trimmed);
+        width = max_x;
+    }
+
+    out_pixels = std::move(pixels);
+    out_width = width;
+    out_height = height;
+    return true;
 }

@@ -1684,6 +1684,112 @@ static void test_image_placements() {
     CHECK(im.placements().empty());
 }
 
+// Sixel: DCS <params> q <data> ST. A sixel character encodes six vertically
+// stacked pixels, bit 0 topmost; '-' starts the next band, '$' returns to the
+// left margin, '#' selects or defines a colour, '!' repeats.
+static void test_sixel() {
+    // A 2x6 block: two sixel characters with every bit set.
+    {
+        TerminalGrid g; g.resize(80, 24);
+        g.set_cell_pixel_size(10, 20);
+        ANSIParser p;
+        feed(p, g, "\x1bP0;0;0q#0;2;100;0;0~~\x1b\\");
+        CHECK(g.images().image_count() == 1);
+        CHECK(g.images().placements().size() == 1);
+        const TerminalImage* img = g.images().find(g.images().placements()[0].image_id);
+        CHECK(img != nullptr);
+        CHECK(img->width == 2);
+        CHECK(img->height == 6);
+        // '~' is 0x7E - 0x3F = 63, all six bits, in the colour just defined.
+        CHECK(img->pixels[0] == (0xFFu << 24 | 0xFFu)); // RGBA32: red, opaque
+        // Two columns wide and one row tall at a 10x20 cell.
+        CHECK(g.images().placements()[0].cols == 1);
+        CHECK(g.images().placements()[0].rows == 1);
+        // The cursor ends at the start of the line below the image.
+        CHECK(g.get_cursor_row() == 1);
+        CHECK(g.get_cursor_col() == 0);
+    }
+
+    // Bands: '-' moves down six pixels, so this is 1x12.
+    {
+        TerminalGrid g; g.resize(80, 24);
+        g.set_cell_pixel_size(10, 20);
+        ANSIParser p;
+        feed(p, g, "\x1bPq~-~\x1b\\");
+        const TerminalImage* img = g.images().find(g.images().placements()[0].image_id);
+        CHECK(img->width == 1);
+        CHECK(img->height == 12);
+    }
+
+    // Repeat: "!5~" is five columns.
+    {
+        TerminalGrid g; g.resize(80, 24);
+        g.set_cell_pixel_size(10, 20);
+        ANSIParser p;
+        feed(p, g, "\x1bPq!5~\x1b\\");
+        const TerminalImage* img = g.images().find(g.images().placements()[0].image_id);
+        CHECK(img->width == 5);
+        CHECK(img->height == 6);
+    }
+
+    // Only the low bit set lights the top pixel and nothing below it. P2
+    // decides what "nothing" looks like: 0 paints the background opaque
+    // black, 1 leaves it clear.
+    {
+        TerminalGrid g; g.resize(80, 24);
+        g.set_cell_pixel_size(10, 20);
+        ANSIParser p;
+        feed(p, g, "\x1bP0;0;0q#0;2;0;100;0@\x1b\\");
+        const TerminalImage* img = g.images().find(g.images().placements()[0].image_id);
+        CHECK(img->height == 6);
+        CHECK(img->pixels[0] == (0xFFu << 24 | 0xFFu << 8)); // green, opaque
+        CHECK(img->pixels[1 * img->width] == 0xFF000000u);   // opaque black
+    }
+    {
+        TerminalGrid g; g.resize(80, 24);
+        g.set_cell_pixel_size(10, 20);
+        ANSIParser p;
+        feed(p, g, "\x1bP0;1;0q#0;2;0;100;0@\x1b\\");
+        const TerminalImage* img = g.images().find(g.images().placements()[0].image_id);
+        CHECK(img->pixels[0] != 0);
+        CHECK(img->pixels[1 * img->width] == 0); // transparent
+    }
+
+    // A DCS that is not sixel is consumed and ignored, as it always was.
+    {
+        TerminalGrid g; g.resize(80, 24);
+        ANSIParser p;
+        feed(p, g, "\x1bP+q616263\x1b\\hello");
+        CHECK(g.images().image_count() == 0);
+        CHECK(row_text(g, 0) == "hello");
+    }
+
+    // Truncated payloads must not crash or leave the parser stuck.
+    {
+        TerminalGrid g; g.resize(80, 24);
+        ANSIParser p;
+        feed(p, g, "\x1bPq~~~");        // no terminator
+        feed(p, g, "\x1b\\");
+        feed(p, g, "\x1bPq#\x1b\\");    // colour introducer with no parameters
+        feed(p, g, "\x1bPq\x1b\\");     // no data at all
+        feed(p, g, "after");
+        CHECK(row_text(g, g.get_cursor_row()) == "after");
+    }
+
+    // The image scrolls with its text and is retired with it.
+    {
+        TerminalGrid g; g.resize(80, 5);
+        g.set_cell_pixel_size(10, 20);
+        g.set_max_scrollback(4);
+        ANSIParser p;
+        feed(p, g, "\x1bPq~\x1b\\");
+        CHECK(g.images().placements().size() == 1);
+        for (int i = 0; i < 30; ++i) feed(p, g, "x\r\n");
+        CHECK(g.images().placements().empty());
+        CHECK(g.images().image_count() == 0);
+    }
+}
+
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
@@ -1740,6 +1846,7 @@ int main() {
     test_kitty_keyboard_flags();
     test_grapheme_clusters();
     test_image_placements();
+    test_sixel();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;

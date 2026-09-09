@@ -256,6 +256,46 @@ void ANSIParser::note_trigger_char(TerminalGrid& grid, char32_t c) {
     note_trigger_run(grid, &ch, 1);
 }
 
+void ANSIParser::dispatch_dcs(TerminalGrid& grid) {
+    // Sixel is "DCS <params> q <data> ST". Anything else in a DCS is consumed
+    // and ignored, as it was before this captured them at all.
+    size_t q = dcs_buffer_.find('q');
+    if (q == std::string::npos) return;
+    for (size_t i = 0; i < q; ++i) {
+        char ch = dcs_buffer_[i];
+        if (!((ch >= '0' && ch <= '9') || ch == ';')) return; // not a sixel introducer
+    }
+
+    // P2 selects what happens to pixels no sixel touches: 1 leaves them
+    // transparent, anything else paints them the background colour.
+    int params[3] = {0, 0, 0};
+    int index = 0;
+    int value = 0;
+    bool any = false;
+    for (size_t i = 0; i < q && index < 3; ++i) {
+        char ch = dcs_buffer_[i];
+        if (ch == ';') {
+            params[index++] = any ? value : 0;
+            value = 0;
+            any = false;
+        } else {
+            value = value * 10 + (ch - '0');
+            any = true;
+        }
+    }
+    if (index < 3) params[index] = any ? value : 0;
+
+    std::vector<uint32_t> pixels;
+    int width = 0, height = 0;
+    if (!decode_sixel(dcs_buffer_.data() + q + 1, dcs_buffer_.size() - q - 1,
+                      params[1] == 1, pixels, width, height)) {
+        return;
+    }
+    uint64_t id = grid.images().store(0, width, height, std::move(pixels));
+    if (id == 0) return;
+    grid.place_image_at_cursor(id, width, height);
+}
+
 void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
     switch (state_) {
         case STATE_NORMAL: {
@@ -346,7 +386,9 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                 // on (titles, prompt marks); the rest are consumed so their
                 // payload isn't printed to the screen as literal text.
                 str_is_osc_ = (c == ']');
+                str_is_dcs_ = (c == 'P');
                 osc_buffer_.clear();
+                dcs_buffer_.clear();
                 state_ = STATE_STR;
             } else if (c == 'c') {
                 // RIS: full reset. Also clears the parser's own carried state
@@ -392,9 +434,17 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
         case STATE_STR: {
             if (c == 0x07 || c == 0x9C) { // BEL, or single-byte ST (C1)
                 if (str_is_osc_) dispatch_osc(grid);
+                if (str_is_dcs_) dispatch_dcs(grid);
                 state_ = STATE_NORMAL;
             } else if (c == 0x1b) { // possible start of two-byte ST (ESC \)
                 state_ = STATE_STR_ESC;
+            } else if (str_is_dcs_) {
+                // Sixel is bytes, not text: no UTF-8 re-encoding, and anything
+                // above ASCII is not part of the format so it is dropped
+                // rather than widened.
+                if (c < 0x80 && dcs_buffer_.size() < kDcsMaxLen) {
+                    dcs_buffer_ += static_cast<char>(c);
+                }
             } else if (str_is_osc_ && osc_buffer_.size() < kOscMaxLen) {
                 // Payload is re-encoded as UTF-8 (titles can be non-ASCII)
                 if (c < 0x80) {
@@ -418,6 +468,7 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
         case STATE_STR_ESC: {
             if (c == '\\') {
                 if (str_is_osc_) dispatch_osc(grid);
+                if (str_is_dcs_) dispatch_dcs(grid);
                 state_ = STATE_NORMAL; // ST: sequence complete
             } else {
                 // Not a valid ST -- the string was implicitly aborted by a new

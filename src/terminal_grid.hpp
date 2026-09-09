@@ -391,6 +391,19 @@ public:
     }
     uint64_t oldest_line_id() const { return lines_evicted_; }
 
+    // Places an already-decoded image at the cursor and moves the cursor past
+    // it, scrolling if it runs off the bottom. Shared by both graphics
+    // protocols; `image_id` must already be in images().
+    void place_image_at_cursor(uint64_t image_id, int pixel_w, int pixel_h);
+
+    // Cell size in pixels, with a fallback for when the layout has not yet
+    // said. Images are sized in cells, so a decode arriving before the first
+    // layout pass would otherwise have nowhere to go; the fallback is a
+    // plausible cell rather than a correct one, and is replaced the moment a
+    // real measurement arrives.
+    int effective_cell_px_w() const { return cell_px_w_ > 0 ? cell_px_w_ : 8; }
+    int effective_cell_px_h() const { return cell_px_h_ > 0 ? cell_px_h_ : 16; }
+
     // Replies the terminal owes the shell: DSR cursor reports, DA capability
     // responses. Queued rather than written straight out because TerminalGrid
     // has no pty of its own -- main.cpp drains this once a frame and writes

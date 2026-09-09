@@ -1302,6 +1302,45 @@ void TerminalGrid::set_cursor_shape(int decscusr_param) {
     }
 }
 
+void TerminalGrid::place_image_at_cursor(uint64_t image_id, int pixel_w, int pixel_h) {
+    if (pixel_w <= 0 || pixel_h <= 0 || cols_ <= 0 || rows_ <= 0) return;
+    const TerminalImage* img = images_.find(image_id);
+    if (!img) return;
+
+    // Rounded up: a picture that does not divide evenly into cells occupies
+    // the partial one rather than being cropped by it.
+    int cw = effective_cell_px_w();
+    int ch = effective_cell_px_h();
+    int span_cols = std::min(cols_ - cursor_col_, (pixel_w + cw - 1) / cw);
+    int span_rows = (pixel_h + ch - 1) / ch;
+    if (span_cols <= 0 || span_rows <= 0) return;
+
+    ImagePlacement placement;
+    placement.image_id = image_id;
+    placement.line_id = line_id_for_row(cursor_row_);
+    placement.col = cursor_col_;
+    placement.cols = span_cols;
+    placement.rows = span_rows;
+    placement.src_x = 0;
+    placement.src_y = 0;
+    placement.src_w = pixel_w;
+    placement.src_h = pixel_h;
+    images_.place(placement);
+
+    // The cursor lands at the start of the line below the image, scrolling
+    // whatever is needed to get there -- which is what carries the placement's
+    // line into scrollback along with the text around it.
+    wrap_pending_ = false;
+    for (int i = 0; i < span_rows; ++i) {
+        if (cursor_row_ >= get_scroll_bottom()) {
+            scroll_up();
+        } else {
+            cursor_row_++;
+        }
+    }
+    cursor_col_ = 0;
+}
+
 void TerminalGrid::queue_reply(const std::string& bytes) {
     if (pending_reply_.size() + bytes.size() > kMaxPendingReplyBytes) return;
     pending_reply_ += bytes;
