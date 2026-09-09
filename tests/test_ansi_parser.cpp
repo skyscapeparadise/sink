@@ -167,6 +167,24 @@ static void test_error_flash_trigger() {
     // has to be found from the tail of a long run of preceding text.
     CHECK(glow_after(std::string(200, 'a') + "error", "") > 0.0f);
     CHECK(glow_after(std::string(200, 'a'), "") == 0.0f);
+
+    // Matching now scans each run and carries only a tail between runs, so
+    // every split point has to work -- not just the one the old per-character
+    // ring made trivially safe. Checked both with and without a long run
+    // ahead of the word, since a long run takes a different carry path.
+    for (const std::string& word : {std::string("error"), std::string("failed")}) {
+        for (size_t cut = 0; cut <= word.size(); ++cut) {
+            CHECK(glow_after(word.substr(0, cut), word.substr(cut)) > 0.0f);
+            CHECK(glow_after(std::string(50, 'a') + word.substr(0, cut),
+                             word.substr(cut)) > 0.0f);
+        }
+    }
+
+    // A near miss either side of the window must still not fire.
+    CHECK(glow_after("xerrorx", "") > 0.0f);   // contained in a longer run
+    CHECK(glow_after("errar", "") == 0.0f);
+    CHECK(glow_after("faild", "") == 0.0f);
+    CHECK(glow_after(std::string(50, 'a') + "erro", "") == 0.0f);
 }
 
 // East Asian Wide and Fullwidth characters, and emoji, occupy two columns.

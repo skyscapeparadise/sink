@@ -139,14 +139,20 @@ on an unrelated edit to either side.
 ## Results (Apple Silicon, 2026-08-29, both sides with a row ring and
 ## double-width handling)
 
+Both sides re-measured together on 2026-09-08, after the trigger-scan rewrite
+described under "What's still open" below:
+
 | workload | sink (MB/s) | vte (MB/s) | |
 |---|---|---|---|
-| plain text (cat-like) | 179.5 | 253.4 | vte 1.41x |
-| SGR-heavy (colorized ls-like) | 180.8 | 157.4 | sink 1.15x |
-| cursor-heavy (TUI redraw-like) | 180.8 | 108.3 | sink 1.67x |
-| UTF-8 heavy (emoji/CJK/box-drawing) | 190.8 | 286.5 | vte 1.50x |
+| plain text (cat-like) | 228.5 | 261.7 | vte 1.15x |
+| SGR-heavy (colorized ls-like) | 185.5 | 162.6 | sink 1.14x |
+| cursor-heavy (TUI redraw-like) | 212.9 | 111.4 | sink 1.91x |
+| UTF-8 heavy (emoji/CJK/box-drawing) | 188.9 | 295.8 | vte 1.57x |
 
-Each side leads on two. Read alongside the warning above.
+Each side leads on two. Read alongside the warning above. The previous figures
+here were 179.5/180.8/180.8/190.8 against 253.4/157.4/108.3/286.5, so plain
+text went from vte 1.41x to vte 1.15x and cursor-heavy from sink 1.67x to
+sink 1.91x.
 
 sink measured 2.6-6.1 MB/s at the start of the 2026-08-28/29 optimization
 pass -- that is, as the app was actually being built and shipped, with no `-O`
@@ -214,12 +220,32 @@ Running this found real bugs in sink, not just comparison numbers:
 
 ## What'''s still open
 
-The remaining gap on three of four workloads is the difference between
-`vte` -- a mature, aggressively optimized table-driven state machine -- and
-sink's parser, which is table-driven only in `STATE_NORMAL` and remains a
-branch chain elsewhere. Extending the table across the CSI/escape states is
-the obvious next step, and is a scoped project rather than an incidental
-fix.
+This section used to say that the remaining gap was sink's parser being
+table-driven only in `STATE_NORMAL` and a branch chain elsewhere, and that
+extending the table across the CSI and escape states was the obvious next
+step. **That was wrong, and profiling disproved it before any of it was
+written.** On the cursor-heavy workload -- the most escape-dense of the four --
+the entire CSI dispatch accounted for about 2.6% of parse time. Rewriting it
+would have been a scoped project returning almost nothing.
+
+What the samples actually showed:
+
+- **The error/failed flash trigger: 36% of parse time on plain text.** More
+  than writing the characters into the grid cost. It maintained a sliding
+  window with two stores and a rotating index for every printable character.
+  It now scans each run for the only two letters that can end a trigger word
+  and carries eight bytes between runs, which is where the current plain-text
+  and cursor-heavy numbers come from. A cosmetic effect was the single most
+  expensive thing in the parser.
+- **`clear_screen` and `clear_line`: 33% on cursor-heavy, nearly all of it in
+  `memmove`.** That is a TUI repainting itself, and the work is already in the
+  form a memmove wants. Reducing it means not clearing cells that are already
+  blank, which needs state this does not keep. Genuinely open, unlike the
+  table rewrite.
+
+The lesson is the same one the render path taught: an intuition about which
+code *looks* hot is not evidence, and a plausible optimization can be written
+up as the obvious next step and still be worth nothing. Sample first.
 
 ## render_bench: frame time
 

@@ -128,9 +128,7 @@ void ANSIParser::parse(TerminalGrid& grid, const char* data, size_t size) {
             }
             int wrote = grid.write_run(data + i, static_cast<int>(j - i));
             if (wrote > 0) {
-                for (int k = 0; k < wrote; ++k) {
-                    note_trigger_char(grid, static_cast<unsigned char>(data[i + k]));
-                }
+                note_trigger_run(grid, data + i, wrote);
                 last_graphic_ = static_cast<unsigned char>(data[i + wrote - 1]);
                 i += static_cast<size_t>(wrote) - 1; // the loop's ++i consumes the last
                 continue;
@@ -180,27 +178,82 @@ void ANSIParser::parse(TerminalGrid& grid, const char* data, size_t size) {
 
 // See the declaration. Kept out of line so both the per-character path and
 // the batched run path call the identical code.
-void ANSIParser::note_trigger_char(TerminalGrid& grid, char32_t c) {
+void ANSIParser::note_trigger_run(TerminalGrid& grid, const char* run, int n) {
     // Not std::tolower: it is locale-aware, so it stays a real libsystem_c
-    // call per character. Callers restrict c to printable ASCII.
-    char lc = (c >= 'A' && c <= 'Z') ? static_cast<char>(c + 32)
-                                     : static_cast<char>(c);
-    trigger_ring_[trigger_pos_] = lc;
-    trigger_ring_[trigger_pos_ + kTrigWindow] = lc;
-    // One past the most recent character, in the contiguous copy.
-    const char* end = trigger_ring_ + trigger_pos_ + kTrigWindow + 1;
-    trigger_pos_ = (trigger_pos_ + 1) & (kTrigWindow - 1);
+    // call per character. Callers restrict the run to printable ASCII.
+    auto lower = [](char ch) -> char {
+        return (ch >= 'A' && ch <= 'Z') ? static_cast<char>(ch + 32) : ch;
+    };
 
-    // Gate on the last letter first: only 'r' can finish "error" and only 'd'
-    // can finish "failed", so almost every character costs a single
-    // comparison. The leading zeros the ring starts with cannot match a
-    // letter, so no "enough characters yet" counter is needed.
-    if ((lc == 'r' && std::memcmp(end - 5, "error", 5) == 0) ||
-        (lc == 'd' && std::memcmp(end - 6, "failed", 6) == 0)) {
+    // Offsets below zero index the tail carried over from previous calls, so
+    // a word split across a pty read -- or across a control character, which
+    // breaks the run but not the word -- still matches. Slots never written
+    // read as zero and cannot match a letter.
+    uint64_t carried = trigger_tail_;
+    int usable_from = -kTrigWindow;
+    auto char_at = [&](int off) -> char {
+        if (off >= 0) return lower(run[off]);
+        int shift = 8 * (-off - 1);
+        if (shift >= 64) return '\0';
+        return lower(static_cast<char>((carried >> shift) & 0xFF));
+    };
+    bool fired = false;
+
+    for (int k = 0; k < n; ++k) {
+        // Gate on the final letter: only 'r' can finish "error" and only 'd'
+        // can finish "failed", so almost every character costs one compare
+        // and no memory traffic at all.
+        char lc = lower(run[k]);
+        const char* word;
+        int len;
+        if (lc == 'r')      { word = "error";  len = 5; }
+        else if (lc == 'd') { word = "failed"; len = 6; }
+        else continue;
+
+        int start = k - len + 1;
+        if (start < usable_from) continue;
+
+        bool hit = true;
+        for (int j = 0; j < len - 1; ++j) {
+            if (char_at(start + j) != word[j]) { hit = false; break; }
+        }
+        if (!hit) continue;
+
         grid.trigger_error_flash();
-        std::memset(trigger_ring_, 0, sizeof(trigger_ring_));
-        trigger_pos_ = 0;
+        // The window resets on a hit, as it did before, so one occurrence
+        // cannot fire twice through overlapping text.
+        carried = 0;
+        usable_from = k + 1;
+        fired = true;
     }
+
+    // Carry the tail forward: at most eight shift-and-or steps on a register,
+    // with nothing older than the window able to survive them. memcpy/memmove
+    // with a runtime length were tried here first and were the reason short
+    // runs regressed -- they compile to real libc calls, which for a run of a
+    // few characters cost more than the scan they support.
+    int from = std::max(fired ? usable_from : 0, n - kTrigWindow);
+    if (from == n - kTrigWindow) {
+        // The run alone supplies the whole window: a fixed eight steps the
+        // compiler can unroll, with no carried value from before the run.
+        uint64_t t = 0;
+        const char* w = run + n - kTrigWindow;
+        for (int k = 0; k < kTrigWindow; ++k) {
+            t = (t << 8) | static_cast<unsigned char>(w[k]);
+        }
+        trigger_tail_ = t;
+    } else {
+        uint64_t t = fired ? 0 : trigger_tail_;
+        for (int k = from; k < n; ++k) {
+            t = (t << 8) | static_cast<unsigned char>(run[k]);
+        }
+        trigger_tail_ = t;
+    }
+}
+
+void ANSIParser::note_trigger_char(TerminalGrid& grid, char32_t c) {
+    char ch = static_cast<char>(c);
+    note_trigger_run(grid, &ch, 1);
 }
 
 void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
@@ -302,8 +355,7 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                 utf8_bytes_needed_ = 0;
                 utf8_codepoint_ = 0;
                 reset_csi();
-                trigger_pos_ = 0;
-                std::memset(trigger_ring_, 0, sizeof(trigger_ring_));
+                trigger_tail_ = 0;
                 state_ = STATE_NORMAL;
             } else if (c == '7') { // DECSC: Save Cursor
                 grid.save_cursor();

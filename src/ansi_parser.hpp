@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <string>
+#include <cstdint>
 #include "terminal_grid.hpp"
 
 enum ParserState {
@@ -31,25 +32,25 @@ private:
     // process_char), so this is exactly equivalent.
     int csi_acc_ = 0;
     bool csi_acc_digits_ = false;
-    // Sliding window of the last kTriggerBufSize printable chars, scanned
-    // for "error"/"failed" to trigger the error-flash effect. A fixed
-    // array shifted via memmove, not std::string: this runs on literally
-    // every printable character parsed, and std::string::substr() here
-    // was heap-allocating + copying on almost every call once the window
-    // filled -- by far the hottest allocation in the whole parse path.
-    // Each printable character is written twice, at i and i+kTrigWindow, so
-    // the most recent kTrigWindow characters are always contiguous somewhere
-    // in the array and the suffix test is a plain memcmp with no wraparound
-    // handling. Replaces a 32-byte buffer that memmoved itself on every
-    // printable character once full; only the last six can ever matter, since
-    // "failed" is the longest pattern.
+    // The eight most recent printable ASCII characters, most recent in the low
+    // byte. Only "error" and "failed" are looked for, so six is the most that
+    // can ever matter. Unset slots read as zero, which cannot match a letter,
+    // so no "have we seen enough characters yet" counter is needed.
     //
-    // (A 64-bit shift register was tried first and measured slower: each
-    // character depended on the previous window value, serialising the loop.
-    // These two stores are independent.)
+    // This exists only to carry state *between* calls. Matching within a run
+    // reads the run itself, because only 'r' and 'd' can end a trigger word
+    // and so the scan is a byte compare with nothing to maintain per
+    // character. The previous shape kept a double-written ring updated on
+    // every printable character -- two stores, a rotating index and a compare
+    // each -- which sampled at 36% of parse time on plain text, more than
+    // writing those characters into the grid cost.
+    //
+    // A 64-bit register was tried for the *per-character* version once and was
+    // slower, because each character's shift depended on the previous one and
+    // that serialised the loop. Updating once per run instead removes exactly
+    // that dependency, which is what makes the same representation win here.
     static constexpr int kTrigWindow = 8;
-    char trigger_ring_[kTrigWindow * 2] = {};
-    int trigger_pos_ = 0;
+    uint64_t trigger_tail_ = 0;
 
     // CSI private marker (0x3C-0x3F: '<' '=' '>' '?') and intermediate byte
     // (0x20-0x2F: space, '!', '$', ...), 0 when absent.
@@ -95,8 +96,10 @@ private:
     void process_csi_sequence(TerminalGrid& grid, char command);
     void reset_csi();
 
-    // Feeds one printable ASCII character into the error/failed trigger
-    // window. Shared by the per-character path and the batched run path so the
-    // two cannot drift apart.
+    // Scans a run of printable ASCII for the error/failed trigger words and
+    // carries the tail forward. note_trigger_char() is the single-character
+    // case, expressed in terms of it so the per-character and batched paths
+    // cannot drift apart.
+    void note_trigger_run(TerminalGrid& grid, const char* run, int n);
     void note_trigger_char(TerminalGrid& grid, char32_t c);
 };
