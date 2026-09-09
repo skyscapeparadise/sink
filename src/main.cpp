@@ -46,6 +46,43 @@ static constexpr Uint64 kFadeHoldTimeoutMs = 3000;
 // create_terminal_window).
 static const float kHdrConsoleTextBoost = 1.6f;
 
+// Ceiling on the time one frame may spend parsing shell output, per pane, and
+// the granularity the ceiling is checked at.
+//
+// A time budget rather than a byte budget because the parser's throughput is
+// not a constant to predict against: it holds 180-196 MB/s on sink_bench's
+// 120-column grid but roughly 120 MB/s at 200 columns, since a wider grid
+// moves more per scrolled line. A byte cap chosen from the first figure
+// overshoots by 3x at the second. This measures instead.
+//
+// 8ms is half a 60Hz frame: enough left over for rendering, presenting and
+// event handling with room for variance, and measured to hold end-to-end
+// throughput at 57 MB/s against 100 MB/s uncapped. The trade is linear across
+// the range (5ms buys 32 MB/s, 14ms buys 89 MB/s) and this is the midpoint
+// where a frame still has as much time outside the parser as inside it.
+//
+// The slice is large enough that the clock read is noise and small enough
+// that overshoot past the budget is bounded to one slice -- measured at
+// 0.65ms over, on an 8ms budget.
+static constexpr Uint64 kParseBudgetNs = 8ull * 1000000ull;
+static constexpr size_t kParseSliceBytes = 64u << 10;
+
+// Parses as much of `data` as the budget allows and returns how much that was.
+// Splitting a burst across frames is safe because ANSIParser carries its state
+// between calls -- a half-built CSI, a partial UTF-8 sequence and a pending
+// charset designation all survive the boundary.
+static size_t parse_within_budget(Pane& pane, const char* data, size_t size) {
+    Uint64 start = SDL_GetTicksNS();
+    size_t pos = 0;
+    while (pos < size) {
+        size_t take = std::min(kParseSliceBytes, size - pos);
+        pane.parser.parse(pane.terminal, data + pos, take);
+        pos += take;
+        if (SDL_GetTicksNS() - start >= kParseBudgetNs) break;
+    }
+    return pos;
+}
+
 extern "C" void trigger_menu_render_tick() {
     if (g_app_state) {
         SDL_AppIterate(g_app_state);
@@ -2228,10 +2265,27 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         // running sinkdemo is streaming into; the other panes stay live)
         for (Pane* pane_ptr : all_panes(tw)) {
         Pane& pane = *pane_ptr;
-        std::vector<char>& output = pane.pty_output;
-        pane.pty.read_pending(output);
+        pane.pty.read_pending(pane.pty_output);
+        // Carry anything last frame's budget did not reach. The swap keeps the
+        // common no-backlog case free of a copy.
+        if (pane.pty_pending.empty()) {
+            pane.pty_pending.swap(pane.pty_output);
+        } else if (!pane.pty_output.empty()) {
+            pane.pty_pending.insert(pane.pty_pending.end(),
+                                    pane.pty_output.begin(), pane.pty_output.end());
+        }
+
+        // Parse only as much as fits in this frame's budget; the rest waits.
+        // Under a full-tilt `cat` a single drain reached 3MB and took 20.8ms
+        // to parse -- 125% of a 60Hz frame spent inside the parser, before
+        // rendering and before input was so much as looked at, which is why a
+        // runaway command was so hard to interrupt.
+        const char* out_data = pane.pty_pending.data();
+        size_t out_size = pane.pty_pending.size();
+        size_t consumed = 0;
+
         bool demo_owns_pane = SinkDemo::is_demo_running(tw) && pane_ptr == &tw->demo_target();
-        if (!output.empty() && !demo_owns_pane) {
+        if (out_size > 0 && !demo_owns_pane) {
             std::lock_guard<std::mutex> lock(pane.grid_mutex);
             if (tw->animated_typing) {
                 // A human at the keyboard produces isolated chunks (a keystroke's
@@ -2253,21 +2307,33 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 }
                 bool fast_turnover = pane.rapid_chunk_streak >= 3;
 
-                if (output.size() > 5 || fast_turnover) {
+                if (out_size > 5 || fast_turnover) {
                     // Large chunk / fast turnover (command or program output): bypass typing effect
                     if (!pane.animation_buffer.empty()) {
                         pane.parser.parse(pane.terminal, pane.animation_buffer.data(), pane.animation_buffer.size());
                         pane.animation_buffer.clear();
                     }
-                    pane.parser.parse(pane.terminal, output.data(), output.size());
+                    consumed = parse_within_budget(pane, out_data, out_size);
                 } else {
-                    // Small, unhurried chunk (user typing): queue for animated typing
-                    pane.animation_buffer.insert(pane.animation_buffer.end(), output.begin(), output.end());
+                    // Small, unhurried chunk (user typing): queue for animated
+                    // typing, which does its own pacing from there.
+                    pane.animation_buffer.insert(pane.animation_buffer.end(), out_data, out_data + out_size);
+                    consumed = out_size;
                 }
             } else {
-                pane.parser.parse(pane.terminal, output.data(), output.size());
+                consumed = parse_within_budget(pane, out_data, out_size);
             }
             pane.terminal.lock_prompt_boundary_if_unset();
+        }
+
+        // Retire what was handled. A pane a demo has taken over drops its
+        // shell output entirely rather than accumulating it, which is what
+        // happened implicitly when this buffer was a per-frame local.
+        if (demo_owns_pane) {
+            pane.pty_pending.clear();
+        } else if (consumed > 0) {
+            pane.pty_pending.erase(pane.pty_pending.begin(),
+                                   pane.pty_pending.begin() + static_cast<long>(consumed));
         }
 
         // Apply any OSC 0/2 title change from the data just parsed (only

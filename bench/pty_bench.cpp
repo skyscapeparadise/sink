@@ -43,7 +43,18 @@ static void settle(PTYBridge& pty, std::vector<char>& buf, int quiet_ms) {
 }
 
 int main(int argc, char** argv) {
-    std::string workload = (argc > 1) ? argv[1] : "bench/workloads/plain_text.bin";
+    std::string workload = "bench/workloads/plain_text.bin";
+    // "--paced" drains once per 16.7ms instead of as fast as possible, which
+    // is what SDL_AppIterate actually does behind vsync. It answers a
+    // different question from the throughput mode: not how much the terminal
+    // can swallow, but how long a single frame's worth of parsing takes when
+    // output is arriving flat out. A frame that spends 20ms parsing is a frame
+    // that is not handling input.
+    bool paced = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--paced") == 0) paced = true;
+        else workload = argv[i];
+    }
     const int cols = 200, rows = 50;
 
     std::FILE* f = std::fopen(workload.c_str(), "rb");
@@ -70,27 +81,70 @@ int main(int argc, char** argv) {
     const char* kMarker = "DONE_SINK_PTY_BENCH";
     std::string cmd = "cat '" + workload + "'; echo D\"\"ONE_SINK_PTY_BENCH\n";
 
+    // Mirrors main.cpp's parse budget. Only the paced mode applies it, since
+    // it is a per-frame budget and the free-running mode has no frames; keep
+    // the two in step if those constants change.
+    const double kParseBudgetMs = 8.0;
+    const size_t kParseSliceBytes = 64u << 10;
+
     size_t total = 0;
-    bool done = false;
+    bool saw_marker = false, done = false;
+    std::vector<char> pending;
     std::string tail; // carries the last few bytes so a split marker still matches
 
     auto t0 = clk::now();
     pty.write_to_pty(cmd.data(), cmd.size());
 
-    // One drain per simulated 60fps frame, matching SDL_AppIterate.
+    // Per-drain statistics. The interesting number is not the mean but the
+    // worst one: that is the frame the user feels.
+    double parse_ms_max = 0.0, parse_ms_total = 0.0;
+    size_t batch_max = 0;
+    int drains = 0;
+
     auto deadline = t0 + std::chrono::seconds(120);
+    auto next_frame = t0;
     while (!done && clk::now() < deadline) {
+        if (paced) {
+            next_frame += std::chrono::microseconds(16667);
+            std::this_thread::sleep_until(next_frame);
+        }
         pty.read_pending(chunk);
-        if (chunk.empty()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (!chunk.empty()) {
+            total += chunk.size();
+            tail.append(chunk.data(), chunk.size());
+            if (tail.find(kMarker) != std::string::npos) saw_marker = true;
+            if (tail.size() > 64) tail.erase(0, tail.size() - 64);
+            if (pending.empty()) pending.swap(chunk);
+            else pending.insert(pending.end(), chunk.begin(), chunk.end());
+        }
+        if (pending.empty()) {
+            if (saw_marker) { done = true; break; }
+            if (!paced) std::this_thread::sleep_for(std::chrono::milliseconds(1));
             continue;
         }
-        total += chunk.size();
-        parser.parse(grid, chunk.data(), chunk.size());
 
-        tail.append(chunk.data(), chunk.size());
-        if (tail.find(kMarker) != std::string::npos) done = true;
-        if (tail.size() > 64) tail.erase(0, tail.size() - 64);
+        auto p0 = clk::now();
+        size_t take = 0;
+        if (paced) {
+            while (take < pending.size()) {
+                size_t slice = std::min(kParseSliceBytes, pending.size() - take);
+                parser.parse(grid, pending.data() + take, slice);
+                take += slice;
+                if (std::chrono::duration<double, std::milli>(clk::now() - p0).count() >= kParseBudgetMs) break;
+            }
+        } else {
+            take = pending.size();
+            parser.parse(grid, pending.data(), take);
+        }
+        batch_max = std::max(batch_max, take);
+        auto p1 = clk::now();
+        double ms = std::chrono::duration<double, std::milli>(p1 - p0).count();
+        parse_ms_max = std::max(parse_ms_max, ms);
+        parse_ms_total += ms;
+        ++drains;
+
+        pending.erase(pending.begin(), pending.begin() + static_cast<long>(take));
+        if (saw_marker && pending.empty()) { done = true; break; }
     }
     auto t1 = clk::now();
     double secs = std::chrono::duration<double>(t1 - t0).count();
@@ -104,5 +158,14 @@ int main(int argc, char** argv) {
     std::printf("elapsed     : %.3f s\n", secs);
     std::printf("throughput  : %.1f MB/s   (pty read -> hand-off -> parse)\n",
                 (total / 1048576.0) / secs);
+    std::printf("mode        : %s\n", paced ? "paced (one drain per 16.7ms frame)" : "free-running");
+    std::printf("drains      : %d\n", drains);
+    std::printf("parsed max  : %.0f KB in one pass\n", batch_max / 1024.0);
+    std::printf("parse/drain : %.2f ms mean, %.2f ms worst\n",
+                drains ? parse_ms_total / drains : 0.0, parse_ms_max);
+    if (paced) {
+        std::printf("frame budget: %.0f%% of 16.7ms used by parsing, at worst\n",
+                    100.0 * parse_ms_max / 16.667);
+    }
     return 0;
 }

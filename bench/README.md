@@ -295,3 +295,41 @@ End to end most of that headroom is spent elsewhere, on the pty itself and on
 the parser, which is why the whole-pipeline number is the honest one to quote.
 It is also why this benchmark had to exist to justify the change: the isolated
 figure makes the fix look ~145x better than it is.
+
+### `--paced`: what one frame costs
+
+`./build/pty_bench --paced` drains once per 16.7ms instead of as fast as
+possible, which is what `SDL_AppIterate` does behind vsync. It answers a
+different question: not how much the terminal can swallow, but how much of a
+frame goes into the parser while output is arriving flat out. A frame that
+spends 20ms parsing is a frame that is not drawing and not reading input.
+
+| | worst parse per frame | share of 16.7ms | throughput |
+|---|---|---|---|
+| no budget | 20.80 ms | 125% | 100 MB/s |
+| 8ms budget | 8.91 ms | 53% | 53 MB/s |
+
+Uncapped, a single drain reached 3MB and one frame's parsing alone overran the
+whole frame -- which is what made a runaway command so hard to interrupt.
+
+The budget is in *time*, not bytes, because the parser's throughput is not a
+constant to predict against: 180-196 MB/s on `sink_bench`'s 120-column grid
+but roughly 120 MB/s at 200 columns, since a wider grid moves more per
+scrolled line. A byte cap picked from the first figure overshoots by 3x at the
+second; the first attempt here did exactly that.
+
+The trade is linear, and picking 8ms was a judgement call against measurement
+rather than a derivation:
+
+| budget | throughput | share of frame |
+|---|---|---|
+| 5 ms | 32 MB/s | 33% |
+| 8 ms | 57 MB/s | 52% |
+| 10 ms | 65 MB/s | 64% |
+| 12 ms | 72 MB/s | 76% |
+| 14 ms | 89 MB/s | 86% |
+
+8ms leaves a frame as much time outside the parser as inside it. Throughput
+still costs about half, which is the deliberate part: an 8MB `cat` goes from
+0.08s to 0.15s and nobody notices, while a runaway one stays interruptible
+instead of freezing the window.

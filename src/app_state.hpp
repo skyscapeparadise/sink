@@ -36,6 +36,12 @@ struct Pane {
     // the reader thread's trade places instead of being reallocated.
     std::vector<char> pty_output;
 
+    // Bytes read from the pty and not yet parsed. Parsing is capped per frame
+    // (kMaxParseBytesPerFrame), so a program dumping output faster than the
+    // parser absorbs it leaves a backlog here rather than stretching the
+    // frame until it is gone.
+    std::vector<char> pty_pending;
+
     // Typewriter-animation pacing
     std::vector<char> animation_buffer;
     Uint64 last_output_chunk_time = 0;
