@@ -83,6 +83,133 @@ static size_t parse_within_budget(Pane& pane, const char* data, size_t size) {
     return pos;
 }
 
+// --- Kitty keyboard protocol encoding -------------------------------------
+//
+// Only the keys the protocol actually disambiguates are re-encoded. Ordinary
+// typing keeps arriving as SDL_EVENT_TEXT_INPUT and is written through
+// untouched, which is what keeps dead keys, IME and international layouts
+// working -- reporting every key as an escape code (the protocol's flag 8)
+// would mean taking that path over, and is deliberately not supported.
+
+// The protocol's modifier bitfield, before the +1 it carries on the wire.
+static int kitty_modifier_bits(SDL_Keymod mod) {
+    int m = 0;
+    if (mod & SDL_KMOD_SHIFT) m |= 1;
+    if (mod & SDL_KMOD_ALT)   m |= 2;
+    if (mod & SDL_KMOD_CTRL)  m |= 4;
+    if (mod & SDL_KMOD_GUI)   m |= 8;
+    return m;
+}
+
+// Keys with an established CSI form: the modifiers ride in that form rather
+// than in a CSI u sequence, which is what keeps them working for readers that
+// only understand the legacy encoding.
+struct KittyFunctionalKey {
+    SDL_Keycode sym;
+    char final_byte; // 0 when the key uses the CSI <number> ~ form instead
+    int number;
+};
+static const KittyFunctionalKey kKittyFunctionalKeys[] = {
+    { SDLK_UP,       'A', 1 },  { SDLK_DOWN,     'B', 1 },
+    { SDLK_RIGHT,    'C', 1 },  { SDLK_LEFT,     'D', 1 },
+    { SDLK_HOME,     'H', 1 },  { SDLK_END,      'F', 1 },
+    { SDLK_F1,       'P', 1 },  { SDLK_F2,       'Q', 1 },
+    { SDLK_F3,       'R', 1 },  { SDLK_F4,       'S', 1 },
+    { SDLK_INSERT,    0,  2 },  { SDLK_DELETE,    0,  3 },
+    { SDLK_PAGEUP,    0,  5 },  { SDLK_PAGEDOWN,  0,  6 },
+    { SDLK_F5,        0, 15 },  { SDLK_F6,        0, 17 },
+    { SDLK_F7,        0, 18 },  { SDLK_F8,        0, 19 },
+    { SDLK_F9,        0, 20 },  { SDLK_F10,       0, 21 },
+    { SDLK_F11,       0, 23 },  { SDLK_F12,       0, 24 },
+};
+
+// Builds the sequence for one key event, or returns false to mean "this key
+// is not one the protocol changes here -- use the existing handling".
+//
+// `event_type` is 1 press, 2 repeat, 3 release, and is only ever emitted when
+// the app asked for event reporting.
+static bool encode_kitty_key(SDL_Keycode sym, SDL_Keymod mod, bool is_repeat,
+                             bool is_press, int flags, std::string& out) {
+    if (!(flags & TerminalGrid::kKbdDisambiguate)) return false;
+    const bool report_events = (flags & TerminalGrid::kKbdReportEvents) != 0;
+    if (!is_press && !report_events) return false; // releases are invisible otherwise
+
+    const int mods = kitty_modifier_bits(mod);
+    const int event_type = is_press ? (is_repeat ? 2 : 1) : 3;
+
+    // The modifier field is omitted when there is nothing to report, unless an
+    // event type has to be carried -- the two share one parameter.
+    auto suffix = [&](int leading) {
+        std::string t;
+        if (mods != 0 || report_events) {
+            t += std::to_string(leading);
+            t += ';';
+            t += std::to_string(mods + 1);
+            if (report_events) {
+                t += ':';
+                t += std::to_string(event_type);
+            }
+        } else if (leading != 1) {
+            t += std::to_string(leading);
+        }
+        return t;
+    };
+
+    for (const KittyFunctionalKey& k : kKittyFunctionalKeys) {
+        if (k.sym != sym) continue;
+        // Unmodified arrows with nothing to report are left alone so DECCKM
+        // still decides between the CSI and SS3 forms for them.
+        if (mods == 0 && !report_events) return false;
+        out = "\x1b[";
+        if (k.final_byte) {
+            out += suffix(k.number);
+            out += k.final_byte;
+        } else {
+            out += suffix(k.number);
+            out += '~';
+        }
+        return true;
+    }
+
+    // Keys the protocol gives a codepoint of their own.
+    char32_t code = 0;
+    switch (sym) {
+        case SDLK_ESCAPE:    code = 27;  break;
+        case SDLK_RETURN:
+        case SDLK_KP_ENTER:  code = 13;  break;
+        case SDLK_TAB:       code = 9;   break;
+        case SDLK_BACKSPACE: code = 127; break;
+        default:
+            // Printable keys carry their unshifted Unicode codepoint, which is
+            // what an SDL keycode already is once the scancode-namespace bit
+            // is ruled out.
+            if (sym > 0 && sym < 0x110000 && !(sym & SDLK_SCANCODE_MASK)) {
+                code = static_cast<char32_t>(sym);
+            }
+            break;
+    }
+    if (code == 0) return false;
+
+    // Escape is re-encoded even unmodified -- telling it apart from the ESC
+    // that introduces every other sequence is the whole point of the flag.
+    // Everything else keeps its legacy byte until a modifier makes it
+    // ambiguous, so plain typing, Enter, Tab and Backspace are untouched.
+    if (mods == 0 && !report_events && sym != SDLK_ESCAPE) return false;
+
+    out = "\x1b[";
+    out += std::to_string(static_cast<unsigned>(code));
+    if (mods != 0 || report_events) {
+        out += ';';
+        out += std::to_string(mods + 1);
+        if (report_events) {
+            out += ':';
+            out += std::to_string(event_type);
+        }
+    }
+    out += 'u';
+    return true;
+}
+
 extern "C" void trigger_menu_render_tick() {
     if (g_app_state) {
         SDL_AppIterate(g_app_state);
@@ -1635,6 +1762,17 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             tw->fpane().scroll_velocity = 0.0f;
             tw->fpane().scroll_accumulator = 0.0f;
 
+            // Kitty keyboard protocol, if this pane's app negotiated it.
+            // `continue` rather than `return`, so broadcasting still reaches
+            // the remaining windows -- each pane carries its own flags and one
+            // may be running a full-screen app while another is at a shell.
+            std::string kitty_seq;
+            if (encode_kitty_key(sym, mod, event->key.repeat, true,
+                                 tw->fpane().terminal.kbd_flags(), kitty_seq)) {
+                tw->fpane().pty.write_to_pty(kitty_seq.data(), kitty_seq.size());
+                continue;
+            }
+
             if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) {
                 std::string typed_line = tw->fpane().terminal.get_current_line_text();
                 
@@ -1700,6 +1838,27 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                     char control_char = static_cast<char>(sym - SDLK_A + 1);
                     tw->fpane().pty.write_to_pty(&control_char, 1);
                 }
+            }
+        }
+    } else if (event->type == SDL_EVENT_KEY_UP) {
+        // Releases exist only for apps that asked for event reporting; with
+        // the legacy encoding there is nothing to send and this is skipped
+        // entirely, so ordinary typing is unaffected.
+        if (!target_tw) return SDL_APP_CONTINUE;
+        if (state->settings_ui.is_open() && SDL_GetKeyboardFocus() == state->settings_ui.get_window()) {
+            return SDL_APP_CONTINUE;
+        }
+        if (target_tw->search_drawer_open) return SDL_APP_CONTINUE;
+
+        std::vector<TerminalWindow*> release_targets;
+        if (state->input_broadcasting) release_targets = state->windows;
+        else release_targets.push_back(target_tw);
+
+        for (auto* tw : release_targets) {
+            std::string kitty_seq;
+            if (encode_kitty_key(event->key.key, event->key.mod, false, false,
+                                 tw->fpane().terminal.kbd_flags(), kitty_seq)) {
+                tw->fpane().pty.write_to_pty(kitty_seq.data(), kitty_seq.size());
             }
         }
     } else if (event->type == SDL_EVENT_WINDOW_CLOSE_REQUESTED) {

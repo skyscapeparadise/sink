@@ -346,6 +346,37 @@ void TerminalGrid::resize(int cols, int rows) {
     origin_mode_ = false;
 }
 
+void TerminalGrid::kbd_set_flags(int flags, int mode) {
+    flags &= kKbdSupported;
+    int& current = kbd_stack_.back();
+    switch (mode) {
+        case 1: current = flags; break;   // set to exactly these
+        case 2: current |= flags; break;  // turn these on, leave the rest
+        case 3: current &= ~flags; break; // turn these off
+        default: break;                   // unknown mode: change nothing
+    }
+}
+
+void TerminalGrid::kbd_push_flags(int flags) {
+    if (kbd_stack_.size() >= kMaxKbdStack) {
+        // Drop the oldest rather than refusing the push. A program that
+        // pushes without ever popping then degrades gradually instead of
+        // wedging the stack, and the entry lost is the one least likely to
+        // still matter.
+        kbd_stack_.erase(kbd_stack_.begin());
+    }
+    kbd_stack_.push_back(flags & kKbdSupported);
+}
+
+void TerminalGrid::kbd_pop_flags(int count) {
+    // The bottom entry is the legacy mode and stays: popping past it would
+    // leave nothing to read, and "no flags" is where a pop should bottom out
+    // in any case.
+    for (int i = 0; i < count && kbd_stack_.size() > 1; ++i) {
+        kbd_stack_.pop_back();
+    }
+}
+
 void TerminalGrid::soft_reset() {
     // DECSTR. The point of it is to restore known *modes* without disturbing
     // what is on screen, so this deliberately does not do most of what
@@ -938,6 +969,7 @@ void TerminalGrid::full_reset() {
     origin_mode_ = false;
     cursor_shape_ = CursorShape::Block;
     reset_tab_stops();
+    kbd_stack_.assign(1, 0);
 
     scroll_offset_ = 0;
     display_scroll_offset_ = 0.0f;

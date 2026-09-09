@@ -1070,8 +1070,26 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
             if (!is_private_mode()) grid.save_cursor();
             break;
         }
-        case 'u': { // Restore Cursor (ANSI.SYS)
-            if (!is_private_mode()) grid.restore_cursor(); // CSI ? Ps u = XTRESTORE
+        case 'u': {
+            // The private marker selects between four kitty keyboard protocol
+            // sequences and, with no marker at all, ANSI.SYS restore-cursor.
+            switch (csi_private_) {
+                case '?': // query the flags currently in effect
+                    grid.queue_reply("\x1b[?" + std::to_string(grid.kbd_flags()) + "u");
+                    break;
+                case '=': // set: Ps2 chooses assign (1), or (2), and-not (3)
+                    grid.kbd_set_flags(get_param(0, 0), get_param(1, 1));
+                    break;
+                case '>': // push a new flags entry (an app entering its mode)
+                    grid.kbd_push_flags(get_param(0, 0));
+                    break;
+                case '<': // pop entries (an app leaving it)
+                    grid.kbd_pop_flags(get_count_param(0, 1));
+                    break;
+                default:
+                    grid.restore_cursor();
+                    break;
+            }
             break;
         }
         default:

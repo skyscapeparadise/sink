@@ -1422,6 +1422,77 @@ static void test_decrqm() {
     CHECK(!g.has_pending_reply());
 }
 
+// Kitty keyboard protocol negotiation. The key *encoding* lives in main.cpp
+// against SDL events and is not reachable from here; what is testable -- and
+// what an application actually depends on -- is the flags handshake.
+static void test_kitty_keyboard_flags() {
+    TerminalGrid g; g.resize(40, 10);
+    ANSIParser p;
+
+    // Nothing negotiated to begin with.
+    feed(p, g, "\x1b[?u");
+    CHECK(g.take_pending_reply() == "\x1b[?0u");
+
+    // CSI = flags ; 1 u assigns.
+    feed(p, g, "\x1b[=1;1u\x1b[?u");
+    CHECK(g.take_pending_reply() == "\x1b[?1u");
+    feed(p, g, "\x1b[=3;1u\x1b[?u");
+    CHECK(g.take_pending_reply() == "\x1b[?3u");
+
+    // Mode 3 clears the given bits, mode 2 sets them.
+    feed(p, g, "\x1b[=2;3u\x1b[?u");
+    CHECK(g.take_pending_reply() == "\x1b[?1u");
+    feed(p, g, "\x1b[=2;2u\x1b[?u");
+    CHECK(g.take_pending_reply() == "\x1b[?3u");
+
+    // Unsupported flags are masked out, so the reply describes what will
+    // really happen rather than what was asked for. 4, 8 and 16 are not
+    // implemented; asking for everything gets back only 1|2.
+    feed(p, g, "\x1b[=31;1u\x1b[?u");
+    CHECK(g.take_pending_reply() == "\x1b[?3u");
+
+    // Push and pop: an app enters its mode and leaves it without having to
+    // know what the shell underneath had set.
+    feed(p, g, "\x1b[=1;1u");
+    feed(p, g, "\x1b[>3u\x1b[?u");
+    CHECK(g.take_pending_reply() == "\x1b[?3u");
+    feed(p, g, "\x1b[<u\x1b[?u");
+    CHECK(g.take_pending_reply() == "\x1b[?1u"); // back to what was underneath
+
+    // Popping more than was pushed bottoms out at the base entry rather than
+    // running off the stack. That entry keeps whatever was last assigned to
+    // it -- a pop returns to the level below, it does not undo an assignment
+    // made at the bottom, which is what CSI = 0 ; 1 u is for.
+    feed(p, g, "\x1b[<99u\x1b[?u");
+    CHECK(g.take_pending_reply() == "\x1b[?1u");
+    feed(p, g, "\x1b[=0;1u\x1b[?u");
+    CHECK(g.take_pending_reply() == "\x1b[?0u");
+
+    // A program that pushes without ever popping degrades instead of wedging:
+    // the stack is capped and evicts its oldest entry, so it stays bounded and
+    // stays poppable. Enough pushes will evict the base entry, which is why
+    // this ends at 1 rather than 0 -- bounded and recoverable, not stuck.
+    for (int i = 0; i < 100; ++i) feed(p, g, "\x1b[>1u");
+    feed(p, g, "\x1b[?u");
+    CHECK(g.take_pending_reply() == "\x1b[?1u");
+    feed(p, g, "\x1b[<99u\x1b[?u");
+    CHECK(g.take_pending_reply() == "\x1b[?1u");
+    feed(p, g, "\x1b[=0;1u\x1b[?u");
+    CHECK(g.take_pending_reply() == "\x1b[?0u");
+
+    // RIS clears the negotiation along with everything else.
+    feed(p, g, "\x1b[=3;1u");
+    feed(p, g, "\x1b" "c");
+    feed(p, g, "\x1b[?u");
+    CHECK(g.take_pending_reply() == "\x1b[?0u");
+
+    // Without a private marker this is still ANSI.SYS restore-cursor, which
+    // shares the final byte.
+    feed(p, g, "\x1b[5;7H\x1b[s\x1b[1;1H\x1b[u");
+    CHECK(g.get_cursor_row() == 4 && g.get_cursor_col() == 6);
+    CHECK(!g.has_pending_reply());
+}
+
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
@@ -1475,6 +1546,7 @@ int main() {
     test_decstr();
     test_xtwinops();
     test_decrqm();
+    test_kitty_keyboard_flags();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;

@@ -371,6 +371,30 @@ public:
     bool has_pending_reply() const { return !pending_reply_.empty(); }
     std::string take_pending_reply();
 
+    // Kitty keyboard protocol state.
+    //
+    // The legacy input encoding is ambiguous by construction: Ctrl+I and Tab
+    // are both 0x09, Ctrl+M and Enter are both 0x0D, Ctrl+[ and Escape are
+    // both 0x1B, and there is no encoding at all for a key release. The
+    // protocol replaces those with unambiguous CSI sequences, negotiated
+    // through a flags word.
+    //
+    // Flags live on a stack because the protocol's enter/leave form is
+    // push/pop: a full-screen app pushes what it needs on startup and pops on
+    // exit, so one that dies without popping cannot leave the terminal in its
+    // mode forever -- the next app pushes and pops over the top of it.
+    static constexpr int kKbdDisambiguate = 1; // Ctrl/Alt/Esc get CSI u forms
+    static constexpr int kKbdReportEvents = 2; // press/repeat/release
+    // What sink actually honours. Incoming flags are masked to this, so the
+    // query reply describes what will really happen rather than what was
+    // asked for -- which is how the protocol expects negotiation to work.
+    static constexpr int kKbdSupported = kKbdDisambiguate | kKbdReportEvents;
+
+    int kbd_flags() const { return kbd_stack_.back(); }
+    void kbd_set_flags(int flags, int mode); // CSI = flags ; mode u
+    void kbd_push_flags(int flags);          // CSI > flags u
+    void kbd_pop_flags(int count);           // CSI < count u
+
     // OSC 133 shell-integration prompt marks and jump navigation
     void mark_prompt_row();
     bool is_prompt_row(int row) const {
@@ -509,6 +533,11 @@ private:
     int cell_px_h_ = 0;
     int screen_cols_ = 0;
     int screen_rows_ = 0;
+
+    // Bottom entry is the legacy (no-flags) mode and is never popped, so
+    // kbd_flags() always has something to read.
+    std::vector<int> kbd_stack_{0};
+    static constexpr size_t kMaxKbdStack = 16;
     std::string pending_reply_;
     static constexpr size_t kMaxPendingReplyBytes = 4096;
 
