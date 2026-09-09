@@ -1503,8 +1503,19 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 return SDL_APP_CONTINUE;
             } else if (sym == SDLK_BACKSPACE || sym == SDLK_DELETE) {
                 if (!target_tw->search_input_text.empty()) {
-                    target_tw->search_input_text.pop_back();
-                    target_tw->fpane().terminal.set_search_query(target_tw->search_input_text);
+                    // Drop a whole character, not a byte. SDL delivers text
+                    // input as UTF-8, so pop_back() on anything non-ASCII left
+                    // a dangling continuation byte in the query -- the search
+                    // then matched nothing and kept doing so for every further
+                    // keystroke, since every later query still carried the
+                    // broken prefix.
+                    std::string& q = target_tw->search_input_text;
+                    q.pop_back();
+                    while (!q.empty() &&
+                           (static_cast<unsigned char>(q.back()) & 0xC0) == 0x80) {
+                        q.pop_back();
+                    }
+                    target_tw->fpane().terminal.set_search_query(q);
                 }
                 return SDL_APP_CONTINUE;
             } else if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) {
