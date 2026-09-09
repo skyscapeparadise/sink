@@ -140,6 +140,19 @@ public:
     // an alt screen never exited, a scroll region never widened -- until
     // output scrolls inside a few rows and the screen looks frozen.
     void full_reset();
+    // Tab stops. HTS (ESC H) sets one at the cursor, TBC (CSI g) clears one or
+    // all, and CHT/CBT (CSI I / CSI Z) walk between them. tab_forward(1) is
+    // what a plain HT does.
+    void set_tab_stop();
+    void clear_tab_stop();
+    void clear_all_tab_stops();
+    void reset_tab_stops(); // back to every 8th column
+    void tab_forward(int count);
+    void tab_backward(int count);
+    bool is_tab_stop(int col) const {
+        return col >= 0 && col < static_cast<int>(tab_stops_.size()) && tab_stops_[col];
+    }
+
     void clear_line(int row, int mode); // 0 = cursor to end, 1 = start to cursor, 2 = entire line
     void insert_character(int count); // ICH: open count blank cells at the cursor
     void delete_character(int count);
@@ -419,6 +432,13 @@ private:
     // read and write is a shift-and-mask, and scroll_up() shifts both of these
     // one position on every newline. A byte per row makes that shift a plain
     // memmove and shows up in the parser benchmark.
+    // One flag per column. Defaults to every 8th, which is what the hardcoded
+    // (col + 8) & ~7 arithmetic this replaces always produced -- but that
+    // arithmetic had nowhere to record a stop, so HTS and TBC could not be
+    // implemented on top of it and a program that moved its stops silently
+    // kept the default ones.
+    std::vector<uint8_t> tab_stops_;
+
     std::vector<uint8_t> row_wrapped_;
     std::vector<uint8_t> row_prompt_; // per active row, parallel to row_wrapped_
     bool wrap_pending_ = false;

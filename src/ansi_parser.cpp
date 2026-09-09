@@ -229,9 +229,11 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                         grid.set_cursor_col(grid.get_cursor_col() - 1);
                         return;
                     case NA_TAB: {
-                        // Tab: Move to next tab stop (multiples of 8)
-                        int next_tab = (grid.get_cursor_col() + 8) & ~7;
-                        grid.set_cursor_col(next_tab);
+                        // HT: to the next tab stop. The stops are a real table
+                        // now rather than (col + 8) & ~7 arithmetic, so a
+                        // program that moved them with HTS/TBC gets the stops
+                        // it asked for instead of the default ones.
+                        grid.tab_forward(1);
                         return;
                     }
                     case NA_IGNORE:
@@ -312,6 +314,9 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
             } else if (c == 'E') { // NEL: Next Line (index + carriage return)
                 grid.index();
                 grid.set_cursor_col(0);
+                state_ = STATE_NORMAL;
+            } else if (c == 'H') { // HTS: set a tab stop at the cursor column
+                grid.set_tab_stop();
                 state_ = STATE_NORMAL;
             } else if (c == 'M') { // RI: Reverse Index (up one, scroll at margin)
                 grid.reverse_index();
@@ -677,6 +682,23 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
         case 'D': { // Cursor Backward (CUB)
             int offset = get_count_param(0, 1);
             grid.set_cursor_col(grid.get_cursor_col() - offset);
+            break;
+        }
+        case 'I': { // CHT -- Cursor Forward Tabulation
+            grid.tab_forward(get_count_param(0, 1));
+            break;
+        }
+        case 'Z': { // CBT -- Cursor Backward Tabulation
+            grid.tab_backward(get_count_param(0, 1));
+            break;
+        }
+        case 'g': { // TBC -- Tab Clear
+            // 0 (and the default) clears the stop under the cursor; 3 clears
+            // every stop. The other values address stops in a vertical
+            // dimension the VT100 had and this does not.
+            int mode = get_param(0, 0);
+            if (mode == 0) grid.clear_tab_stop();
+            else if (mode == 3) grid.clear_all_tab_stops();
             break;
         }
         case 'E': { // Cursor Next Line (CNL)

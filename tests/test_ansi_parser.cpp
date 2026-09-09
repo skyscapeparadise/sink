@@ -1148,6 +1148,65 @@ static void test_cnl_cpl() {
     CHECK(g.get_cursor_row() == 9 && g.get_cursor_col() == 0);
 }
 
+// Tab stops were arithmetic ((col + 8) & ~7) with nowhere to record a change,
+// so HTS and TBC could not exist and a program that moved its stops silently
+// kept the default ones.
+static void test_tab_stops() {
+    TerminalGrid g; g.resize(40, 3);
+    ANSIParser p;
+
+    // Defaults are every 8th column, and HT lands on them.
+    CHECK(!g.is_tab_stop(0));
+    CHECK(g.is_tab_stop(8));
+    CHECK(g.is_tab_stop(16));
+    feed(p, g, "\x1b[1;1H\t");
+    CHECK(g.get_cursor_col() == 8);
+    feed(p, g, "\t");
+    CHECK(g.get_cursor_col() == 16);
+
+    // Starting *on* a stop still advances to the next one.
+    feed(p, g, "\x1b[1;9H\t");
+    CHECK(g.get_cursor_col() == 16);
+
+    // CHT walks several stops at once; CBT walks back.
+    feed(p, g, "\x1b[1;1H\x1b[3I");
+    CHECK(g.get_cursor_col() == 24);
+    feed(p, g, "\x1b[2Z");
+    CHECK(g.get_cursor_col() == 8);
+
+    // Past the last stop, HT stops at the right margin rather than wrapping.
+    feed(p, g, "\x1b[1;38H\t");
+    CHECK(g.get_cursor_col() == 39);
+    // Past the first, CBT stops at column 1.
+    feed(p, g, "\x1b[1;3H\x1b[9Z");
+    CHECK(g.get_cursor_col() == 0);
+
+    // TBC 3 clears every stop; HT then runs to the right margin.
+    feed(p, g, "\x1b[3g");
+    CHECK(!g.is_tab_stop(8));
+    feed(p, g, "\x1b[1;1H\t");
+    CHECK(g.get_cursor_col() == 39);
+
+    // HTS sets a stop at the cursor, and TBC 0 clears just that one.
+    feed(p, g, "\x1b[1;5H\x1bH");
+    CHECK(g.is_tab_stop(4));
+    feed(p, g, "\x1b[1;1H\t");
+    CHECK(g.get_cursor_col() == 4);
+    feed(p, g, "\x1b[1;5H\x1b[0g");
+    CHECK(!g.is_tab_stop(4));
+
+    // RIS restores the default stops.
+    feed(p, g, "\x1b" "c");
+    CHECK(g.is_tab_stop(8) && g.is_tab_stop(16));
+
+    // Custom stops survive a resize; newly exposed columns get defaults.
+    feed(p, g, "\x1b[3g\x1b[1;5H\x1bH");
+    g.resize(60, 3);
+    CHECK(g.is_tab_stop(4));   // kept
+    CHECK(!g.is_tab_stop(8));  // still cleared
+    CHECK(g.is_tab_stop(40));  // new column, default pattern
+}
+
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
@@ -1196,6 +1255,7 @@ int main() {
     test_ich();
     test_decscusr();
     test_cnl_cpl();
+    test_tab_stops();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;

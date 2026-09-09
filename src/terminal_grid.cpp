@@ -131,6 +131,7 @@ void TerminalGrid::resize(int cols, int rows) {
         row_base_ = 0;
         row_wrapped_.resize(rows, false);
         row_prompt_.resize(rows, false);
+        reset_tab_stops();
         scroll_top_ = 0;
         scroll_bottom_ = rows_ - 1;
         origin_mode_ = false;
@@ -327,10 +328,75 @@ void TerminalGrid::resize(int cols, int rows) {
     cursor_row_ = std::clamp(cursor_row_, 0, rows_ - 1);
     wrap_pending_ = false;
 
+    // Stops are per column, so a width change has to grow or shrink the table.
+    // Existing stops are kept and only the newly exposed columns get the
+    // default every-8 pattern -- an app that set its own stops keeps them
+    // across a resize rather than silently reverting.
+    {
+        int old_cols = static_cast<int>(tab_stops_.size());
+        tab_stops_.resize(cols_ > 0 ? cols_ : 0, 0);
+        for (int c = ((old_cols + 7) / 8) * 8; c < cols_; c += 8) {
+            if (c >= old_cols) tab_stops_[c] = 1;
+        }
+    }
+
     // Margins are tied to the old geometry; xterm resets them on resize too
     scroll_top_ = 0;
     scroll_bottom_ = rows_ - 1;
     origin_mode_ = false;
+}
+
+void TerminalGrid::reset_tab_stops() {
+    tab_stops_.assign(cols_ > 0 ? cols_ : 0, 0);
+    for (int c = 8; c < cols_; c += 8) tab_stops_[c] = 1;
+}
+
+void TerminalGrid::set_tab_stop() {
+    if (cursor_col_ >= 0 && cursor_col_ < static_cast<int>(tab_stops_.size())) {
+        tab_stops_[cursor_col_] = 1;
+    }
+}
+
+void TerminalGrid::clear_tab_stop() {
+    if (cursor_col_ >= 0 && cursor_col_ < static_cast<int>(tab_stops_.size())) {
+        tab_stops_[cursor_col_] = 0;
+    }
+}
+
+void TerminalGrid::clear_all_tab_stops() {
+    std::fill(tab_stops_.begin(), tab_stops_.end(), 0);
+}
+
+void TerminalGrid::tab_forward(int count) {
+    if (cols_ <= 0) return;
+    int col = cursor_col_;
+    for (int n = 0; n < count; ++n) {
+        int next = cols_ - 1; // no stop ahead: stop at the right margin
+        for (int c = col + 1; c < cols_; ++c) {
+            if (is_tab_stop(c)) { next = c; break; }
+        }
+        col = next;
+        if (col >= cols_ - 1) break;
+    }
+    set_cursor_col(col);
+    // A tab satisfies a pending wrap the same way a printable character
+    // would not: it moves within the row it is already on.
+    wrap_pending_ = false;
+}
+
+void TerminalGrid::tab_backward(int count) {
+    if (cols_ <= 0) return;
+    int col = cursor_col_;
+    for (int n = 0; n < count; ++n) {
+        int prev = 0; // no stop behind: stop at the left margin
+        for (int c = col - 1; c > 0; --c) {
+            if (is_tab_stop(c)) { prev = c; break; }
+        }
+        col = prev;
+        if (col == 0) break;
+    }
+    set_cursor_col(col);
+    wrap_pending_ = false;
 }
 
 void TerminalGrid::set_cell(int col, int row, char32_t codepoint, const SDL_FColor& fg, const SDL_FColor& bg) {
@@ -838,6 +904,7 @@ void TerminalGrid::full_reset() {
     scroll_bottom_ = rows_ - 1;
     origin_mode_ = false;
     cursor_shape_ = CursorShape::Block;
+    reset_tab_stops();
 
     scroll_offset_ = 0;
     display_scroll_offset_ = 0.0f;
