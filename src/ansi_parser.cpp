@@ -131,6 +131,7 @@ void ANSIParser::parse(TerminalGrid& grid, const char* data, size_t size) {
                 for (int k = 0; k < wrote; ++k) {
                     note_trigger_char(grid, static_cast<unsigned char>(data[i + k]));
                 }
+                last_graphic_ = static_cast<unsigned char>(data[i + wrote - 1]);
                 i += static_cast<size_t>(wrote) - 1; // the loop's ++i consumes the last
                 continue;
             }
@@ -273,6 +274,7 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                 out = dec_graphics[c - 0x60];
             }
             grid.write_character(out);
+            last_graphic_ = out;
 
             if (c >= 32 && c < 127) {
                 note_trigger_char(grid, c);
@@ -296,6 +298,7 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                 // survive a reset any more than the grid's modes do.
                 grid.full_reset();
                 g0_dec_graphics_ = false;
+                last_graphic_ = 0;
                 utf8_bytes_needed_ = 0;
                 utf8_codepoint_ = 0;
                 reset_csi();
@@ -682,6 +685,20 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
         case 'D': { // Cursor Backward (CUB)
             int offset = get_count_param(0, 1);
             grid.set_cursor_col(grid.get_cursor_col() - offset);
+            break;
+        }
+        case 'b': { // REP -- Repeat the preceding graphic character
+            if (last_graphic_ != 0) {
+                int n = get_count_param(0, 1);
+                // Bounded to a screenful. The count is attacker-controlled,
+                // and "CSI 2147483647 b" would otherwise sit in the parser
+                // for minutes -- which would also walk straight through the
+                // per-frame parse budget, since that is checked between
+                // slices and not inside one sequence.
+                int limit = grid.get_cols() * grid.get_rows();
+                if (limit > 0 && n > limit) n = limit;
+                for (int k = 0; k < n; ++k) grid.write_character(last_graphic_);
+            }
             break;
         }
         case 'I': { // CHT -- Cursor Forward Tabulation

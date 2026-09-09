@@ -62,6 +62,12 @@ private:
     char csi_intermediate_ = 0;
     bool is_private_mode() const { return csi_private_ == '?'; }
 
+    // Last graphic character written, which is what REP (CSI Ps b) repeats.
+    // 0 means nothing has been written yet; ECMA-48 leaves that case
+    // undefined and repeating a space would quietly corrupt the line, so REP
+    // does nothing until there is something to repeat.
+    char32_t last_graphic_ = 0;
+
     // Base-palette (SGR 30-37) foreground index currently in effect, or -1
     // for default/truecolor/explicit-bright. Needed so bold can brighten the
     // color whether SGR 1 arrives before or after the color parameter.

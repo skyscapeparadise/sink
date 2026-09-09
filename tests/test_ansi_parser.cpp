@@ -1207,6 +1207,46 @@ static void test_tab_stops() {
     CHECK(g.is_tab_stop(40));  // new column, default pattern
 }
 
+// REP repeats the last graphic character, which means the parser has to
+// remember it across both the per-character path and the batched ASCII run.
+static void test_rep() {
+    TerminalGrid g; g.resize(20, 3);
+    ANSIParser p;
+
+    feed(p, g, "a\x1b[4b");
+    CHECK(row_text(g, 0) == "aaaaa");
+
+    // The run fast path has to record the *last* character of the run.
+    feed(p, g, "\x1b[2;1Hxyz\x1b[2b");
+    CHECK(row_text(g, 1) == "xyzzz");
+
+    // Omitted and explicit-zero counts both repeat once.
+    feed(p, g, "\x1b[3;1HQ\x1b[b");
+    CHECK(row_text(g, 2) == "QQ");
+    feed(p, g, "\x1b[3;1HR\x1b[0b");
+    CHECK(row_text(g, 2) == "RR"); // overwrites both cells the line already had
+
+    // Nothing to repeat yet: REP must not invent a character.
+    TerminalGrid g2; g2.resize(10, 1);
+    ANSIParser p2;
+    feed(p2, g2, "\x1b[5b");
+    CHECK(row_text(g2, 0) == "");
+
+    // A non-ASCII character is remembered too, and repeats as itself.
+    TerminalGrid g3; g3.resize(10, 1);
+    ANSIParser p3;
+    feed(p3, g3, "\xc3\xa9" "\x1b[2b");
+    CHECK(g3.get_cell_at(0, 0).codepoint == 0x00E9);
+    CHECK(g3.get_cell_at(1, 0).codepoint == 0x00E9);
+    CHECK(g3.get_cell_at(2, 0).codepoint == 0x00E9);
+
+    // An absurd count is clamped rather than spinning in the parser.
+    TerminalGrid g4; g4.resize(10, 2);
+    ANSIParser p4;
+    feed(p4, g4, "z\x1b[2000000000b");
+    CHECK(g4.get_cols() == 10); // completed at all, promptly
+}
+
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
@@ -1256,6 +1296,7 @@ int main() {
     test_decscusr();
     test_cnl_cpl();
     test_tab_stops();
+    test_rep();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;
