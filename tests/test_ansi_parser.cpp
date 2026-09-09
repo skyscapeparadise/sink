@@ -1121,6 +1121,33 @@ static void test_decscusr() {
     CHECK(g.get_cursor_shape() == CursorShape::Block);
 }
 
+// CNL/CPL differ from CUD/CUU only in also returning to column 1, which is
+// the whole reason programs use them.
+static void test_cnl_cpl() {
+    TerminalGrid g; g.resize(20, 10);
+    ANSIParser p;
+
+    feed(p, g, "\x1b[5;10H\x1b[2E");
+    CHECK(g.get_cursor_row() == 6);
+    CHECK(g.get_cursor_col() == 0);
+
+    feed(p, g, "\x1b[5;10H\x1b[2F");
+    CHECK(g.get_cursor_row() == 2);
+    CHECK(g.get_cursor_col() == 0);
+
+    // Omitted and explicit-zero parameters both mean one row.
+    feed(p, g, "\x1b[5;10H\x1b[E");
+    CHECK(g.get_cursor_row() == 5 && g.get_cursor_col() == 0);
+    feed(p, g, "\x1b[5;10H\x1b[0F");
+    CHECK(g.get_cursor_row() == 3 && g.get_cursor_col() == 0);
+
+    // Clamped at the edges of the screen, still landing in column 1.
+    feed(p, g, "\x1b[1;10H\x1b[99F");
+    CHECK(g.get_cursor_row() == 0 && g.get_cursor_col() == 0);
+    feed(p, g, "\x1b[1;10H\x1b[99E");
+    CHECK(g.get_cursor_row() == 9 && g.get_cursor_col() == 0);
+}
+
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
@@ -1168,6 +1195,7 @@ int main() {
     test_dsr_and_da();
     test_ich();
     test_decscusr();
+    test_cnl_cpl();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;

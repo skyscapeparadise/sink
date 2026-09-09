@@ -679,6 +679,20 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
             grid.set_cursor_col(grid.get_cursor_col() - offset);
             break;
         }
+        case 'E': { // Cursor Next Line (CNL)
+            // Down n rows *and* to the first column, which is what separates
+            // it from CUD. Shells and TUIs reach for it when moving to the
+            // start of a following line, and with it missing the cursor
+            // stayed in whatever column it was in.
+            grid.set_cursor_row(grid.get_cursor_row() + get_count_param(0, 1));
+            grid.set_cursor_col(0);
+            break;
+        }
+        case 'F': { // Cursor Preceding Line (CPL)
+            grid.set_cursor_row(grid.get_cursor_row() - get_count_param(0, 1));
+            grid.set_cursor_col(0);
+            break;
+        }
         case 'r': { // Set Scrolling Region (DECSTBM)
             int top = get_count_param(0, 1) - 1;
             int bottom = get_param(1, grid.get_rows()) - 1;
