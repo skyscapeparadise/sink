@@ -936,6 +936,63 @@ static void test_read_above_top_of_history() {
     CHECK(!g.is_cell_search_matched(0, -1));
 }
 
+// Search matching walks the cells directly rather than a re-encoded UTF-8
+// copy of each row, so the cases that used to be handled by a byte-offset ->
+// column map are worth pinning: case folding, double-width characters
+// occupying two columns, and the partial UTF-8 a backspace leaves behind.
+static void test_search_matching() {
+    TerminalGrid g; g.resize(20, 3);
+    ANSIParser p;
+    // The \xe4\xb8\x96 escape is split from the following 'b' so the compiler
+    // does not read it as one over-long hex escape.
+    feed(p, g, "aXbc\r\na\xe4\xb8\x96" "b\r\nHELLO hello");
+
+    g.set_search_active(true);
+
+    // ASCII matching is case-insensitive in both directions.
+    g.set_search_query("hello");
+    CHECK(g.get_search_match_count() == 2);
+    CHECK(g.is_cell_search_matched(0, 2));
+    CHECK(g.is_cell_search_matched(4, 2));
+    CHECK(!g.is_cell_search_matched(5, 2)); // the space between them
+    CHECK(g.is_cell_search_matched(6, 2));
+    CHECK(g.is_cell_search_matched(10, 2));
+    CHECK(!g.is_cell_search_matched(11, 2));
+
+    // A double-width character is highlighted across both of its columns,
+    // not just the one holding the codepoint.
+    g.set_search_query("\xe4\xb8\x96");
+    CHECK(g.get_search_match_count() == 1);
+    CHECK(!g.is_cell_search_matched(0, 1));
+    CHECK(g.is_cell_search_matched(1, 1));
+    CHECK(g.is_cell_search_matched(2, 1)); // trailing half of the pair
+    CHECK(!g.is_cell_search_matched(3, 1));
+
+    // A match running through a wide character and out the other side.
+    g.set_search_query("\xe4\xb8\x96" "b");
+    CHECK(g.get_search_match_count() == 1);
+    CHECK(!g.is_cell_search_matched(0, 1));
+    CHECK(g.is_cell_search_matched(1, 1));
+    CHECK(g.is_cell_search_matched(2, 1));
+    CHECK(g.is_cell_search_matched(3, 1));
+    CHECK(!g.is_cell_search_matched(4, 1));
+
+    g.set_search_query("zzz");
+    CHECK(g.get_search_match_count() == 0);
+
+    // Half a character, which is what the find bar holds mid-backspace.
+    g.set_search_query("\xe4\xb8");
+    CHECK(g.get_search_match_count() == 0);
+
+    // Matches do not overlap: "aa" in "aaaa" is two matches, not three.
+    TerminalGrid g2; g2.resize(10, 1);
+    ANSIParser p2;
+    feed(p2, g2, "aaaa");
+    g2.set_search_active(true);
+    g2.set_search_query("aa");
+    CHECK(g2.get_search_match_count() == 2);
+}
+
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
@@ -979,6 +1036,7 @@ int main() {
     test_selection_spans();
     test_search_match_spans();
     test_read_above_top_of_history();
+    test_search_matching();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;

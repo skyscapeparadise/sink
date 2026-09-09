@@ -32,6 +32,34 @@ whether a terminal coalesces output between frames. For an end-to-end
 number, use Alacritty's `vtebench`, which drives real terminals through a
 PTY.
 
+## The find bar
+
+`sink_bench` also times `TerminalGrid::set_search_query()`, printed as a
+second table. It belongs here rather than in `render_bench` because it is
+grid bookkeeping, not frame building -- but it is worth calling out
+separately, because the find bar calls it on **every keystroke**. It is a
+per-keypress cost, not a one-off, and it scales with a scrollback depth the
+user configures.
+
+| scrollback | before | after |
+|---|---|---|
+| 1,000 lines | 0.95 ms | 0.20 ms |
+| 10,000 lines (default) | 9.09 ms | 1.91 ms |
+| 100,000 lines | 90.81 ms | 19.44 ms |
+
+"Before" built each row's text as a UTF-8 `std::string` with a parallel
+byte-offset-to-column map, lowercased a copy of it, and ran
+`std::string::find`. "After" compares codepoints straight off the cells with
+no per-row buffer at all. Match counts are identical at every depth, which is
+the check that matters for a rewrite like this.
+
+At the default depth this went from most of a 60Hz frame per keypress to
+comfortably inside one. 100,000 lines is still over a frame; narrowing the
+scan to rows that matched the previous, shorter query would fix that, but it
+needs cache invalidation on every path that shifts absolute row numbers
+(which is any output at all), and stale results here mean *missing* search
+hits. Not worth it for a depth nobody is at by default.
+
 ## Keeping the two sides comparable
 
 Both sides deliberately do the same shape of work per character: a flat

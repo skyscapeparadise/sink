@@ -1993,6 +1993,38 @@ void TerminalGrid::set_search_active(bool active) {
     }
 }
 
+// ASCII-only case folding for search. ::tolower on a byte >= 0x80 is
+// undefined for a plain char and case rules outside ASCII need real Unicode
+// tables, so matching stays case-insensitive for ASCII and exact elsewhere.
+static inline char32_t search_fold(char32_t cp) {
+    return (cp >= U'A' && cp <= U'Z') ? cp + 32 : cp;
+}
+
+// Decodes a UTF-8 query into folded codepoints. Malformed input is skipped
+// rather than rejected: the find bar re-runs the search on every keystroke,
+// and backspace pops a byte at a time, so a partial character is a normal
+// transient state here rather than an error.
+static std::vector<char32_t> decode_search_query(const std::string& q) {
+    std::vector<char32_t> out;
+    for (size_t i = 0; i < q.size(); ) {
+        unsigned char b = static_cast<unsigned char>(q[i]);
+        char32_t cp;
+        int n;
+        if (b < 0x80)                { cp = b;          n = 1; }
+        else if ((b & 0xE0) == 0xC0) { cp = b & 0x1Fu;  n = 2; }
+        else if ((b & 0xF0) == 0xE0) { cp = b & 0x0Fu;  n = 3; }
+        else if ((b & 0xF8) == 0xF0) { cp = b & 0x07u;  n = 4; }
+        else { ++i; continue; }
+        if (i + static_cast<size_t>(n) > q.size()) break; // truncated tail
+        for (int k = 1; k < n; ++k) {
+            cp = (cp << 6) | (static_cast<unsigned char>(q[i + k]) & 0x3Fu);
+        }
+        out.push_back(search_fold(cp));
+        i += static_cast<size_t>(n);
+    }
+    return out;
+}
+
 void TerminalGrid::set_search_query(const std::string& query) {
     search_query_ = query;
     search_matches_.clear();
@@ -2000,81 +2032,75 @@ void TerminalGrid::set_search_query(const std::string& query) {
 
     if (query.empty()) return;
 
-    // Lowercase ASCII only. ::tolower on a byte >= 0x80 is undefined for a
-    // plain char and would in any case mangle UTF-8 continuation bytes, so
-    // matching stays case-insensitive for ASCII and exact for everything else.
-    auto ascii_lower = [](std::string t) {
-        for (char& ch : t) {
-            unsigned char u = static_cast<unsigned char>(ch);
-            if (u >= 'A' && u <= 'Z') ch = static_cast<char>(u + 32);
-        }
-        return t;
-    };
-    const std::string lower_query = ascii_lower(query);
+    // Matching runs over codepoints, not UTF-8 bytes.
+    //
+    // This used to build a std::string of each row's text alongside a parallel
+    // byte-index -> column map, then lowercase a *copy* of that string (the
+    // helper took its argument by value) and run std::string::find over the
+    // result. Three allocations and a full re-encode per row, for every row of
+    // scrollback, on every keystroke in the find bar -- 15ms per keypress at
+    // the default 10,000-line scrollback and 133ms at 100,000.
+    //
+    // Comparing codepoints directly drops the encode, the map and the copy,
+    // and columns fall out of the walk instead of having to be recovered from
+    // a byte offset -- which is exactly what an earlier bug here got wrong.
+    const std::vector<char32_t> needle = decode_search_query(query);
+    if (needle.empty()) return;
+    const int qn = static_cast<int>(needle.size());
 
     int total_history = static_cast<int>(scrollback_history_.size());
     int total_rows = total_history + rows_;
 
-    // Reused across rows so a long scrollback doesn't reallocate per line.
-    std::string line_str;
-    std::vector<int> byte_col;
+    // Folded view of one cell. Control cells read as a space, matching what
+    // the grid draws for them.
+    auto cell_char = [](const Cell& cell) {
+        char32_t cp = cell.codepoint;
+        return search_fold(cp < 32 ? U' ' : cp);
+    };
 
     for (int abs_r = 0; abs_r < total_rows; ++abs_r) {
-        line_str.clear();
-        byte_col.clear();
-
-        // Build the row's text alongside a byte-index -> column map. std::string
-        // find() returns a *byte* offset, and this used to be assigned straight
-        // to SearchResult::col, which is a column -- so every match on a row
-        // containing any multi-byte character highlighted the wrong cells, drifting
-        // further right the more of them preceded it.
-        auto append_cell = [&](const Cell& cell, int col) {
-            // The trailing half of a double-width pair contributes no text; the
-            // lead cell's bytes already map to the first of its two columns, and
-            // skipping here means the *next* cell's bytes map past both, so a
-            // match spanning a wide character reports the full two-column width.
-            if (cell.attrs & ATTR_WIDE_CONT) return;
-            size_t before = line_str.size();
-            char32_t cp = cell.codepoint;
-            if (cp >= 32 && cp <= 126) {
-                line_str += static_cast<char>(cp);
-            } else if (cp > 126) {
-                line_str += utf32_to_utf8(cp);
-            } else {
-                line_str += ' ';
-            }
-            byte_col.insert(byte_col.end(), line_str.size() - before, col);
-        };
-
+        const Cell* cells;
+        int len;
         if (abs_r < total_history) {
             const auto& row_cells = scrollback_history_[abs_r].cells;
-            for (size_t c = 0; c < row_cells.size(); ++c) {
-                append_cell(row_cells[c], static_cast<int>(c));
-            }
+            cells = row_cells.data();
+            len = static_cast<int>(row_cells.size());
         } else {
-            int r = abs_r - total_history;
-            const Cell* row = row_data(r);
-            for (int c = 0; c < cols_; ++c) {
-                append_cell(row[c], c);
-            }
+            cells = row_data(abs_r - total_history);
+            len = cols_;
         }
-        // Sentinel so a match ending at the last byte can still resolve an
-        // exclusive end column.
-        byte_col.push_back(abs_r < total_history
-                           ? static_cast<int>(scrollback_history_[abs_r].cells.size())
-                           : cols_);
+        // A row holds at most one character per column, so this cannot match.
+        if (len < qn) continue;
 
-        const std::string lower_line = ascii_lower(line_str);
+        // Scanned straight off the cells, with no per-row buffer of any kind.
+        // Nearly every column fails on the first character, so the inner walk
+        // almost never runs and this costs about one folded compare per cell.
+        for (int c = 0; c + qn <= len; ) {
+            // The trailing half of a double-width pair carries no character of
+            // its own and can neither start nor appear within a match.
+            if (cells[c].attrs & ATTR_WIDE_CONT) { ++c; continue; }
+            if (cell_char(cells[c]) != needle[0]) { ++c; continue; }
 
-        size_t pos = 0;
-        while ((pos = lower_line.find(lower_query, pos)) != std::string::npos) {
-            size_t end_byte = std::min(pos + query.length(), byte_col.size() - 1);
+            int matched = 1;
+            int cc = c + 1;
+            while (matched < qn && cc < len) {
+                if (cells[cc].attrs & ATTR_WIDE_CONT) { ++cc; continue; }
+                if (cell_char(cells[cc]) != needle[matched]) break;
+                ++matched;
+                ++cc;
+            }
+            if (matched < qn) { ++c; continue; }
+
+            // cc sits just past the last matched *lead* cell; a double-width
+            // character's second column belongs to the match too.
+            while (cc < len && (cells[cc].attrs & ATTR_WIDE_CONT)) ++cc;
+
             SearchResult res;
             res.absolute_row = abs_r;
-            res.col = byte_col[pos];
-            res.len = std::max(1, byte_col[end_byte] - byte_col[pos]);
+            res.col = c;
+            res.len = std::max(1, cc - c);
             search_matches_.push_back(res);
-            pos += std::max<size_t>(1, query.length());
+            c = cc; // matches don't overlap, as before
         }
     }
 

@@ -8,6 +8,7 @@
 #include "ansi_parser.hpp"
 #include "terminal_grid.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <fstream>
@@ -72,6 +73,38 @@ int main(int argc, char** argv) {
         }
 
         std::printf("%-32s %10.1f %12.4f\n", w.label, mb / best, best);
+    }
+
+    // Find-bar cost. set_search_query() rescans the whole buffer, and the
+    // find bar calls it on every keystroke, so this is what one keypress
+    // costs -- not a one-off. It scales with scrollback depth, which is
+    // user-configurable, so measure across the range people actually set.
+    std::vector<char> corpus = read_file(dir + "/plain_text.bin");
+    if (!corpus.empty()) {
+        std::printf("\n%-32s %10s %12s\n", "find bar (per keystroke)", "ms", "matches");
+        std::printf("%-32s %10s %12s\n", "------------------------", "--", "-------");
+        for (int lines : {1000, 10000, 100000}) {
+            TerminalGrid grid;
+            grid.resize(200, 50);
+            grid.set_max_scrollback(static_cast<size_t>(lines));
+            ANSIParser parser;
+            size_t take = std::min<size_t>(corpus.size(), static_cast<size_t>(lines) * 90 + 400000);
+            parser.parse(grid, corpus.data(), take);
+
+            double best = 1e9;
+            for (int i = 0; i < kRuns; ++i) {
+                // A fresh query each time: set_search_query does no caching,
+                // but varying it keeps this honest if that ever changes.
+                grid.set_search_query(i % 2 ? "0" : "1");
+                auto t0 = std::chrono::steady_clock::now();
+                grid.set_search_query("0");
+                auto t1 = std::chrono::steady_clock::now();
+                best = std::min(best, std::chrono::duration<double, std::milli>(t1 - t0).count());
+            }
+            char label[64];
+            std::snprintf(label, sizeof(label), "%d lines of scrollback", lines);
+            std::printf("%-32s %10.2f %12d\n", label, best, grid.get_search_match_count());
+        }
     }
 
     return 0;
