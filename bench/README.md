@@ -354,3 +354,43 @@ rather than a derivation:
 still costs about half, which is the deliberate part: an 8MB `cat` goes from
 0.08s to 0.15s and nobody notices, while a runaway one stays interruptible
 instead of freezing the window.
+
+## run_vtebench.sh: sink against other terminals
+
+The three benchmarks above all measure sink against *sink*. `sink_bench`
+compares one number to `vte`, but `vte` is a parser library, not a terminal --
+it has no pty, no renderer and no frame loop. Nothing here answers "is sink
+faster than Alacritty", which is what Phase 3 of the roadmap wants published.
+
+Alacritty's [vtebench](https://github.com/alacritty/vtebench) does. It writes
+escape sequences to stdout and times how long the terminal takes to consume
+them, so it measures the whole program the way a user meets it. That also
+means it has to run *in a real terminal window*, unpiped and unredirected --
+which is why it cannot be a CTest target and lives as a script instead.
+
+```sh
+cargo install --git https://github.com/alacritty/vtebench
+
+# in an Alacritty window:
+./bench/run_vtebench.sh alacritty
+# then in a sink window, same size:
+./bench/run_vtebench.sh sink
+
+paste /tmp/vtebench-*.dat | column -t
+```
+
+The script locates the binary and the benchmark data (which ships in the
+source tree, not the installed binary), refuses to run if stdout is not a
+terminal, prints the window size so the two runs can be checked for a match,
+and resets the terminal afterwards. Results scale with cell count, so **both
+windows must be the same size** or the comparison is meaningless.
+
+### Read the result against the parse budget
+
+sink deliberately caps how much of each frame goes into the parser, and
+vtebench measures precisely the throughput that cap limits: at 8ms the
+end-to-end rate is about half what it is uncapped. That is a real property of
+the program and belongs in any published number, but it is a *chosen* one and
+whoever reads the result should know it was chosen. `kParseBudgetNs` in
+`main.cpp` is the dial, and the curve relating it to throughput is in the
+`--paced` table above.
