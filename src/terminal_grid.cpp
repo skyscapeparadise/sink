@@ -989,6 +989,17 @@ void TerminalGrid::scroll_to_next_prompt() {
     scroll_offset_ = 0; // no prompt below: rejoin the live view
 }
 
+void TerminalGrid::queue_reply(const std::string& bytes) {
+    if (pending_reply_.size() + bytes.size() > kMaxPendingReplyBytes) return;
+    pending_reply_ += bytes;
+}
+
+std::string TerminalGrid::take_pending_reply() {
+    std::string out;
+    out.swap(pending_reply_);
+    return out;
+}
+
 void TerminalGrid::scroll_view(int delta) {
     scroll_offset_ += delta;
     int max_offset = static_cast<int>(scrollback_history_.size());

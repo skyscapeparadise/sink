@@ -2343,6 +2343,15 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             SDL_SetWindowTitle(tw->window, title.empty() ? "sink" : title.c_str());
         }
 
+        // Send anything the parser owes the shell (DSR cursor reports, DA
+        // capability answers). Not gated to the focused pane either, and for
+        // a stronger reason than the clipboard: the program that asked is
+        // most likely blocked waiting for this, focused or not.
+        if (pane.terminal.has_pending_reply()) {
+            std::string reply = pane.terminal.take_pending_reply();
+            pane.pty.write_to_pty(reply.data(), reply.size());
+        }
+
         // Apply any OSC 52 clipboard write -- unlike the title, this isn't
         // gated to the focused pane: a background pane's tmux/script
         // finishing a copy is a legitimate, common case

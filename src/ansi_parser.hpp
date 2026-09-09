@@ -51,7 +51,16 @@ private:
     char trigger_ring_[kTrigWindow * 2] = {};
     int trigger_pos_ = 0;
 
-    bool is_private_mode_ = false;
+    // CSI private marker (0x3C-0x3F: '<' '=' '>' '?') and intermediate byte
+    // (0x20-0x2F: space, '!', '$', ...), 0 when absent.
+    //
+    // Both used to be dropped on the floor apart from '?', which was kept as a
+    // bool. That made "CSI > c" (secondary DA) indistinguishable from "CSI c"
+    // (primary), and the space in "CSI Ps SP q" (DECSCUSR) simply vanished --
+    // so neither could be answered even in principle.
+    char csi_private_ = 0;
+    char csi_intermediate_ = 0;
+    bool is_private_mode() const { return csi_private_ == '?'; }
 
     // Base-palette (SGR 30-37) foreground index currently in effect, or -1
     // for default/truecolor/explicit-bright. Needed so bold can brighten the

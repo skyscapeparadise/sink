@@ -315,6 +315,20 @@ public:
         return pending_clipboard_text_;
     }
 
+    // Replies the terminal owes the shell: DSR cursor reports, DA capability
+    // responses. Queued rather than written straight out because TerminalGrid
+    // has no pty of its own -- main.cpp drains this once a frame and writes
+    // it, exactly as it already does for the window title and OSC 52.
+    //
+    // Capped, because the trigger is untrusted input: a file full of CSI 6n,
+    // or a remote shell echoing them, would otherwise queue replies faster
+    // than the main loop sends them. A program waiting on a report blocks
+    // until it arrives, so it can only ever have one outstanding; anything
+    // past the cap is abuse rather than a request that will be missed.
+    void queue_reply(const std::string& bytes);
+    bool has_pending_reply() const { return !pending_reply_.empty(); }
+    std::string take_pending_reply();
+
     // OSC 133 shell-integration prompt marks and jump navigation
     void mark_prompt_row();
     bool is_prompt_row(int row) const {
@@ -440,6 +454,10 @@ private:
     // Clipboard state (OSC 52)
     std::string pending_clipboard_text_;
     bool clipboard_dirty_ = false;
+
+    // Queued shell replies; see queue_reply().
+    std::string pending_reply_;
+    static constexpr size_t kMaxPendingReplyBytes = 4096;
 
     // Search state
     std::string search_query_;

@@ -93,7 +93,8 @@ void ANSIParser::reset_csi() {
     csi_params_.clear();
     csi_acc_ = 0;
     csi_acc_digits_ = false;
-    is_private_mode_ = false;
+    csi_private_ = 0;
+    csi_intermediate_ = 0;
 }
 
 void ANSIParser::parse(TerminalGrid& grid, const char* data, size_t size) {
@@ -372,8 +373,10 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
             break;
         }
         case STATE_CSI: {
-            if (c == '?') {
-                is_private_mode_ = true;
+            if (c >= 0x3C && c <= 0x3F) {
+                // Private markers '<' '=' '>' '?'. Only the last byte counts;
+                // no real sequence carries two.
+                csi_private_ = static_cast<char>(c);
             } else if (c >= '0' && c <= '9') {
                 // Saturate instead of overflowing. CSI parameters are
                 // attacker-controlled (a cat'd file, remote shell output) and
@@ -395,6 +398,10 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                 csi_params_.push_back(csi_acc_);
                 csi_acc_ = 0;
                 csi_acc_digits_ = false;
+            } else if (c >= 0x20 && c <= 0x2F) {
+                // Intermediate bytes, which select between sequences sharing a
+                // final byte: "CSI Ps SP q" is DECSCUSR, "CSI ! p" is DECSTR.
+                csi_intermediate_ = static_cast<char>(c);
             } else if (c >= 0x40 && c <= 0x7E) {
                 if (csi_acc_digits_) {
                     csi_params_.push_back(csi_acc_);
@@ -497,6 +504,25 @@ void ANSIParser::dispatch_osc(TerminalGrid& grid) {
         default:
             break;
     }
+}
+
+// Cursor Position Report. Row and column go on the wire 1-based. Under origin
+// mode (DECOM) the row is relative to the scroll region's top margin, so that
+// the number reported is the same one CUP would take to put the cursor back
+// where it is.
+static std::string cursor_position_report(const TerminalGrid& grid, bool extended) {
+    int row = grid.get_cursor_row();
+    if (grid.is_origin_mode()) row -= grid.get_scroll_top();
+    if (row < 0) row = 0;
+
+    std::string out = "\x1b[";
+    if (extended) out += '?';
+    out += std::to_string(row + 1);
+    out += ';';
+    out += std::to_string(grid.get_cursor_col() + 1);
+    // DECXCPR carries a page number as well; sink has one page.
+    out += extended ? ";1R" : "R";
+    return out;
 }
 
 void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
@@ -703,7 +729,7 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
         }
         case 'h':   // Set Mode (SM / DECSET)
         case 'l': { // Reset Mode (RM / DECRST)
-            if (!is_private_mode_) break;
+            if (!is_private_mode()) break;
             bool set = (command == 'h');
             // Apps commonly gang modes into one sequence (CSI ?1002;1006h),
             // so every parameter gets applied, not just the first.
@@ -743,14 +769,52 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
             }
             break;
         }
+        case 'n': { // DSR -- Device Status Report
+            // These are the sequences a terminal is obliged to answer. A
+            // program that asks blocks until the reply arrives, so ignoring
+            // them did not degrade gracefully: it stalled whatever asked
+            // until that program's own timeout fired, if it had one.
+            int ps = get_param(0, 0);
+            if (is_private_mode()) {
+                // DECDSR. Only the cursor report has an analogue here; the
+                // rest describe printers, user-defined keys and keyboard
+                // hardware that sink has nothing to say about, and answering
+                // them falsely is worse than staying quiet.
+                if (ps == 6) grid.queue_reply(cursor_position_report(grid, true));
+            } else if (ps == 5) {
+                grid.queue_reply("\x1b[0n"); // terminal OK, no malfunction
+            } else if (ps == 6) {
+                grid.queue_reply(cursor_position_report(grid, false));
+            }
+            break;
+        }
+        case 'c': { // DA -- Device Attributes
+            if (csi_private_ == '>') {
+                // Secondary DA: terminal type, firmware version, cartridge.
+                // Type 0 is the VT100 family; the version field is by
+                // convention a patch level as a bare integer, so sink 0.8.0
+                // reports 800.
+                grid.queue_reply("\x1b[>0;800;0c");
+            } else if (csi_private_ == 0 && get_param(0, 0) == 0) {
+                // Primary DA. 62 = VT220-class, 22 = ANSI colour.
+                //
+                // Deliberately narrow: sink has no selective erase (6), no
+                // printer (2), no UDKs (8) and no technical character set
+                // (15), and claiming them would only persuade programs to
+                // send sequences that get ignored. Under-claiming costs a
+                // fallback path; over-claiming costs correctness.
+                grid.queue_reply("\x1b[?62;22c");
+            }
+            break;
+        }
         case 's': { // Save Cursor (ANSI.SYS)
             // CSI ? Ps s is XTSAVE (save private mode values), which ncurses
             // emits on every mouse enable -- it must not clobber the cursor
-            if (!is_private_mode_) grid.save_cursor();
+            if (!is_private_mode()) grid.save_cursor();
             break;
         }
         case 'u': { // Restore Cursor (ANSI.SYS)
-            if (!is_private_mode_) grid.restore_cursor(); // CSI ? Ps u = XTRESTORE
+            if (!is_private_mode()) grid.restore_cursor(); // CSI ? Ps u = XTRESTORE
             break;
         }
         default:

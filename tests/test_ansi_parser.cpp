@@ -993,6 +993,61 @@ static void test_search_matching() {
     CHECK(g2.get_search_match_count() == 2);
 }
 
+// DSR and DA are the sequences a terminal must answer rather than merely
+// honour: the program that sends one blocks until the reply arrives.
+static void test_dsr_and_da() {
+    TerminalGrid g; g.resize(80, 24);
+    ANSIParser p;
+
+    // No reply until something asks for one.
+    CHECK(!g.has_pending_reply());
+
+    // CPR is 1-based on the wire, so the home position reports as 1;1.
+    feed(p, g, "\x1b[6n");
+    CHECK(g.take_pending_reply() == "\x1b[1;1R");
+    CHECK(!g.has_pending_reply());
+
+    feed(p, g, "\x1b[10;20H\x1b[6n");
+    CHECK(g.take_pending_reply() == "\x1b[10;20R");
+
+    // DSR 5 is "are you there"; 0n means no malfunction.
+    feed(p, g, "\x1b[5n");
+    CHECK(g.take_pending_reply() == "\x1b[0n");
+
+    // DECXCPR adds the private marker and a page number.
+    feed(p, g, "\x1b[1;1H\x1b[?6n");
+    CHECK(g.take_pending_reply() == "\x1b[?1;1;1R");
+
+    // Under origin mode the row is relative to the top margin, matching the
+    // number CUP would need to put the cursor back.
+    feed(p, g, "\x1b[5;20r\x1b[?6h\x1b[3;1H\x1b[6n");
+    CHECK(g.take_pending_reply() == "\x1b[3;1R");
+    feed(p, g, "\x1b[?6l\x1b[r");
+
+    // Primary DA: VT220 class with ANSI colour. "CSI c" and "CSI 0 c" are
+    // the same request.
+    feed(p, g, "\x1b[c");
+    CHECK(g.take_pending_reply() == "\x1b[?62;22c");
+    feed(p, g, "\x1b[0c");
+    CHECK(g.take_pending_reply() == "\x1b[?62;22c");
+
+    // Secondary DA is a different request sharing the same final byte, and
+    // used to be indistinguishable from the primary one.
+    feed(p, g, "\x1b[>c");
+    CHECK(g.take_pending_reply() == "\x1b[>0;800;0c");
+
+    // A parameter the terminal does not recognise gets no answer rather than
+    // a wrong one.
+    feed(p, g, "\x1b[3c");
+    CHECK(!g.has_pending_reply());
+    feed(p, g, "\x1b[?15n"); // DECDSR printer status
+    CHECK(!g.has_pending_reply());
+
+    // Untrusted input cannot queue replies without bound.
+    for (int i = 0; i < 5000; ++i) feed(p, g, "\x1b[6n");
+    CHECK(g.take_pending_reply().size() <= 4096);
+}
+
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
@@ -1037,6 +1092,7 @@ int main() {
     test_search_match_spans();
     test_read_above_top_of_history();
     test_search_matching();
+    test_dsr_and_da();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;
