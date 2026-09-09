@@ -4,6 +4,21 @@ project(SinkTerminal VERSION 0.8.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# One source of truth for the version: the project() line above. It used to be
+# repeated in main.cpp's SDL metadata and in releases/package.sh's Info.plist,
+# which is how the plist ended up saying 0.8 while three other places moved on.
+# releases/package.sh reads the same project() line rather than carrying a
+# fourth copy.
+#
+# SINK_VERSION_NUM is the flat integer form secondary DA reports (CSI > c),
+# where the convention is a bare patch level: 0.8.0 -> 800.
+math(EXPR SINK_VERSION_NUM
+     "${PROJECT_VERSION_MAJOR} * 10000 + ${PROJECT_VERSION_MINOR} * 100 + ${PROJECT_VERSION_PATCH}")
+add_compile_definitions(
+    SINK_VERSION="${PROJECT_VERSION}"
+    SINK_VERSION_NUM=${SINK_VERSION_NUM}
+)
+
 # Default to an optimized build. With CMAKE_BUILD_TYPE unset CMake passes no
 # -O flag at all, so every build -- including the one that gets packaged into
 # sink.app -- was compiled at -O0. On the parser benchmark that costs between

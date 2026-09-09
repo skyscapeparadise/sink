@@ -969,9 +969,10 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
             if (csi_private_ == '>') {
                 // Secondary DA: terminal type, firmware version, cartridge.
                 // Type 0 is the VT100 family; the version field is by
-                // convention a patch level as a bare integer, so sink 0.8.0
-                // reports 800.
-                grid.queue_reply("\x1b[>0;800;0c");
+                // convention a patch level as a bare integer, so 0.8.0 reports
+                // 800. Derived from the project version rather than written
+                // out, so a release bump cannot leave this behind.
+                grid.queue_reply("\x1b[>0;" + std::to_string(SINK_VERSION_NUM) + ";0c");
             } else if (csi_private_ == 0 && get_param(0, 0) == 0) {
                 // Primary DA. 62 = VT220-class, 22 = ANSI colour.
                 //

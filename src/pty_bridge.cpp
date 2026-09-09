@@ -76,6 +76,14 @@ bool PTYBridge::spawn(int cols, int rows) {
         setenv("LC_ALL", "en_US.UTF-8", 1);
         setenv("TERM", "xterm-256color", 1);
 
+        // TERM says what escape sequences work; TERM_PROGRAM says who is
+        // reading them. Plenty of tools branch on it -- to pick a cursor
+        // shape, to decide whether OSC 8 links are worth emitting, to work
+        // around known quirks -- and with it unset sink was lumped in with
+        // whatever they assume for an unknown terminal.
+        setenv("TERM_PROGRAM", "sink", 1);
+        setenv("TERM_PROGRAM_VERSION", SINK_VERSION, 1);
+
         // Determine user shell
         const char* shell = getenv("SHELL");
         if (!shell) {

@@ -15,6 +15,17 @@ cmake --build build
 
 # 2. Setup the App Bundle folders
 APP_NAME="sink"
+
+# Read the version from CMakeLists.txt rather than keeping a second copy here.
+# It was written out three times -- project(), main.cpp's SDL metadata, and the
+# Info.plist below -- and the plist had already drifted to a two-component
+# 0.8 against the other two saying 0.8.0.
+SINK_VERSION="$(sed -nE 's/^project\(SinkTerminal VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)"
+if [ -z "${SINK_VERSION}" ]; then
+    echo "  could not read the version out of CMakeLists.txt" >&2
+    exit 1
+fi
+echo "  version ${SINK_VERSION}"
 APP_DIR="${APP_NAME}.app"
 CONTENTS_DIR="${APP_DIR}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
@@ -283,7 +294,7 @@ cat <<EOF > "${CONTENTS_DIR}/Info.plist"
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.8</string>
+    <string>${SINK_VERSION}</string>
     <key>CFBundleSignature</key>
     <string>????</string>
     <key>CFBundleVersion</key>
