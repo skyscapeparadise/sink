@@ -1608,6 +1608,82 @@ static void test_grapheme_clusters() {
     }
 }
 
+// The image model both graphics protocols decode into. What matters here is
+// that a placement stays attached to its text: pinned to a screen row it would
+// slide up the screen as output scrolled, which is the bug this shape exists
+// to avoid.
+static void test_image_placements() {
+    TerminalGrid g; g.resize(20, 5);
+    g.set_max_scrollback(10);
+    ANSIParser p;
+    TerminalImages& im = g.images();
+
+    std::vector<uint32_t> px(4 * 4, 0xFFFFFFFFu);
+    uint64_t id = im.store(0, 4, 4, std::move(px));
+    CHECK(id != 0);
+    CHECK(im.image_count() == 1);
+
+    // Placed on the cursor's line, whatever row that currently is.
+    ImagePlacement pl;
+    pl.image_id = id;
+    pl.line_id = g.line_id_for_row(g.get_cursor_row());
+    pl.col = 0; pl.cols = 2; pl.rows = 2;
+    im.place(pl);
+    CHECK(im.placements().size() == 1);
+    uint64_t pinned = im.placements()[0].line_id;
+
+    // Scrolling does not move it: the line id is the same line it always was,
+    // even though that text is now several rows higher.
+    feed(p, g, "\r\n\r\n\r\n");
+    CHECK(im.placements().size() == 1);
+    CHECK(im.placements()[0].line_id == pinned);
+
+    // Once the line falls out of scrollback the placement goes with it, and
+    // the image it was the last reference to is freed.
+    for (int i = 0; i < 40; ++i) feed(p, g, "x\r\n");
+    CHECK(g.oldest_line_id() > pinned);
+    CHECK(im.placements().empty());
+    CHECK(im.image_count() == 0);
+    CHECK(im.total_bytes() == 0);
+
+    // A placement id names a slot, so re-sending it moves the image rather
+    // than stacking another copy.
+    std::vector<uint32_t> px2(4 * 4, 0xFF00FF00u);
+    uint64_t id2 = im.store(7, 4, 4, std::move(px2));
+    CHECK(id2 == 7);
+    ImagePlacement a; a.image_id = 7; a.placement_id = 1;
+    a.line_id = g.line_id_for_row(0); a.col = 0; a.cols = 1; a.rows = 1;
+    im.place(a);
+    a.col = 5;
+    im.place(a);
+    CHECK(im.placements().size() == 1);
+    CHECK(im.placements()[0].col == 5);
+
+    // Without one, two placements of the same image coexist.
+    ImagePlacement b = a; b.placement_id = 0; b.col = 9;
+    im.place(b);
+    CHECK(im.placements().size() == 2);
+
+    // Deleting the image takes its placements with it.
+    im.delete_image(7);
+    CHECK(im.placements().empty());
+    CHECK(im.image_count() == 0);
+
+    // Rejections: zero-sized, and larger than the per-image cap.
+    CHECK(im.store(0, 0, 4, std::vector<uint32_t>(4)) == 0);
+    CHECK(im.store(0, 100000, 100000, std::vector<uint32_t>(16)) == 0);
+
+    // Erasing the screen drops what was drawn on it.
+    std::vector<uint32_t> px3(4 * 4, 0xFF0000FFu);
+    uint64_t id3 = im.store(0, 4, 4, std::move(px3));
+    ImagePlacement c; c.image_id = id3; c.line_id = g.line_id_for_row(0);
+    c.col = 0; c.cols = 1; c.rows = 1;
+    im.place(c);
+    CHECK(im.placements().size() == 1);
+    feed(p, g, "\x1b[2J");
+    CHECK(im.placements().empty());
+}
+
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
@@ -1663,6 +1739,7 @@ int main() {
     test_decrqm();
     test_kitty_keyboard_flags();
     test_grapheme_clusters();
+    test_image_placements();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;

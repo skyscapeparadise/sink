@@ -89,6 +89,7 @@ set(SOURCES
     src/main.cpp
     src/font_manager.cpp
     src/terminal_grid.cpp
+    src/terminal_images.cpp
     src/pty_bridge.cpp
     src/ansi_parser.cpp
     src/video_engine.cpp
@@ -139,6 +140,7 @@ add_executable(sink_tests
     tests/test_ansi_parser.cpp
     src/ansi_parser.cpp
     src/terminal_grid.cpp
+    src/terminal_images.cpp
     src/font_manager.cpp
 )
 target_include_directories(sink_tests PRIVATE src)
@@ -182,6 +184,7 @@ add_executable(sink_bench
     bench/sink_bench.cpp
     src/ansi_parser.cpp
     src/terminal_grid.cpp
+    src/terminal_images.cpp
     src/font_manager.cpp
 )
 target_include_directories(sink_bench PRIVATE src)
@@ -198,6 +201,7 @@ add_executable(tmux_replay
     tests/tmux_replay.cpp
     src/ansi_parser.cpp
     src/terminal_grid.cpp
+    src/terminal_images.cpp
     src/font_manager.cpp
 )
 target_include_directories(tmux_replay PRIVATE src)
@@ -214,6 +218,7 @@ add_executable(pty_bench
     bench/pty_bench.cpp
     src/ansi_parser.cpp
     src/terminal_grid.cpp
+    src/terminal_images.cpp
     src/font_manager.cpp
     src/pty_bridge.cpp
 )
@@ -228,6 +233,7 @@ add_executable(render_bench
     bench/render_bench.cpp
     src/ansi_parser.cpp
     src/terminal_grid.cpp
+    src/terminal_images.cpp
     src/font_manager.cpp
 )
 target_include_directories(render_bench PRIVATE src)

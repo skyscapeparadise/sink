@@ -6,6 +6,7 @@
 #include <string>
 #include <unordered_map>
 #include "font_manager.hpp"
+#include "terminal_images.hpp"
 
 // Per-cell SGR attribute flags. Bold is also folded into the color at parse
 // time (base palette -> bright variant).
@@ -376,6 +377,20 @@ public:
         return pending_clipboard_text_;
     }
 
+    // Inline images. Both graphics protocols decode into this.
+    TerminalImages& images() { return images_; }
+    const TerminalImages& images() const { return images_; }
+
+    // Scrollback-absolute line number of an active row. Screen rows renumber
+    // as output scrolls; these do not, and never repeat, so an image pinned to
+    // one stays with its text and can be retired the moment that text falls
+    // out of history.
+    uint64_t line_id_for_row(int row) const {
+        return lines_evicted_ + static_cast<uint64_t>(scrollback_history_.size()) +
+               static_cast<uint64_t>(row);
+    }
+    uint64_t oldest_line_id() const { return lines_evicted_; }
+
     // Replies the terminal owes the shell: DSR cursor reports, DA capability
     // responses. Queued rather than written straight out because TerminalGrid
     // has no pty of its own -- main.cpp drains this once a frame and writes
@@ -548,6 +563,14 @@ private:
     // `cat`, a noisy build log) degrades quadratically. deque's random
     // access (every other use here: get_cell_at, search, resize's reflow)
     // stays O(1); front-erase drops to O(elements removed) instead.
+    // Lines dropped off the front of history over this grid's lifetime, so a
+    // line's absolute id survives trimming. Never reset, including by RIS:
+    // reusing an id would let a stale placement latch onto new text.
+    uint64_t lines_evicted_ = 0;
+
+    TerminalImages images_;
+    std::vector<ImagePlacement> saved_primary_placements_;
+
     std::deque<ScrollbackRow> scrollback_history_;
     int scroll_offset_ = 0;
     float display_scroll_offset_ = 0.0f; // Smooth sub-pixel interpolated scroll offset

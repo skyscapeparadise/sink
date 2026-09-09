@@ -766,6 +766,11 @@ void TerminalGrid::scroll_up() {
     
     if (scrollback_history_.size() > max_scrollback_size_) {
         scrollback_history_.pop_front();
+        // The line just dropped can never be addressed again, so anything
+        // pinned to it goes too. Counting evictions is what keeps every other
+        // line's id stable across the trim.
+        lines_evicted_++;
+        images_.retire_before(lines_evicted_);
         if (scroll_offset_ > 0) {
             scroll_offset_--;
         }
@@ -826,6 +831,13 @@ const std::string& TerminalGrid::get_hyperlink_uri(uint32_t id) const {
 void TerminalGrid::set_alt_screen(bool active) {
     if (active == alt_screen_active_) return; // apps re-send 1049h defensively
     alt_screen_active_ = active;
+
+    // Each screen keeps its own images. Entering a full-screen app must not
+    // discard what was printed to the shell, and the two screens address the
+    // same active rows, so their line ids would otherwise collide.
+    std::vector<ImagePlacement> other = images_.take_placements();
+    images_.set_placements(std::move(saved_primary_placements_));
+    saved_primary_placements_ = std::move(other);
 
     // Margins don't survive the buffer switch: a full-screen app's region
     // must never keep constraining the shell's scrolling.
@@ -1017,6 +1029,11 @@ void TerminalGrid::delete_lines(int count) {
 }
 
 void TerminalGrid::clear_screen() {
+    // Erasing the screen erases what was drawn on it. Images pinned to lines
+    // already in scrollback are untouched: they belong to that text, not to
+    // the screen being cleared.
+    images_.clear_placements();
+
     // Copy the cached blank row across every row: std::fill over a 20-byte
     // element cannot become a memset, but these are plain memmove.
     if (!cells_.empty() && cols_ > 0) {
@@ -1040,6 +1057,8 @@ void TerminalGrid::set_max_scrollback(size_t lines) {
         size_t prune = scrollback_history_.size() - max_scrollback_size_;
         scrollback_history_.erase(scrollback_history_.begin(),
                                   scrollback_history_.begin() + prune);
+        lines_evicted_ += prune;
+        images_.retire_before(lines_evicted_);
         // Keep the view anchored to the same lines if scrolled back
         scroll_offset_ = std::min(scroll_offset_,
                                   static_cast<int>(scrollback_history_.size()));
@@ -1079,6 +1098,8 @@ void TerminalGrid::full_reset() {
     cursor_shape_ = CursorShape::Block;
     reset_tab_stops();
     kbd_stack_.assign(1, 0);
+    images_.clear_all();
+    saved_primary_placements_.clear();
 
     scroll_offset_ = 0;
     display_scroll_offset_ = 0.0f;
@@ -1096,7 +1117,9 @@ void TerminalGrid::full_reset() {
 }
 
 void TerminalGrid::clear_scrollback() {
+    lines_evicted_ += scrollback_history_.size();
     scrollback_history_.clear();
+    images_.retire_before(lines_evicted_);
     scroll_offset_ = 0;
 }
 
@@ -1944,6 +1967,47 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
     }
 
 
+
+    // 4. Draw inline images.
+    //
+    // Between the cell backgrounds and the glyphs, so text written over an
+    // image stays readable -- which is what a shell prompt drawn after a
+    // picture needs. Clipped to the text area like the cells are, so a
+    // placement scrolling off the top does not spill into the padding.
+    if (!images_.placements().empty()) {
+        clip_to_cells();
+        // Screen row of a placement: its line id, less the lines that have
+        // fallen out of history, less the lines currently scrolled above the
+        // viewport. Signed, because a placement can start above the top of the
+        // screen and still have rows visible below it.
+        const int64_t first_line = static_cast<int64_t>(lines_evicted_) +
+                                   static_cast<int64_t>(scrollback_history_.size()) -
+                                   static_cast<int64_t>(view_offset);
+        for (const ImagePlacement& p : images_.placements()) {
+            int64_t top_row = static_cast<int64_t>(p.line_id) - first_line;
+            if (top_row + p.rows <= 0 || top_row >= rows_) continue; // off screen
+            if (p.col >= cols_) continue;
+
+            SDL_Texture* tex = images_.texture_for(renderer, p.image_id);
+            if (!tex) continue;
+
+            SDL_FRect dst = {
+                start_x + p.col * cell_w,
+                start_y + static_cast<float>(top_row) * cell_h + scroll_diff_y,
+                p.cols * cell_w,
+                p.rows * cell_h
+            };
+            const TerminalImage* img = images_.find(p.image_id);
+            SDL_FRect src = {
+                static_cast<float>(p.src_x), static_cast<float>(p.src_y),
+                static_cast<float>(p.src_w > 0 ? p.src_w : (img ? img->width : 0)),
+                static_cast<float>(p.src_h > 0 ? p.src_h : (img ? img->height : 0))
+            };
+            if (src.w <= 0.0f || src.h <= 0.0f) continue;
+            SDL_RenderTexture(renderer, tex, &src, &dst);
+        }
+        clip_restore();
+    }
 
     // 5. Draw Final Crisp Text Glyphs
     if (!text_vertices_.empty() || (dyn_atlas && !dyn_text_vertices_.empty())) {
