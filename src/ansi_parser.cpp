@@ -566,6 +566,64 @@ void ANSIParser::dispatch_osc(TerminalGrid& grid) {
     }
 }
 
+// DECRQM reply values (the Pm field of CSI ? Ps ; Pm $ y).
+enum : int {
+    kModeNotRecognised    = 0,
+    kModeSet              = 1,
+    kModeReset            = 2,
+    kModePermanentlySet   = 3,
+    kModePermanentlyReset = 4,
+};
+
+// State of a DEC private mode, for DECRQM.
+//
+// "Not recognised" is the honest answer for anything sink has no state for,
+// and it is also the safe one: a program reading 0 falls back to whatever it
+// would have done without the query. Reporting a plausible 1 or 2 for a mode
+// that does nothing here would be worse than saying nothing.
+static int query_private_mode(const TerminalGrid& grid, int ps) {
+    auto b = [](bool on) { return on ? kModeSet : kModeReset; };
+    switch (ps) {
+        case 1:    return b(grid.is_app_cursor_keys());        // DECCKM
+        case 6:    return b(grid.is_origin_mode());            // DECOM
+        // DECAWM. sink always wraps and offers no way to turn it off, which
+        // is exactly what "permanently set" is for.
+        case 7:    return kModePermanentlySet;
+        case 9:    return b(grid.get_mouse_mode() == 9);       // X10 mouse
+        case 25:   return b(grid.is_cursor_visible());         // DECTCEM
+        case 47:
+        case 1047:
+        case 1049: return b(grid.is_alt_screen_active());
+        case 1000:
+        case 1002:
+        case 1003: return b(grid.get_mouse_mode() == ps);
+        case 1004: return b(grid.is_focus_reporting());
+        case 1006: return b(grid.is_mouse_sgr());
+        case 1007: return b(grid.is_alternate_scroll());
+        case 2004: return b(grid.is_bracketed_paste_active());
+        // The one this feature is really for: sink implements synchronized
+        // output, and DECRQM is how a program finds that out. Without an
+        // answer here every app that probes concluded it was unsupported and
+        // fell back to unsynchronized redraws.
+        case 2026: return b(grid.is_synchronized_output());
+        // 1048 is deliberately absent. It is DECSC/DECRC dressed as a mode --
+        // an action with no state to report -- so there is no true answer.
+        default:   return kModeNotRecognised;
+    }
+}
+
+// State of an ANSI (non-private) mode.
+static int query_ansi_mode(int ps) {
+    switch (ps) {
+        // IRM. sink always replaces rather than inserts, and has no way to
+        // change that, so the reset state is permanent.
+        case 4:  return kModePermanentlyReset;
+        // LNM, likewise: a bare LF never implies a carriage return here.
+        case 20: return kModePermanentlyReset;
+        default: return kModeNotRecognised;
+    }
+}
+
 // Cursor Position Report. Row and column go on the wire 1-based. Under origin
 // mode (DECOM) the row is relative to the scroll region's top margin, so that
 // the number reported is the same one CUP would take to put the cursor back
@@ -783,10 +841,25 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
             }
             break;
         }
-        case 'p': { // DECSTR (CSI ! p) -- Soft Terminal Reset
+        case 'p': {
+            // Two different sequences share this final byte, told apart by
+            // their intermediate: '!' is DECSTR, '$' is DECRQM. Before
+            // intermediates were tracked neither could be recognised.
+            if (csi_intermediate_ == '$') { // DECRQM -- Request Mode
+                int ps = get_param(0, 0);
+                bool priv = is_private_mode();
+                int state = priv ? query_private_mode(grid, ps) : query_ansi_mode(ps);
+                std::string reply = "\x1b[";
+                if (priv) reply += '?';
+                reply += std::to_string(ps);
+                reply += ';';
+                reply += std::to_string(state);
+                reply += "$y";
+                grid.queue_reply(reply);
+                break;
+            }
             // The '!' intermediate is what makes this DECSTR rather than one
-            // of the several other sequences ending in 'p'; before
-            // intermediates were tracked it could not be recognised at all.
+            // of the several other sequences ending in 'p'.
             if (csi_intermediate_ == '!') {
                 grid.soft_reset();
                 // The parser's own carried state goes with it, as it does for

@@ -1348,6 +1348,72 @@ static void test_xtwinops() {
     CHECK(!g.has_pending_reply());
 }
 
+// DECRQM lets a program ask whether a mode is set instead of setting it and
+// hoping. The case that motivated it: sink implements synchronized output,
+// and this is how anything finds that out.
+static void test_decrqm() {
+    TerminalGrid g; g.resize(40, 10);
+    ANSIParser p;
+
+    // 2 = reset, 1 = set.
+    feed(p, g, "\x1b[?2026$p");
+    CHECK(g.take_pending_reply() == "\x1b[?2026;2$y");
+    feed(p, g, "\x1b[?2026h\x1b[?2026$p");
+    CHECK(g.take_pending_reply() == "\x1b[?2026;1$y");
+    feed(p, g, "\x1b[?2026l");
+
+    // A mode toggled through its own sequence reports the new state.
+    feed(p, g, "\x1b[?25$p");
+    CHECK(g.take_pending_reply() == "\x1b[?25;1$y");   // cursor visible by default
+    feed(p, g, "\x1b[?25l\x1b[?25$p");
+    CHECK(g.take_pending_reply() == "\x1b[?25;2$y");
+    feed(p, g, "\x1b[?25h");
+
+    feed(p, g, "\x1b[?2004h\x1b[?2004$p");
+    CHECK(g.take_pending_reply() == "\x1b[?2004;1$y");
+
+    // Mouse modes are mutually exclusive, so only the active one reports set.
+    feed(p, g, "\x1b[?1002h");
+    feed(p, g, "\x1b[?1002$p");
+    CHECK(g.take_pending_reply() == "\x1b[?1002;1$y");
+    feed(p, g, "\x1b[?1000$p");
+    CHECK(g.take_pending_reply() == "\x1b[?1000;2$y");
+
+    // Alt screen, reported through any of its three mode numbers.
+    feed(p, g, "\x1b[?1049h\x1b[?1049$p");
+    CHECK(g.take_pending_reply() == "\x1b[?1049;1$y");
+    feed(p, g, "\x1b[?47$p");
+    CHECK(g.take_pending_reply() == "\x1b[?47;1$y");
+    feed(p, g, "\x1b[?1049l");
+
+    // 3 = permanently set: sink always wraps and cannot be told not to.
+    feed(p, g, "\x1b[?7$p");
+    CHECK(g.take_pending_reply() == "\x1b[?7;3$y");
+
+    // 4 = permanently reset, for ANSI modes sink does not implement.
+    feed(p, g, "\x1b[4$p");
+    CHECK(g.take_pending_reply() == "\x1b[4;4$y");     // IRM, note no '?'
+    feed(p, g, "\x1b[20$p");
+    CHECK(g.take_pending_reply() == "\x1b[20;4$y");    // LNM
+
+    // 0 = not recognised, which is the answer that makes a program use its
+    // fallback rather than trust a guess.
+    feed(p, g, "\x1b[?12345$p");
+    CHECK(g.take_pending_reply() == "\x1b[?12345;0$y");
+    feed(p, g, "\x1b[?1048$p");                        // an action, not a state
+    CHECK(g.take_pending_reply() == "\x1b[?1048;0$y");
+    feed(p, g, "\x1b[99$p");
+    CHECK(g.take_pending_reply() == "\x1b[99;0$y");
+
+    // Without the '$' intermediate this is not DECRQM. CSI ? Ps p must not
+    // answer, and CSI ! p is still DECSTR.
+    feed(p, g, "\x1b[?2026p");
+    CHECK(!g.has_pending_reply());
+    feed(p, g, "\x1b[?25l\x1b[!p");
+    CHECK(g.is_cursor_visible());
+    CHECK(!g.has_pending_reply());
+}
+
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
@@ -1400,6 +1466,7 @@ int main() {
     test_rep();
     test_decstr();
     test_xtwinops();
+    test_decrqm();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;
