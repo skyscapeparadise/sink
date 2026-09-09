@@ -1,4 +1,6 @@
 #include "ansi_parser.hpp"
+#include <cstdio>
+#include <cmath>
 #include <cstdlib>
 #include <unordered_map>
 
@@ -674,6 +676,7 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
         }
         case STATE_STR: {
             if (c == 0x07 || c == 0x9C) { // BEL, or single-byte ST (C1)
+                str_ended_with_bel_ = (c == 0x07);
                 if (str_is_osc_) dispatch_osc(grid);
                 if (str_is_dcs_) dispatch_dcs(grid);
                 if (str_is_apc_) dispatch_apc(grid);
@@ -713,6 +716,7 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
         }
         case STATE_STR_ESC: {
             if (c == '\\') {
+                str_ended_with_bel_ = false;
                 if (str_is_osc_) dispatch_osc(grid);
                 if (str_is_dcs_) dispatch_dcs(grid);
                 if (str_is_apc_) dispatch_apc(grid);
@@ -807,28 +811,140 @@ static std::string base64_decode(const std::string& in) {
     return out;
 }
 
+// Parses an X11-style colour specification: "#RGB", "#RRGGBB", "#RRRGGGBBB",
+// "#RRRRGGGGBBBB" and the "rgb:R/G/B" form with 1-4 hex digits per component.
+// Named colours are not accepted -- they would mean carrying the whole X11
+// colour table for a form nothing emits any more.
+static bool parse_color_spec(const std::string& spec, SDL_FColor& out) {
+    auto hex_component = [](const std::string& text) -> float {
+        if (text.empty() || text.size() > 4) return -1.0f;
+        unsigned value = 0;
+        for (char ch : text) {
+            int digit;
+            if (ch >= '0' && ch <= '9') digit = ch - '0';
+            else if (ch >= 'a' && ch <= 'f') digit = ch - 'a' + 10;
+            else if (ch >= 'A' && ch <= 'F') digit = ch - 'A' + 10;
+            else return -1.0f;
+            value = value * 16 + static_cast<unsigned>(digit);
+        }
+        // Scaled by the width actually given, so "f", "ff" and "ffff" are all
+        // full intensity rather than 1/16th, 1/256th and 1.
+        unsigned max = (1u << (4 * text.size())) - 1u;
+        return static_cast<float>(value) / static_cast<float>(max);
+    };
+
+    if (spec.size() > 4 && (spec.compare(0, 4, "rgb:") == 0 || spec.compare(0, 4, "RGB:") == 0)) {
+        std::string body = spec.substr(4);
+        size_t a = body.find('/');
+        if (a == std::string::npos) return false;
+        size_t b = body.find('/', a + 1);
+        if (b == std::string::npos) return false;
+        float r = hex_component(body.substr(0, a));
+        float g = hex_component(body.substr(a + 1, b - a - 1));
+        float bl = hex_component(body.substr(b + 1));
+        if (r < 0 || g < 0 || bl < 0) return false;
+        out = { r, g, bl, 1.0f };
+        return true;
+    }
+
+    if (!spec.empty() && spec[0] == '#') {
+        std::string body = spec.substr(1);
+        if (body.size() % 3 != 0 || body.empty() || body.size() > 12) return false;
+        size_t width = body.size() / 3;
+        float r = hex_component(body.substr(0, width));
+        float g = hex_component(body.substr(width, width));
+        float bl = hex_component(body.substr(2 * width, width));
+        if (r < 0 || g < 0 || bl < 0) return false;
+        out = { r, g, bl, 1.0f };
+        return true;
+    }
+    return false;
+}
+
+// The form xterm answers queries in: 16 bits per component.
+static std::string format_color_spec(const SDL_FColor& c) {
+    auto component = [](float v) {
+        int scaled = static_cast<int>(std::lround(std::clamp(v, 0.0f, 1.0f) * 65535.0f));
+        char buf[8];
+        std::snprintf(buf, sizeof(buf), "%04x", scaled);
+        return std::string(buf);
+    };
+    return "rgb:" + component(c.r) + "/" + component(c.g) + "/" + component(c.b);
+}
+
 void ANSIParser::dispatch_osc(TerminalGrid& grid) {
-    // Payload shape: "Ps;Pt" -- numeric selector, then text
+    // Payload shape: "Ps;Pt" -- numeric selector, then text. The text half is
+    // optional: the colour-reset sequences (OSC 110/111/112) are a bare number
+    // with no semicolon at all, and were being dropped here before they were
+    // implemented because this required one.
     size_t semi = osc_buffer_.find(';');
-    if (semi == std::string::npos) {
-        osc_buffer_.clear();
-        return;
-    }
-    int ps = 0;
-    try {
-        ps = std::stoi(osc_buffer_.substr(0, semi));
-    } catch (...) {
-        osc_buffer_.clear();
-        return;
-    }
-    std::string pt = osc_buffer_.substr(semi + 1);
+    std::string selector = (semi == std::string::npos) ? osc_buffer_
+                                                       : osc_buffer_.substr(0, semi);
+    std::string pt = (semi == std::string::npos) ? std::string()
+                                                 : osc_buffer_.substr(semi + 1);
     osc_buffer_.clear();
+
+    if (selector.empty()) return;
+    int ps = 0;
+    for (char ch : selector) {
+        if (ch < '0' || ch > '9') return;
+        if (ps > 100000) return; // no real selector is this large
+        ps = ps * 10 + (ch - '0');
+    }
 
     switch (ps) {
         case 0: // set icon name + window title
         case 2: // set window title
             grid.set_window_title(pt);
             break;
+        case 10:   // default foreground
+        case 11:   // default background
+        case 12: { // cursor colour
+            // Query ("?") or set. The query is the valuable half: OSC 11 is
+            // how an application finds out whether it is drawing on something
+            // light or something dark, and picks a readable palette. Without
+            // an answer it guesses, and against sink's media backgrounds it
+            // will usually guess wrong.
+            //
+            // Unlike the window-title report this is safe to answer: the reply
+            // is a colour the terminal formats itself, not text an attacker
+            // planted and got echoed back into the input stream.
+            //
+            // Several colours can be queried in one sequence
+            // (OSC 10;?;?;? asks for 10, 11 and 12 in turn), so this walks the
+            // ';'-separated list with the selector advancing as it goes.
+            int which = ps;
+            size_t start = 0;
+            while (start <= pt.size() && which <= 12) {
+                size_t end = pt.find(';', start);
+                std::string item = pt.substr(start, end == std::string::npos
+                                                        ? std::string::npos
+                                                        : end - start);
+                if (item == "?") {
+                    const SDL_FColor& c = (which == 10)  ? grid.get_default_fg()
+                                          : (which == 11) ? grid.get_reported_bg()
+                                                          : grid.get_default_cursor_color();
+                    std::string reply = "\x1b]" + std::to_string(which) + ";" +
+                                        format_color_spec(c) +
+                                        (str_ended_with_bel_ ? "\x07" : "\x1b\\");
+                    grid.queue_reply(reply);
+                } else {
+                    SDL_FColor parsed;
+                    if (parse_color_spec(item, parsed)) {
+                        if (which == 10)      grid.set_default_fg(parsed);
+                        else if (which == 11) grid.set_default_bg(parsed);
+                        else                  grid.set_default_cursor_color(parsed);
+                    }
+                }
+                if (end == std::string::npos) break;
+                start = end + 1;
+                ++which;
+            }
+            break;
+        }
+        case 110: grid.reset_default_fg(); break;
+        case 111: grid.reset_default_bg(); break;
+        case 112: grid.reset_default_cursor_color(); break;
         case 8: {
             // Hyperlink: OSC 8;params;URI ST. `pt` is "params;URI" -- params
             // (e.g. id=xxx, used to group multiple spans as one link) are
@@ -974,8 +1090,8 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
                 }
             };
             auto reset_all = [&]() {
-                grid.set_current_fg({0.9f, 0.9f, 0.9f, 1.0f});
-                grid.set_current_bg({0.0f, 0.0f, 0.0f, 0.0f});
+                grid.set_current_fg(grid.get_default_fg());
+                grid.set_current_bg(grid.get_default_bg());
                 attrs = 0;
                 fg_base_index_ = -1;
             };
@@ -1046,10 +1162,10 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
                 } else if (param == 39) {
                     // Default foreground color
                     fg_base_index_ = -1;
-                    grid.set_current_fg({0.9f, 0.9f, 0.9f, 1.0f});
+                    grid.set_current_fg(grid.get_default_fg());
                 } else if (param == 49) {
                     // Default background color
-                    grid.set_current_bg({0.0f, 0.0f, 0.0f, 0.0f});
+                    grid.set_current_bg(grid.get_default_bg());
                 }
             }
             grid.set_current_attrs(attrs);

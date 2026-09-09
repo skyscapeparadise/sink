@@ -401,8 +401,11 @@ void TerminalGrid::soft_reset() {
     saved_cursor_col_ = 0;
     saved_cursor_row_ = 0;
 
-    current_fg_ = {0.9f, 0.9f, 0.9f, 1.0f};
-    current_bg_ = {0.0f, 0.0f, 0.0f, 0.0f};
+    // The *default* colours are not reset here. DECSTR restores the SGR state
+    // to the defaults; it does not undo an OSC 10/11/12 that changed what the
+    // defaults are. RIS does both.
+    current_fg_ = default_fg_;
+    current_bg_ = default_bg_;
     current_fg_packed_ = pack_color(current_fg_);
     current_bg_packed_ = pack_color(current_bg_);
     current_attrs_ = 0;
@@ -1075,8 +1078,11 @@ void TerminalGrid::full_reset() {
         saved_primary_row_prompt_.clear();
     }
 
-    current_fg_ = {0.9f, 0.9f, 0.9f, 1.0f};
-    current_bg_ = {0.0f, 0.0f, 0.0f, 0.0f};
+    reset_default_fg();
+    reset_default_bg();
+    reset_default_cursor_color();
+    current_fg_ = default_fg_;
+    current_bg_ = default_bg_;
     current_fg_packed_ = pack_color(current_fg_);
     current_bg_packed_ = pack_color(current_bg_);
     current_attrs_ = 0;
@@ -1340,6 +1346,16 @@ void TerminalGrid::place_image_at_cursor(uint64_t image_id, int pixel_w, int pix
     }
     cursor_col_ = 0;
 }
+
+void TerminalGrid::reset_default_fg() { default_fg_ = kDefaultFg; }
+
+void TerminalGrid::reset_default_bg() {
+    default_bg_ = kDefaultBg;
+    reported_bg_ = kDefaultReportedBg;
+    blank_row_valid_ = false;
+}
+
+void TerminalGrid::reset_default_cursor_color() { default_cursor_ = kDefaultCursor; }
 
 void TerminalGrid::queue_reply(const std::string& bytes) {
     if (pending_reply_.size() + bytes.size() > kMaxPendingReplyBytes) return;
@@ -1952,7 +1968,7 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
             cx1 = cx0 + thickness;
         }
         
-        SDL_FColor cursor_color = {1.0f, 1.0f, 1.0f, 1.0f}; // Solid, fully opaque white block cursor
+        SDL_FColor cursor_color = default_cursor_; // OSC 12 can change this
         int base_idx = static_cast<int>(bg_vertices_.size());
         
         bg_vertices_.push_back({ {cx0, cy0}, cursor_color, {0.0f, 0.0f} });

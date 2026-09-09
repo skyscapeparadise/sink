@@ -86,6 +86,10 @@ private:
     std::string osc_buffer_;
     static constexpr size_t kOscMaxLen = 4096;
     void dispatch_osc(TerminalGrid& grid);
+    // Whether the string sequence being read ended with BEL rather than ST.
+    // Replies have to echo the terminator back: a client that sent BEL and
+    // parses for BEL will sit waiting forever for an ST it does not expect.
+    bool str_ended_with_bel_ = false;
 
     // DCS payloads are captured too now, because sixel arrives in one. Kept
     // separate from the OSC buffer and capped far higher: an OSC carries a

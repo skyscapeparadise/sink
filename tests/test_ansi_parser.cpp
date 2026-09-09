@@ -1906,6 +1906,79 @@ static void test_kitty_graphics() {
     }
 }
 
+// OSC 10/11/12: the terminal's default colours. The query half is what
+// applications use to find out whether they are drawing on something light or
+// something dark, so they can pick a readable palette.
+static void test_osc_colors() {
+    TerminalGrid g; g.resize(20, 4);
+    ANSIParser p;
+
+    // Query the background. The default is transparent so media shows through,
+    // but "transparent" answers nobody's question, so what is reported is the
+    // opaque base the terminal composites onto.
+    feed(p, g, "\x1b]11;?\x1b\\");
+    CHECK(g.take_pending_reply() == "\x1b]11;rgb:0ccd/0ccd/0f5c\x1b\\");
+    CHECK(g.get_default_bg().a == 0.0f); // still transparent for rendering
+
+    // The terminator is echoed back: a client that sent BEL parses for BEL.
+    feed(p, g, "\x1b]11;?\x07");
+    CHECK(g.take_pending_reply() == "\x1b]11;rgb:0ccd/0ccd/0f5c\x07");
+
+    // Setting one, in both accepted spellings.
+    feed(p, g, "\x1b]10;#ff0000\x1b\\");
+    CHECK(g.get_default_fg().r == 1.0f);
+    CHECK(g.get_default_fg().g == 0.0f);
+    feed(p, g, "\x1b]10;rgb:0000/ffff/0000\x1b\\");
+    CHECK(g.get_default_fg().g == 1.0f);
+    CHECK(g.get_default_fg().r == 0.0f);
+
+    // Short forms scale by their width: "#f00" is full red, not 1/16th.
+    feed(p, g, "\x1b]12;#00f\x1b\\");
+    CHECK(g.get_default_cursor_color().b == 1.0f);
+
+    // A background an application sets is opaque and is what gets reported,
+    // because it has taken responsibility for what the text sits on.
+    feed(p, g, "\x1b]11;#ffffff\x1b\\");
+    CHECK(g.get_default_bg().a == 1.0f);
+    feed(p, g, "\x1b]11;?\x1b\\");
+    CHECK(g.take_pending_reply() == "\x1b]11;rgb:ffff/ffff/ffff\x1b\\");
+
+    // SGR 39/49 restore to whatever the defaults now are, not to a literal.
+    feed(p, g, "\x1b[31m\x1b[39m");
+    CHECK(g.get_current_fg().g == 1.0f); // the green set above
+    feed(p, g, "\x1b[44m\x1b[49m");
+    CHECK(g.get_current_bg().r == 1.0f); // the white set above
+
+    // OSC 11x reset, which carries no semicolon at all.
+    feed(p, g, "\x1b]111\x1b\\");
+    CHECK(g.get_default_bg().a == 0.0f);
+    feed(p, g, "\x1b]110\x1b\\");
+    CHECK(g.get_default_fg().r > 0.85f && g.get_default_fg().r < 0.95f);
+    feed(p, g, "\x1b]112\x1b\\");
+    CHECK(g.get_default_cursor_color().b == 1.0f);
+
+    // Several colours in one query, selector advancing across the list.
+    feed(p, g, "\x1b]10;?;?;?\x1b\\");
+    std::string reply = g.take_pending_reply();
+    CHECK(reply.find("\x1b]10;") != std::string::npos);
+    CHECK(reply.find("\x1b]11;") != std::string::npos);
+    CHECK(reply.find("\x1b]12;") != std::string::npos);
+
+    // Malformed specs are ignored rather than producing a garbage colour.
+    SDL_FColor before = g.get_default_fg();
+    feed(p, g, "\x1b]10;not-a-color\x1b\\");
+    CHECK(g.get_default_fg().r == before.r);
+    feed(p, g, "\x1b]10;#12345\x1b\\");
+    CHECK(g.get_default_fg().r == before.r);
+
+    // RIS puts the defaults back, unlike DECSTR which only resets SGR state.
+    feed(p, g, "\x1b]11;#ffffff\x1b\\");
+    feed(p, g, "\x1b[!p");
+    CHECK(g.get_default_bg().a == 1.0f); // soft reset leaves the default alone
+    feed(p, g, "\x1b" "c");
+    CHECK(g.get_default_bg().a == 0.0f);
+}
+
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
@@ -1964,6 +2037,7 @@ int main() {
     test_image_placements();
     test_sixel();
     test_kitty_graphics();
+    test_osc_colors();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;

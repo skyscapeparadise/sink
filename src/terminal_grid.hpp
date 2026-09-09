@@ -188,6 +188,37 @@ public:
     void set_cursor_col(int col);
     void set_cursor_row(int row);
 
+    // The terminal's *default* colours, as distinct from the SGR colours
+    // currently in effect. These are what SGR 39/49 restore to and what
+    // OSC 10/11/12 report and set. They used to be four literals written out
+    // in the parser, which is why they could be neither queried nor changed.
+    void set_default_fg(const SDL_FColor& c) { default_fg_ = c; }
+    void set_default_bg(const SDL_FColor& c) {
+        default_bg_ = c;
+        reported_bg_ = c;
+        blank_row_valid_ = false; // blank cells carry the default background
+    }
+    void set_default_cursor_color(const SDL_FColor& c) { default_cursor_ = c; }
+    const SDL_FColor& get_default_fg() const { return default_fg_; }
+    const SDL_FColor& get_default_bg() const { return default_bg_; }
+    const SDL_FColor& get_default_cursor_color() const { return default_cursor_; }
+
+    // What OSC 11 answers with.
+    //
+    // The default background is *transparent*, so whatever the window is
+    // showing behind the grid comes through -- which is the point of sink. But
+    // "transparent" is not an answer to the question an application is really
+    // asking, which is whether it is drawing on something light or something
+    // dark. So the reported colour is the opaque base the terminal composites
+    // onto, until an application sets a background of its own, at which point
+    // the two are the same thing.
+    const SDL_FColor& get_reported_bg() const { return reported_bg_; }
+
+    // Restores the built-in defaults, for RIS and for OSC 110/111/112.
+    void reset_default_fg();
+    void reset_default_bg();
+    void reset_default_cursor_color();
+
     void set_current_fg(const SDL_FColor& fg) { current_fg_ = fg; current_fg_packed_ = pack_color(fg); }
     void set_current_bg(const SDL_FColor& bg) { current_bg_ = bg; current_bg_packed_ = pack_color(bg); }
     const SDL_FColor& get_current_fg() const { return current_fg_; }
@@ -645,6 +676,17 @@ private:
     // The SDL_FColor pair stays for the public getters and the render path;
     // the packed mirror is what actually goes into cells, kept in sync by the
     // setters above so the hot write path never converts.
+    // See set_default_fg/get_reported_bg. kDefault* are the built-in values
+    // RIS and OSC 11x go back to.
+    static constexpr SDL_FColor kDefaultFg{0.9f, 0.9f, 0.9f, 1.0f};
+    static constexpr SDL_FColor kDefaultBg{0.0f, 0.0f, 0.0f, 0.0f};
+    static constexpr SDL_FColor kDefaultReportedBg{0.05f, 0.05f, 0.06f, 1.0f};
+    static constexpr SDL_FColor kDefaultCursor{1.0f, 1.0f, 1.0f, 1.0f};
+    SDL_FColor default_fg_ = kDefaultFg;
+    SDL_FColor default_bg_ = kDefaultBg;
+    SDL_FColor reported_bg_ = kDefaultReportedBg;
+    SDL_FColor default_cursor_ = kDefaultCursor;
+
     SDL_FColor current_fg_ = {0.9f, 0.9f, 0.9f, 1.0f};
     SDL_FColor current_bg_ = {0.0f, 0.0f, 0.0f, 0.0f};
     PackedColor current_fg_packed_ = {230, 230, 230, 255};
