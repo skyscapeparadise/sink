@@ -2206,6 +2206,45 @@ static void render_search_drawer(TerminalWindow* tw, int width, int height) {
     }
 }
 
+// Removes the bracketed-paste markers from text about to be sent *inside* a
+// bracketed paste.
+//
+// Bracketed paste is what stops pasted newlines from being run as commands:
+// the shell sees ESC[200~ ... ESC[201~ and treats everything between as
+// literal text. That guarantee only holds if the payload cannot contain the
+// terminator itself. Pasting content that embeds ESC[201~ would otherwise end
+// the paste early, and every byte after it -- newlines included -- would be
+// handled as if the user had typed it, so the tail of the clipboard runs as
+// commands.
+//
+// That is reachable without the user pasting anything unusual: OSC 52 lets any
+// output sink displays set the clipboard, so a cat'd file or a compromised
+// host on the far end of an ssh session can plant the payload and wait for the
+// next Cmd+V. ESC[200~ goes too -- it cannot end the paste, but leaving it
+// lets a payload nest a second start marker and desynchronise shells that
+// count them.
+static std::string strip_paste_markers(const char* text, size_t len) {
+    static const std::string kMarkers[] = { "\x1b[200~", "\x1b[201~" };
+    std::string out(text, len);
+    // Removing a marker splices its neighbours together, and those halves can
+    // spell a *new* marker that was not in the original text
+    // ("ESC[2" + "ESC[201~" + "01~" leaves "ESC[201~" behind). So this runs to
+    // a fixed point rather than in one pass. It terminates: every iteration
+    // that changes anything makes the string strictly shorter.
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (const std::string& marker : kMarkers) {
+            size_t at;
+            while ((at = out.find(marker)) != std::string::npos) {
+                out.erase(at, marker.size());
+                changed = true;
+            }
+        }
+    }
+    return out;
+}
+
 // Longest the screen may go without presenting while an application holds a
 // synchronized update open. Real updates complete in a few milliseconds; this
 // only engages when something misbehaves or streams updates continuously.
@@ -2233,9 +2272,13 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 if (text) {
                     if (tw->fpane().terminal.is_bracketed_paste_active()) {
                         // Wrap in bracketed-paste markers so the shell treats the
-                        // content as literal text instead of executing embedded newlines.
+                        // content as literal text instead of executing embedded
+                        // newlines. The payload has its own markers stripped first,
+                        // or it could close the bracket early and escape that --
+                        // see strip_paste_markers.
+                        std::string body = strip_paste_markers(text, strlen(text));
                         tw->fpane().pty.write_to_pty("\x1b[200~", 6);
-                        tw->fpane().pty.write_to_pty(text, strlen(text));
+                        tw->fpane().pty.write_to_pty(body.data(), body.size());
                         tw->fpane().pty.write_to_pty("\x1b[201~", 6);
                     } else {
                         tw->fpane().pty.write_to_pty(text, strlen(text));
