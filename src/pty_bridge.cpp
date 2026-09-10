@@ -16,6 +16,75 @@
 #include <pty.h>
 #endif
 
+namespace {
+
+// Writes one stub executable, replacing whatever is at `path`. Opened with
+// O_NOFOLLOW and O_EXCL after an unlink, so a symlink planted at the target
+// can never redirect the write somewhere else.
+bool write_stub(const std::string& path) {
+    ::unlink(path.c_str());
+    int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0700);
+    if (fd < 0) return false;
+    static const char kBody[] = "#!/bin/sh\nexit 0\n";
+    const size_t len = sizeof(kBody) - 1;
+    size_t off = 0;
+    while (off < len) {
+        ssize_t n = ::write(fd, kBody + off, len - off);
+        if (n < 0) {
+            if (errno == EINTR) continue;
+            ::close(fd);
+            return false;
+        }
+        off += static_cast<size_t>(n);
+    }
+    bool ok = (::fchmod(fd, 0700) == 0);
+    ::close(fd);
+    return ok;
+}
+
+// The directory of stub executables for sink's built-in commands (sinkdemo,
+// sinksing), which spawn() prepends to the child shell's PATH.
+//
+// It lives under $HOME rather than /tmp. /tmp is world-writable, so the old
+// location was a directory any other account -- or any unprivileged process
+// on the machine -- could create first and fill with executables named `ls`,
+// `git` or `sudo`. sink would then find its mkdir() already satisfied and
+// prepend that attacker-owned directory to PATH, so those names shadowed the
+// real binaries in every shell sink opened: arbitrary code execution as the
+// user, on every launch, persisting until /tmp was cleared.
+//
+// Prepending to PATH is only safe if nobody but the user can write to what is
+// being prepended, so the directory is verified after creation and the whole
+// feature is dropped (empty return) if it does not check out. Computed once:
+// the result is reused by every later spawn.
+const std::string& stub_bin_dir() {
+    static const std::string dir = [] () -> std::string {
+        const char* home = getenv("HOME");
+        if (!home || !*home) return {};
+        std::string base = std::string(home) + "/.config/sink";
+        ::mkdir((std::string(home) + "/.config").c_str(), 0755);
+        ::mkdir(base.c_str(), 0700);
+        std::string path = base + "/bin";
+        if (::mkdir(path.c_str(), 0700) != 0 && errno != EEXIST) return {};
+
+        // Vet what we ended up with rather than assuming mkdir made it. It may
+        // have already existed as something else entirely, and EEXIST above is
+        // deliberately tolerated so a second launch reuses the first's work.
+        struct stat st;
+        if (::lstat(path.c_str(), &st) != 0) return {};
+        if (!S_ISDIR(st.st_mode)) return {};           // a file, or a symlink to one
+        if (st.st_uid != ::getuid()) return {};        // someone else owns it
+        if (st.st_mode & (S_IWGRP | S_IWOTH)) return {}; // others can drop binaries in
+
+        if (!write_stub(path + "/sinkdemo")) return {};
+        if (!write_stub(path + "/sinksing")) return {};
+        return path;
+    }();
+    return dir;
+}
+
+} // namespace
+
 PTYBridge::PTYBridge() {}
 
 PTYBridge::~PTYBridge() {
@@ -28,6 +97,11 @@ bool PTYBridge::spawn(int cols, int rows, const std::string& cwd) {
     ws.ws_col = static_cast<unsigned short>(cols);
     ws.ws_xpixel = 0;
     ws.ws_ypixel = 0;
+
+    // Resolved before the fork: this touches the filesystem and allocates,
+    // neither of which is safe to do between fork() and exec() in a process
+    // that has other threads running (sink's reader threads do).
+    const std::string& stub_bin = stub_bin_dir();
 
     running_ = true;
     child_pid_ = forkpty(&master_fd_, nullptr, nullptr, &ws);
@@ -67,17 +141,16 @@ bool PTYBridge::spawn(int cols, int rows, const std::string& cwd) {
             }
         }
 
-        // Create stub PATH entries for built-in sink commands (sinkdemo and sinksing)
-        mkdir("/tmp/.sink_bin", 0755);
-        FILE* f1 = fopen("/tmp/.sink_bin/sinkdemo", "w");
-        if (f1) { fprintf(f1, "#!/bin/sh\nexit 0\n"); fclose(f1); chmod("/tmp/.sink_bin/sinkdemo", 0755); }
-        FILE* f2 = fopen("/tmp/.sink_bin/sinksing", "w");
-        if (f2) { fprintf(f2, "#!/bin/sh\nexit 0\n"); fclose(f2); chmod("/tmp/.sink_bin/sinksing", 0755); }
-
-        const char* old_path = getenv("PATH");
-        std::string new_path = "/tmp/.sink_bin";
-        if (old_path) new_path += ":" + std::string(old_path);
-        setenv("PATH", new_path.c_str(), 1);
+        // Prepend the stub directory holding sink's built-in commands. It is
+        // built and vetted by the parent before the fork (see stub_bin_dir);
+        // an empty string means it could not be trusted, in which case PATH is
+        // left exactly as it was.
+        if (!stub_bin.empty()) {
+            const char* old_path = getenv("PATH");
+            std::string new_path = stub_bin;
+            if (old_path) new_path += ":" + std::string(old_path);
+            setenv("PATH", new_path.c_str(), 1);
+        }
 
         // Ensure child shell runs with UTF-8 locale support and xterm capabilities
         setenv("LANG", "en_US.UTF-8", 1);
