@@ -25,6 +25,10 @@ public:
 private:
     ParserState state_ = STATE_NORMAL;
     std::vector<int> csi_params_;
+    // Cap on parameters kept from one CSI sequence. xterm's own limit is in
+    // the same range; anything beyond this is malformed or hostile, and
+    // storing it without bound is a memory-exhaustion hole.
+    static constexpr size_t kMaxCsiParams = 256;
     // CSI parameters accumulate into an int as digits arrive, rather than into
     // a string that std::stoi then re-parses. That path profiled at ~12% of
     // total parse time -- locale-aware strtol plus the try/catch's exception

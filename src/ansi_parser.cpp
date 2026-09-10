@@ -733,7 +733,17 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                 // color sequences then parse identically to the ';' form.
                 // An empty parameter (";;" or a leading ";") is 0, which is
                 // what the accumulator already holds when no digits arrived.
-                csi_params_.push_back(csi_acc_);
+                //
+                // Past the cap the separator is still consumed but nothing is
+                // stored. Without that, a stream of ';' inside one CSI grows
+                // this vector for as long as the bytes keep coming -- and the
+                // bytes are attacker-controlled, so a cat'd file could pin the
+                // process at whatever memory it liked until it was killed. No
+                // real sequence comes close to the limit (SGR, the longest,
+                // uses at most a handful).
+                if (csi_params_.size() < kMaxCsiParams) {
+                    csi_params_.push_back(csi_acc_);
+                }
                 csi_acc_ = 0;
                 csi_acc_digits_ = false;
             } else if (c >= 0x20 && c <= 0x2F) {
@@ -741,7 +751,7 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                 // final byte: "CSI Ps SP q" is DECSCUSR, "CSI ! p" is DECSTR.
                 csi_intermediate_ = static_cast<char>(c);
             } else if (c >= 0x40 && c <= 0x7E) {
-                if (csi_acc_digits_) {
+                if (csi_acc_digits_ && csi_params_.size() < kMaxCsiParams) {
                     csi_params_.push_back(csi_acc_);
                 }
                 process_csi_sequence(grid, static_cast<char>(c));

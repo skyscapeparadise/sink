@@ -2072,6 +2072,38 @@ static void test_osc_cwd() {
 
 // DECKPAM/DECKPNM. The key encoding lives in main.cpp against SDL events; what
 // is testable here is the mode the parser tracks, which is what decides it.
+// A CSI sequence carrying an absurd number of parameters must not be able to
+// grow the parser's parameter vector without bound (memory exhaustion from
+// untrusted output), and must still dispatch correctly on its final byte.
+static void test_csi_param_flood() {
+    TerminalGrid g; g.resize(20, 5);
+    ANSIParser p;
+
+    // 100k separators inside one sequence. The cap means the stored parameters
+    // stop accumulating long before this; the sequence is still consumed and
+    // must not print any of it to the screen.
+    std::string flood = "\x1b[";
+    flood.append(100000, ';');
+    flood += "m";
+    feed(p, g, flood);
+    CHECK(row_text(g, 0) == "");
+
+    // The parser is still in a good state afterwards.
+    feed(p, g, "ok");
+    CHECK(row_text(g, 0) == "ok");
+
+    // A parameter list past the cap still dispatches: CUP with its row/col
+    // first, then filler, lands where the leading parameters say.
+    TerminalGrid g2; g2.resize(20, 10);
+    ANSIParser p2;
+    std::string cup = "\x1b[3;5";
+    for (int i = 0; i < 5000; ++i) cup += ";1";
+    cup += "H";
+    feed(p2, g2, cup);
+    CHECK(g2.get_cursor_row() == 2);
+    CHECK(g2.get_cursor_col() == 4);
+}
+
 static void test_app_keypad() {
     TerminalGrid g; g.resize(20, 4);
     ANSIParser p;
@@ -2160,6 +2192,7 @@ int main() {
     test_osc_palette();
     test_osc_cwd();
     test_app_keypad();
+    test_csi_param_flood();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;
