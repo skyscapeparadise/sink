@@ -487,7 +487,16 @@ void ANSIParser::dispatch_dcs(TerminalGrid& grid) {
             value = 0;
             any = false;
         } else {
-            value = value * 10 + (ch - '0');
+            // Saturate. A DCS payload is attacker-controlled and can carry
+            // millions of digits ahead of the 'q'; letting this run would be
+            // signed overflow, which is undefined behaviour rather than the
+            // wrap it looks like. The values are only compared against small
+            // constants, so clamping loses nothing real.
+            if (value <= (std::numeric_limits<int>::max() - 9) / 10) {
+                value = value * 10 + (ch - '0');
+            } else {
+                value = std::numeric_limits<int>::max();
+            }
             any = true;
         }
     }
