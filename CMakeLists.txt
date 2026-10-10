@@ -1,4 +1,22 @@
 cmake_minimum_required(VERSION 3.20)
+
+# Pin the minimum macOS version rather than letting it default.
+#
+# With this unset, clang targets whatever the machine doing the build happens
+# to be running (clamped to the SDK), so the floor moved on its own whenever
+# the build machine was updated: 0.9.0 shipped requiring 26.0, and the first
+# build after an OS update silently produced a binary demanding 26.5 -- cutting
+# off every user between the two for no reason anyone chose.
+#
+# Set before project() deliberately: CMake bakes this into the compiler checks
+# it runs there, and a value arriving afterwards only reaches some of the
+# flags. 26.0 is what is already in the wild (and what the vendored dylibs are
+# built against) -- raise it on purpose, not by upgrading a laptop.
+if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "26.0" CACHE STRING
+        "Minimum macOS version the build targets" FORCE)
+endif()
+
 project(SinkTerminal VERSION 0.9.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
