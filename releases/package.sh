@@ -9,8 +9,14 @@ cd "${SCRIPT_DIR}/.."
 echo "packaging sink.app..."
 
 # 1. Compile the latest binary
+# Same SDK/deployment-target selection build.sh uses -- this script configures
+# and compiles too, so a release built through it has to agree with a release
+# built through build.sh, and a fresh build/ here would otherwise pick the
+# default sysroot and fail to link.
+source ./sdk_env.sh
+
 echo "  compiling project..."
-cmake -B build -S .
+cmake -B build -S . -DCMAKE_OSX_SYSROOT="${SDKROOT}"
 cmake --build build
 
 # 2. Setup the App Bundle folders
