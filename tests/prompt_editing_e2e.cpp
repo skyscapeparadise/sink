@@ -209,7 +209,36 @@ public:
             i += n;
         }
     }
-    void enter()     { key("\r"); }
+    // Enter, then wait for the next prompt to be drawn before returning --
+    // the way a person types the next command after seeing the prompt, not
+    // during the moment it is being drawn. Typing into that moment is the
+    // typeahead case, where sink can only guess where the input will begin
+    // (prompt_editing.cpp; shell integration via OSC 133 removes the guess).
+    // Waiting a fixed time was not enough on a busy machine: zsh's prompt
+    // can arrive in two parts, its end-of-output marker and then the prompt.
+    // A full-screen app, which draws no prompt, just waits out the limit.
+    void enter() {
+        key("\r");
+        static const char* kPrompts[] = { "ps1> ", "dquote> ", "> " };
+        auto until = Clock::now() + std::chrono::milliseconds(1500);
+        while (Clock::now() < until) {
+            pump(5);
+            std::string row = row_text(grid_.get_cursor_row());
+            bool at_prompt = false;
+            for (const char* p : kPrompts) {
+                // row_text() trims trailing blanks, so an empty prompt line
+                // reads without the prompt's final space; the cursor sitting
+                // past that space is what says the prompt is complete.
+                std::string visible(p);
+                while (!visible.empty() && visible.back() == ' ') visible.pop_back();
+                if (row.compare(0, visible.size(), visible) == 0 &&
+                    grid_.get_cursor_col() >= static_cast<int>(std::strlen(p))) {
+                    at_prompt = true;
+                }
+            }
+            if (at_prompt) break;
+        }
+    }
     void backspace(int n = 1) { for (int i = 0; i < n; ++i) key("\x7f"); }
     void up()        { key(grid_.is_app_cursor_keys() ? "\x1bOA" : "\x1b[A"); }
     void ctrl(char c) { key(std::string(1, static_cast<char>(c & 0x1F))); }
