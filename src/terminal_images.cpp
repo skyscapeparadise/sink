@@ -264,9 +264,14 @@ uint32_t hls_to_rgba(int h, int l, int s) {
 
 bool decode_sixel(const char* data, size_t size, bool background_transparent,
                   std::vector<uint32_t>& out_pixels, int& out_width, int& out_height) {
-    // Bounded independently of TerminalImages::kMaxImagePixels, since this
-    // allocates while decoding rather than at the end.
+    // Limits. No side longer than kMaxDim, and no more pixels than the image
+    // store will accept (TerminalImages::kMaxBytes) -- decoding more than it
+    // will keep is work done only to be thrown away, and the store's limit
+    // used to be four times smaller than this decoder's, so a few kilobytes
+    // could make sink decode 150MB of pixels and then discard them.
     constexpr int kMaxDim = 8192;
+    constexpr size_t kMaxPixels =
+        std::min(TerminalImages::kMaxImagePixels, TerminalImages::kMaxBytes / sizeof(uint32_t));
 
     std::vector<uint32_t> palette(256, pack_rgba(0, 0, 0));
     for (int i = 0; i < 16; ++i) {
@@ -276,28 +281,49 @@ bool decode_sixel(const char* data, size_t size, bool background_transparent,
     }
 
     const uint32_t background = background_transparent ? 0u : pack_rgba(0, 0, 0);
+    // The buffer drawn into (cap_w x cap_h, rows cap_w apart) is not the
+    // image: it grows ahead of the drawing, and the image is cut out of it at
+    // the end -- max_x wide and as tall as the drawing or the raster
+    // attribute's height, whichever is more.
     std::vector<uint32_t> pixels;
-    int width = 0, height = 0;
+    int cap_w = 0, cap_h = 0;
     int x = 0, band_top = 0, color = 0;
-    int max_x = 0;
+    int max_x = 0, drawn_h = 0;
+    int raster_w = 0, raster_h = 0;
 
-    // Grows to fit as the image is drawn, since the raster attribute is
-    // optional and plenty of encoders omit it.
+    // Makes room for a sixel reaching (need_w, need_h), or refuses if the
+    // image would then pass the limits.
+    //
+    // Capacity grows by doubling. It used to grow to exactly what was
+    // needed, copying the whole image every time: an image that widened a
+    // column or deepened a band at a time cost the square of its size, which
+    // is how 1.5KB of sixel took a second to decode. (Found by tests/fuzz.)
     auto ensure = [&](int need_w, int need_h) -> bool {
         if (need_w > kMaxDim || need_h > kMaxDim) return false;
-        if (need_w <= width && need_h <= height) return true;
-        int new_w = std::max(width, need_w);
-        int new_h = std::max(height, need_h);
-        if (static_cast<size_t>(new_w) * new_h > TerminalImages::kMaxImagePixels) return false;
+        int extent_w = std::max(max_x, need_w), extent_h = std::max(drawn_h, need_h);
+        if (static_cast<size_t>(extent_w) * extent_h > kMaxPixels) return false;
+        if (need_w <= cap_w && need_h <= cap_h) return true;
+        int new_w = need_w > cap_w ? std::max(need_w, std::min(kMaxDim, cap_w * 2)) : cap_w;
+        int new_h = need_h > cap_h ? std::max(need_h, std::min(kMaxDim, cap_h * 2)) : cap_h;
+        if (static_cast<size_t>(new_w) * new_h > kMaxPixels) {
+            // Doubling would pass the limit; grow only as far as needed.
+            new_w = std::max(cap_w, need_w);
+            new_h = std::max(cap_h, need_h);
+            if (static_cast<size_t>(new_w) * new_h > kMaxPixels) {
+                new_w = extent_w;
+                new_h = extent_h;
+            }
+        }
         std::vector<uint32_t> grown(static_cast<size_t>(new_w) * new_h, background);
-        for (int row = 0; row < height; ++row) {
-            std::copy(pixels.begin() + static_cast<size_t>(row) * width,
-                      pixels.begin() + static_cast<size_t>(row) * width + width,
+        int keep_w = std::min(cap_w, new_w), keep_h = std::min(cap_h, new_h);
+        for (int row = 0; row < keep_h; ++row) {
+            std::copy(pixels.begin() + static_cast<size_t>(row) * cap_w,
+                      pixels.begin() + static_cast<size_t>(row) * cap_w + keep_w,
                       grown.begin() + static_cast<size_t>(row) * new_w);
         }
         pixels.swap(grown);
-        width = new_w;
-        height = new_h;
+        cap_w = new_w;
+        cap_h = new_h;
         return true;
     };
 
@@ -320,6 +346,11 @@ bool decode_sixel(const char* data, size_t size, bool background_transparent,
         return count;
     };
 
+    // Drawing past the size limit stops decoding and keeps what was drawn,
+    // through the same finishing code as a complete image. It used to return
+    // from inside the loop instead, reporting success without ever filling in
+    // the outputs -- a 0x0 image the caller then had to reject, losing the
+    // picture this was meant to keep. (Found by tests/fuzz.)
     for (size_t i = 0; i < size;) {
         unsigned char c = static_cast<unsigned char>(data[i]);
         if (c == '"') {
@@ -327,9 +358,16 @@ bool decode_sixel(const char* data, size_t size, bool background_transparent,
             int params[4] = {0, 0, 0, 0};
             int n = read_params(i, params, 4);
             // Pan/Pad are the aspect ratio, which sink does not honour; Ph/Pv
-            // are a size hint, useful because it avoids repeated regrowth.
+            // declare the size. Applied when the image is finished rather
+            // than allocated now: fourteen bytes could otherwise demand a
+            // 100MB buffer before drawing anything.
             if (n >= 4 && params[2] > 0 && params[3] > 0) {
-                if (!ensure(params[2], params[3])) return false;
+                if (params[2] > kMaxDim || params[3] > kMaxDim ||
+                    static_cast<size_t>(params[2]) * params[3] > kMaxPixels) {
+                    return false;
+                }
+                raster_w = params[2];
+                raster_h = params[3];
             }
         } else if (c == '#') {
             ++i;
@@ -357,11 +395,12 @@ bool decode_sixel(const char* data, size_t size, bool background_transparent,
             ++i;
             int bits = sx - 0x3F;
             if (repeat > kMaxDim) repeat = kMaxDim;
-            if (!ensure(x + repeat, band_top + 6)) return !pixels.empty();
+            if (!ensure(x + repeat, band_top + 6)) break;  // past the size limit: keep what fits
+            drawn_h = std::max(drawn_h, band_top + 6);
             for (int r = 0; r < repeat; ++r, ++x) {
                 for (int b = 0; b < 6; ++b) {
                     if (bits & (1 << b)) {
-                        pixels[static_cast<size_t>(band_top + b) * width + x] = palette[color];
+                        pixels[static_cast<size_t>(band_top + b) * cap_w + x] = palette[color];
                     }
                 }
             }
@@ -375,10 +414,11 @@ bool decode_sixel(const char* data, size_t size, bool background_transparent,
             ++i;
         } else if (c >= 0x3F && c <= 0x7E) {
             int bits = c - 0x3F;
-            if (!ensure(x + 1, band_top + 6)) return !pixels.empty();
+            if (!ensure(x + 1, band_top + 6)) break;
+            drawn_h = std::max(drawn_h, band_top + 6);
             for (int b = 0; b < 6; ++b) {
                 if (bits & (1 << b)) {
-                    pixels[static_cast<size_t>(band_top + b) * width + x] = palette[color];
+                    pixels[static_cast<size_t>(band_top + b) * cap_w + x] = palette[color];
                 }
             }
             ++x;
@@ -389,22 +429,25 @@ bool decode_sixel(const char* data, size_t size, bool background_transparent,
         }
     }
 
-    if (pixels.empty() || width <= 0 || height <= 0) return false;
+    // The image: as wide as what was drawn (a raster attribute wider than
+    // the content would only leave a band of background -- or, with nothing
+    // drawn, the declared width), as tall as the drawing or the declared
+    // height, within the limits.
+    int width = max_x > 0 ? max_x : raster_w;
+    int height = std::max(drawn_h, raster_h);
+    if (width <= 0 || height <= 0) return false;
+    if (static_cast<size_t>(width) * height > kMaxPixels) height = drawn_h;
+    if (height <= 0) return false;
 
-    // Trim the right-hand side back to what was actually drawn, so a raster
-    // attribute wider than the content does not leave a band of background.
-    if (max_x > 0 && max_x < width) {
-        std::vector<uint32_t> trimmed(static_cast<size_t>(max_x) * height);
-        for (int row = 0; row < height; ++row) {
-            std::copy(pixels.begin() + static_cast<size_t>(row) * width,
-                      pixels.begin() + static_cast<size_t>(row) * width + max_x,
-                      trimmed.begin() + static_cast<size_t>(row) * max_x);
-        }
-        pixels.swap(trimmed);
-        width = max_x;
+    std::vector<uint32_t> image(static_cast<size_t>(width) * height, background);
+    int copy_w = std::min(width, cap_w), copy_h = std::min(height, cap_h);
+    for (int row = 0; row < copy_h; ++row) {
+        std::copy(pixels.begin() + static_cast<size_t>(row) * cap_w,
+                  pixels.begin() + static_cast<size_t>(row) * cap_w + copy_w,
+                  image.begin() + static_cast<size_t>(row) * width);
     }
 
-    out_pixels = std::move(pixels);
+    out_pixels = std::move(image);
     out_width = width;
     out_height = height;
     return true;

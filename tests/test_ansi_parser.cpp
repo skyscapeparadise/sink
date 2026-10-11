@@ -4,10 +4,12 @@
 #include "ansi_parser.hpp"
 #include "prompt_editing.hpp"
 #include "terminal_grid.hpp"
+#include "terminal_images.hpp"
 
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 static int checks_failed = 0;
 static int checks_run = 0;
@@ -2181,6 +2183,26 @@ static void test_input_anchor() {
     }
 }
 
+// A sixel that runs past the size limit keeps what it drew before the limit,
+// and never reports success without an image. (The decoder used to return
+// "success" from inside its loop with the outputs never filled in: a 0x0
+// image. Found by tests/fuzz.)
+static void test_sixel_past_size_limit() {
+    std::vector<uint32_t> pixels;
+    int w = -1, h = -1;
+    // Three full columns, then a repeat far past the 8192-pixel width limit.
+    std::string data = "#0;2;100;0;0~~~!9000~";
+    bool ok = decode_sixel(data.data(), data.size(), false, pixels, w, h);
+    CHECK(ok);
+    CHECK(w == 3 && h == 6);
+    CHECK(pixels.size() == static_cast<size_t>(w) * static_cast<size_t>(h));
+    // Nothing drawn before the limit: nothing to keep, so no success either.
+    std::string nothing = "!9000~!9000~";
+    pixels.clear(); w = h = -1;
+    bool ok2 = decode_sixel(nothing.data(), nothing.size(), false, pixels, w, h);
+    CHECK(!ok2 || (w > 0 && h > 0 && pixels.size() == static_cast<size_t>(w) * h));
+}
+
 // kitty f=100 means PNG. Other formats used to be decoded too -- SDL_image
 // detected the format from the data -- which put its SVG parser and older
 // decoders in reach of anything writing to the terminal. Now refused.
@@ -2329,6 +2351,7 @@ int main() {
     test_csi_param_flood();
     test_input_anchor();
     test_erase_in_display();
+    test_sixel_past_size_limit();
     test_kitty_png_only();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
