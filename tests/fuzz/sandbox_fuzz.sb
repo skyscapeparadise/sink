@@ -1,0 +1,13 @@
+;; Sandbox for the fuzzers (see tests/fuzz/README.md). Stricter than the
+;; suites': a fuzzer has no reason to start a process, open a connection of
+;; any kind, or write anything but its findings, so none of that is allowed.
+;; Writes go only to the scratch folder passed as SCRATCH (and /dev/null).
+(version 1)
+(allow default)
+(deny file-write*)
+(allow file-write*
+    (subpath (param "SCRATCH"))
+    (literal "/dev/null")
+    (literal "/dev/dtracehelper"))
+(deny network*)
+(deny process-fork)

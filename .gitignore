@@ -41,3 +41,5 @@ bench/workloads/
 # Packaged release artifacts
 *.dmg
 *.zip
+build-asan/
+build-fuzz/

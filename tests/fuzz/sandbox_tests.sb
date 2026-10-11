@@ -1,0 +1,16 @@
+;; Sandbox for running sink's test suites (see tests/fuzz/README.md).
+;;
+;; File writes are refused everywhere except the temporary folders the suites
+;; use and the scratch folder passed as SCRATCH. Internet connections are
+;; refused; local sockets stay open, since the tmux suite talks to its server
+;; over one. A suite that tried to write anywhere else would fail, not write.
+(version 1)
+(allow default)
+(deny file-write*)
+(allow file-write*
+    (subpath "/private/tmp")
+    (subpath "/private/var/folders")
+    (subpath "/dev")
+    (subpath (param "SCRATCH")))
+(deny network-outbound (remote ip))
+(deny network-inbound (local ip))
