@@ -533,7 +533,6 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
                     case NA_CR:
                         // Carriage return: move cursor to start of line
                         grid.set_cursor_col(0);
-                        grid.set_prompt_boundary(-1);
                         return;
                     case NA_BS:
                         // Backspace: move cursor left one cell
@@ -1081,10 +1080,14 @@ void ANSIParser::dispatch_osc(TerminalGrid& grid) {
         case 133:
             // Shell integration prompt marks (FinalTerm/iTerm2 protocol).
             // 'A' = prompt start -- the anchor Cmd+Up/Down jump between.
-            // B/C/D (command start/output start/command end) are accepted
-            // but unused for now.
-            if (!pt.empty() && pt[0] == 'A') {
-                grid.mark_prompt_row();
+            // 'B' = prompt end, input start: exactly where mouse editing
+            //       needs the line to begin, so it replaces the inference.
+            // 'C' = command output start: the line has been submitted.
+            // 'D' (command end) is accepted but unused.
+            if (!pt.empty()) {
+                if (pt[0] == 'A') grid.mark_prompt_row();
+                else if (pt[0] == 'B') grid.mark_input_start();
+                else if (pt[0] == 'C') grid.mark_command_output();
             }
             break;
         default:

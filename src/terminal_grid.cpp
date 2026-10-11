@@ -121,6 +121,7 @@ void TerminalGrid::update_timers(float dt) {
 
 void TerminalGrid::resize(int cols, int rows) {
     if (cols == cols_ && rows == rows_) return;
+    input_anchor_.refind = input_anchor_.valid;
     
     // If the grid is empty, initialize dimensions and return
     if (cols_ == 0 || rows_ == 0 || cells_.empty()) {
@@ -839,6 +840,9 @@ const std::string& TerminalGrid::get_hyperlink_uri(uint32_t id) const {
 void TerminalGrid::set_alt_screen(bool active) {
     if (active == alt_screen_active_) return; // apps re-send 1049h defensively
     alt_screen_active_ = active;
+    // Back from a full-screen app, the shell redraws its line; find it again
+    // rather than trust a position from before the switch.
+    if (!active) input_anchor_.refind = input_anchor_.valid;
 
     // Each screen keeps its own images. Entering a full-screen app must not
     // discard what was printed to the shell, and the two screens address the
@@ -1037,6 +1041,7 @@ void TerminalGrid::delete_lines(int count) {
 }
 
 void TerminalGrid::clear_screen() {
+    input_anchor_.refind = input_anchor_.valid;
     // Erasing the screen erases what was drawn on it. Images pinned to lines
     // already in scrollback are untouched: they belong to that text, not to
     // the screen being cleared.
@@ -1126,7 +1131,7 @@ void TerminalGrid::full_reset() {
     app_cursor_keys_ = false;
 
     clear_selection();
-    prompt_boundary_col_ = -1;
+    input_anchor_ = InputAnchor{};
 }
 
 void TerminalGrid::clear_scrollback() {
@@ -1253,6 +1258,185 @@ void TerminalGrid::mark_prompt_row() {
     if (cursor_row_ >= 0 && cursor_row_ < static_cast<int>(row_prompt_.size())) {
         row_prompt_[cursor_row_] = true;
     }
+}
+
+// --- input anchor (see prompt_editing.cpp) ----------------------------------
+
+void TerminalGrid::set_input_anchor_at_cursor() {
+    input_anchor_.valid = true;
+    input_anchor_.refind = false;
+    input_anchor_.line_id = line_id_for_row(cursor_row_);
+    input_anchor_.col = cursor_col_;
+    input_anchor_.prompt_tail.clear();
+    if (cursor_row_ >= 0 && cursor_row_ < rows_) {
+        const Cell* row = row_data(cursor_row_);
+        for (int c = 0; c < cursor_col_ && c < cols_; ++c) {
+            input_anchor_.prompt_tail += cell_base(row[c]);
+        }
+    }
+    capture_right_prompt();
+}
+
+// Whatever sits right of the input start, after a gap, while the line is
+// still empty is a right-aligned prompt: there is nothing else it can be.
+// prompt_editing.cpp leaves it out of the line's first row, which otherwise
+// counted the gap and the right prompt as characters of the command.
+void TerminalGrid::capture_right_prompt() {
+    input_anchor_.right_prompt.clear();
+    input_anchor_.right_prompt_gap = 0;
+    if (cursor_row_ < 0 || cursor_row_ >= rows_) return;
+    const Cell* row = row_data(cursor_row_);
+    auto blank = [](const Cell& c) {
+        return !(c.attrs & ATTR_WIDE_CONT) && (c.codepoint == 0 || c.codepoint == U' ');
+    };
+    int last = -1, first = -1;
+    for (int c = cols_ - 1; c >= cursor_col_; --c) {
+        if (!blank(row[c])) { last = c; break; }
+    }
+    if (last < 0) return;
+    for (int c = cursor_col_; c <= last; ++c) {
+        if (!blank(row[c])) { first = c; break; }
+    }
+    // Text right at the cursor is the line itself, not a right prompt.
+    if (first <= cursor_col_ + 1) return;
+    for (int c = first; c <= last; ++c) input_anchor_.right_prompt += cell_base(row[c]);
+    input_anchor_.right_prompt_gap = cols_ - (last + 1);
+}
+
+bool TerminalGrid::prompt_tail_matches(int row) const {
+    int len = 0;
+    const Cell* cells = line_cells(row, len);
+    const std::u32string& tail = input_anchor_.prompt_tail;
+    if (!cells || len < static_cast<int>(tail.size())) return false;
+    for (size_t c = 0; c < tail.size(); ++c) {
+        if (cell_base(cells[c]) != tail[c]) return false;
+    }
+    return true;
+}
+
+bool TerminalGrid::input_start(int& row, int& col) const {
+    if (!input_anchor_.valid || alt_screen_active_) return false;
+    col = input_anchor_.col;
+    const int64_t top_id = static_cast<int64_t>(line_id_for_row(0));
+    const int64_t at = static_cast<int64_t>(input_anchor_.line_id) - top_id;
+    const int history = static_cast<int>(scrollback_history_.size());
+
+    // Trust the remembered line only if the prompt is still drawn there. A
+    // clear (Ctrl-L), a resize reflow, or anything else that redraws the
+    // prompt somewhere new leaves the line id pointing at the wrong text.
+    bool placed = !input_anchor_.refind && at >= -history && at <= cursor_row_ &&
+                  !(at == cursor_row_ && cursor_col_ < col);
+    if (placed && (input_anchor_.prompt_tail.empty() || prompt_tail_matches(static_cast<int>(at)))) {
+        row = static_cast<int>(at);
+        return true;
+    }
+
+    // Look for the prompt again, nearest the cursor first: the line being
+    // edited always contains the cursor, so the prompt is at or above it --
+    // and after a reflow, a stale copy of the prompt the shell redrew below
+    // is further up, so nearest is also right. An empty tail (input starting
+    // in column 0) gives nothing to recognise.
+    if (input_anchor_.prompt_tail.empty()) return false;
+    for (int r = cursor_row_; r >= 0; --r) {
+        if (r == cursor_row_ && cursor_col_ < col) continue;
+        if (prompt_tail_matches(r)) {
+            row = r;
+            return true;
+        }
+    }
+
+    // The prompt may have been drawn after leftover output -- a command whose
+    // last line had no newline -- and then redrawn by the line editor from
+    // column 0, overwriting the leftovers. bash does exactly that on the first
+    // keystroke. The tail recorded then was leftovers plus prompt, so the
+    // prompt is a *suffix* of it: accept the row nearest the cursor that
+    // starts with the longest such suffix, and the input begins after it.
+    const std::u32string& tail = input_anchor_.prompt_tail;
+    for (int r = cursor_row_; r >= 0; --r) {
+        int len = 0;
+        const Cell* cells = line_cells(r, len);
+        if (!cells) continue;
+        for (int k = static_cast<int>(tail.size()) - 1; k >= 2; --k) {
+            if (k > len || (r == cursor_row_ && cursor_col_ < k)) continue;
+            bool match = true;
+            for (int c = 0; c < k && match; ++c) {
+                match = cell_base(cells[c]) == tail[tail.size() - k + c];
+            }
+            if (match) {
+                row = r;
+                col = k;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// None of these act while a full-screen app has the alternate screen: its
+// cursor and keys belong to the app, not to a command line. A key that quits
+// less or htop would otherwise freeze the anchor at a position on the app's
+// screen, and with no Enter to release it, the prompt the shell draws on the
+// way back would never be found.
+
+void TerminalGrid::note_output_idle() {
+    // Until the user starts editing, the cursor's resting place after output
+    // is the best estimate of where input begins: it is where the shell left
+    // it after drawing the prompt. A shell that reports the position exactly
+    // is never second-guessed.
+    if (alt_screen_active_ || input_anchor_.frozen) return;
+    if (!input_anchor_.exact) {
+        set_input_anchor_at_cursor();
+    } else if (input_anchor_.valid && line_id_for_row(cursor_row_) == input_anchor_.line_id) {
+        // An exact start arrives with the end of the left prompt, before zsh
+        // draws the right one; pick that up now the shell has finished.
+        capture_right_prompt();
+    }
+}
+
+void TerminalGrid::note_user_edit() {
+    if (alt_screen_active_) return;
+    if (!input_anchor_.valid) set_input_anchor_at_cursor();
+    input_anchor_.frozen = true;
+}
+
+void TerminalGrid::note_user_submit() {
+    // The line is finished. Whatever the shell draws next belongs to the
+    // command, until output settles at the next prompt.
+    input_anchor_.valid = false;
+    input_anchor_.frozen = false;
+    input_anchor_.exact = false;
+}
+
+void TerminalGrid::mark_input_start() {
+    set_input_anchor_at_cursor();
+    input_anchor_.exact = true;
+    input_anchor_.frozen = false;
+}
+
+void TerminalGrid::mark_command_output() {
+    note_user_submit();
+}
+
+const Cell* TerminalGrid::line_cells(int active_row, int& len) const {
+    len = 0;
+    if (active_row >= 0) {
+        if (active_row >= rows_ || cells_.empty()) return nullptr;
+        len = cols_;
+        return row_data(active_row);
+    }
+    int idx = static_cast<int>(scrollback_history_.size()) + active_row;
+    if (idx < 0) return nullptr;
+    const auto& cells = scrollback_history_[idx].cells;
+    len = static_cast<int>(cells.size());
+    return cells.data();
+}
+
+bool TerminalGrid::line_wrapped(int active_row) const {
+    if (active_row >= 0) {
+        return active_row < static_cast<int>(row_wrapped_.size()) && row_wrapped_[active_row];
+    }
+    int idx = static_cast<int>(scrollback_history_.size()) + active_row;
+    return idx >= 0 && scrollback_history_[idx].wrapped;
 }
 
 // Prompt navigation works in "absolute rows": scrollback rows first, then
@@ -2457,39 +2641,6 @@ std::string TerminalGrid::get_all_text() const {
         }
     }
     return text;
-}
-
-std::string TerminalGrid::get_current_line_text() const {
-    if (cells_.empty() || cursor_row_ < 0 || cursor_row_ >= rows_) return "";
-    
-    int p_start_row = cursor_row_;
-    while (p_start_row > 0 && (p_start_row - 1) < static_cast<int>(row_wrapped_.size()) && row_wrapped_[p_start_row - 1]) {
-        p_start_row--;
-    }
-    
-    int p_end_row = cursor_row_;
-    while (p_end_row < rows_ - 1 && p_end_row < static_cast<int>(row_wrapped_.size()) && row_wrapped_[p_end_row]) {
-        p_end_row++;
-    }
-
-    std::string line;
-    for (int r = p_start_row; r <= p_end_row; ++r) {
-        int start_col = (r == p_start_row && prompt_boundary_col_ >= 0) ? prompt_boundary_col_ : 0;
-        for (int c = start_col; c < cols_; ++c) {
-            const Cell& cell = row_data(r)[c];
-            char32_t cp = cell_base(cell);
-            if (cp >= 32 && cp <= 126 && !is_cluster_ref(cell.codepoint)) {
-                line += static_cast<char>(cp);
-            } else if (cp > 126 || is_cluster_ref(cell.codepoint)) {
-                append_cell_utf8(cell, line);
-            }
-        }
-    }
-    size_t last = line.find_last_not_of(" \t\r\n");
-    if (last != std::string::npos) {
-        return line.substr(0, last + 1);
-    }
-    return line;
 }
 
 void TerminalGrid::set_search_active(bool active) {

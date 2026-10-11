@@ -109,6 +109,7 @@ set(SOURCES
     src/terminal_grid.cpp
     src/terminal_images.cpp
     src/pty_bridge.cpp
+    src/prompt_editing.cpp
     src/ansi_parser.cpp
     src/video_engine.cpp
     src/settings_ui.cpp
@@ -156,6 +157,7 @@ endif()
 enable_testing()
 add_executable(sink_tests
     tests/test_ansi_parser.cpp
+    src/prompt_editing.cpp
     src/ansi_parser.cpp
     src/terminal_grid.cpp
     src/terminal_images.cpp

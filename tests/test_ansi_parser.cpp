@@ -2,6 +2,7 @@
 // created: byte sequences are fed straight into the parser and the resulting
 // grid state is asserted on. Run via `ctest --test-dir build` or ./build/sink_tests.
 #include "ansi_parser.hpp"
+#include "prompt_editing.hpp"
 #include "terminal_grid.hpp"
 
 #include <cmath>
@@ -2075,6 +2076,84 @@ static void test_osc_cwd() {
 // A CSI sequence carrying an absurd number of parameters must not be able to
 // grow the parser's parameter vector without bound (memory exhaustion from
 // untrusted output), and must still dispatch correctly on its final byte.
+// Where mouse editing thinks the command line begins (TerminalGrid's input
+// anchor). The end-to-end suite drives real shells; these pin the rules.
+static void test_input_anchor() {
+    // The regression: a redraw starting with a carriage return used to reset
+    // the boundary, which was then re-latched wherever the cursor rested --
+    // mid-command -- leaving everything left of it unclickable.
+    {
+        TerminalGrid g; g.resize(30, 5);
+        ANSIParser p;
+        feed(p, g, "prompt> ");
+        g.note_output_idle();
+        int row = -1, col = -1;
+        CHECK(g.input_start(row, col) && row == 0 && col == 8);
+        g.note_user_edit();
+        feed(p, g, "\rprompt> echo one two");   // a shell redraw
+        g.note_output_idle();
+        CHECK(g.input_start(row, col) && row == 0 && col == 8);
+        // A click on the "o" of "one" (character 5) from the end of the line
+        // (character 12): 7 lefts.
+        std::string seven_lefts;
+        for (int i = 0; i < 7; ++i) seven_lefts += "\x1b[D";
+        CHECK(prompt_edit::click_payload(g, 0, 13) == seven_lefts);
+        // Clicks on the prompt itself do nothing.
+        CHECK(prompt_edit::click_payload(g, 0, 3).empty());
+        g.note_user_submit();
+        CHECK(!g.input_start(row, col));
+    }
+    // Until editing starts, the anchor follows the cursor as output arrives:
+    // command output first, then the prompt it finishes on.
+    {
+        TerminalGrid g; g.resize(30, 5);
+        ANSIParser p;
+        feed(p, g, "some output");
+        g.note_output_idle();
+        feed(p, g, "\r\n$ ");
+        g.note_output_idle();
+        int row = -1, col = -1;
+        CHECK(g.input_start(row, col) && row == 1 && col == 2);
+    }
+    // OSC 133;B states the input start exactly; output pauses don't move it,
+    // and 133;C (command running) ends the line.
+    {
+        TerminalGrid g; g.resize(30, 5);
+        ANSIParser p;
+        feed(p, g, "\x1b]133;A\x07" "$ " "\x1b]133;B\x07" "echo hi");
+        g.note_output_idle();
+        int row = -1, col = -1;
+        CHECK(g.input_start(row, col) && row == 0 && col == 2);
+        feed(p, g, "\x1b]133;C\x07");
+        CHECK(!g.input_start(row, col));
+    }
+    // Application cursor keys: clicks send the SS3 arrows a keypress would.
+    {
+        TerminalGrid g; g.resize(30, 5);
+        ANSIParser p;
+        feed(p, g, "$ ");
+        g.note_output_idle();
+        g.note_user_edit();
+        feed(p, g, "\x1b[?1hab");
+        CHECK(prompt_edit::click_payload(g, 0, 2) == "\x1bOD\x1bOD");
+    }
+    // A newline in the line is one character: from the end of line two, the
+    // start of line one is its four characters plus the newline plus line
+    // one's tail away.
+    {
+        TerminalGrid g; g.resize(30, 5);
+        ANSIParser p;
+        feed(p, g, "$ ");
+        g.note_output_idle();
+        g.note_user_edit();
+        feed(p, g, "ab\r\ncd");        // line "ab", newline, "cd"; cursor after d
+        std::string want;
+        for (int i = 0; i < 5; ++i) want += "\x1b[D";   // d c \n b a
+        CHECK(prompt_edit::click_payload(g, 0, 2) == want);
+        CHECK(prompt_edit::current_line_text(g) == "ab\ncd");
+    }
+}
+
 static void test_csi_param_flood() {
     TerminalGrid g; g.resize(20, 5);
     ANSIParser p;
@@ -2193,6 +2272,7 @@ int main() {
     test_osc_cwd();
     test_app_keypad();
     test_csi_param_flood();
+    test_input_anchor();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;

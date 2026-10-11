@@ -356,14 +356,49 @@ public:
     void set_alternate_scroll(bool on) { alternate_scroll_ = on; }
     bool is_alternate_scroll() const { return alternate_scroll_; }
     
-    void set_prompt_boundary(int col) { prompt_boundary_col_ = col; }
-    int get_prompt_boundary() const { return prompt_boundary_col_; }
-    void lock_prompt_boundary_if_unset() { if (prompt_boundary_col_ == -1) prompt_boundary_col_ = cursor_col_; }
+    // --- The line being edited at the shell --------------------------------
+    //
+    // Where the shell's input begins: the cell just past the prompt. Held as a
+    // scrollback-absolute line id so it stays with the text as output scrolls
+    // it up the screen. prompt_editing.cpp explains how it is found and kept;
+    // the grid stores it and is told the events that move it.
+    struct InputAnchor {
+        bool valid = false;
+        bool frozen = false;  // the user has started editing; output leaves it alone
+        bool exact = false;   // the shell reported it (OSC 133;B) rather than inferred
+        // The screen was reflowed or cleared since, so `line_id` may name the
+        // wrong row -- or a stale copy of the prompt left above the redraw.
+        bool refind = false;
+        uint64_t line_id = 0;
+        int col = 0;
+        // What the prompt's row held left of `col` when the anchor was set,
+        // which is how it is recognised again after the shell redraws.
+        std::u32string prompt_tail;
+        // A right-aligned prompt on the same row (zsh's RPROMPT), and how many
+        // columns it stops short of the right edge. Kept as a distance from
+        // the edge rather than a column so it is still found after a resize.
+        std::u32string right_prompt;
+        int right_prompt_gap = 0;
+    };
+    const InputAnchor& input_anchor() const { return input_anchor_; }
+    // Active-screen position of the input start. `row` is negative when it
+    // has scrolled into history. False when there is no line being edited.
+    bool input_start(int& row, int& col) const;
+    void note_output_idle();      // output has been handled; the shell may be waiting
+    void note_user_edit();        // something was sent to edit the line
+    void note_user_submit();      // the line was submitted or abandoned
+    void mark_input_start();      // OSC 133;B
+    void mark_command_output();   // OSC 133;C
+
+    // Cells of an active row, or of a history row when `active_row` is
+    // negative (-1 is the newest history line). Null past either end.
+    const Cell* line_cells(int active_row, int& len) const;
+    // Whether that row's text continues on the next row (soft wrap).
+    bool line_wrapped(int active_row) const;
 
     void select_word_at(int col, int row);
     void select_line_at(int row);
     std::string get_all_text() const;
-    std::string get_current_line_text() const;
 
     size_t get_scrollback_size() const { return scrollback_history_.size(); }
     void set_max_scrollback(size_t lines);
@@ -694,7 +729,10 @@ private:
     bool app_cursor_keys_ = false;
     bool app_keypad_ = false;
     bool alternate_scroll_ = true;
-    int prompt_boundary_col_ = -1;
+    InputAnchor input_anchor_;
+    void set_input_anchor_at_cursor();
+    void capture_right_prompt();
+    bool prompt_tail_matches(int row) const;
 
     // Cursor position & formatting attributes
     int cursor_col_ = 0;

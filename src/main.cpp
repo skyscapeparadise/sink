@@ -14,6 +14,7 @@
 #include <sys/stat.h>
 #include "terminal_grid.hpp"
 #include "pty_bridge.hpp"
+#include "prompt_editing.hpp"
 #include "ansi_parser.hpp"
 #include "video_engine.hpp"
 #include "settings_ui.hpp"
@@ -1074,95 +1075,32 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
     return SDL_APP_CONTINUE;
 }
 
+// Keys that only modify other keys, and send nothing on their own.
+static bool is_modifier_key(SDL_Keycode sym) {
+    switch (sym) {
+        case SDLK_LSHIFT: case SDLK_RSHIFT:
+        case SDLK_LCTRL:  case SDLK_RCTRL:
+        case SDLK_LALT:   case SDLK_RALT:
+        case SDLK_LGUI:   case SDLK_RGUI:
+        case SDLK_CAPSLOCK: case SDLK_MODE:
+            return true;
+        default:
+            return false;
+    }
+}
+
 static bool delete_selection_in_prompt(TerminalWindow* tw) {
-    if (!tw || tw->fpane().terminal.is_alt_screen_active() || !tw->fpane().terminal.has_selection()) {
+    if (!tw) return false;
+    std::string payload;
+    if (!prompt_edit::delete_selection_payload(tw->fpane().terminal, payload)) {
         return false;
     }
-    int cols = tw->fpane().terminal.get_cols();
-    int r0 = tw->fpane().terminal.get_select_start_row();
-    int r1 = tw->fpane().terminal.get_select_end_row();
-    int c0 = tw->fpane().terminal.get_select_start_col();
-    int c1 = tw->fpane().terminal.get_select_end_col();
-
-    int start_r, start_c, end_r, end_c;
-    if ((r0 < r1) || (r0 == r1 && c0 <= c1)) {
-        start_r = r0; start_c = c0;
-        end_r = r1; end_c = c1;
-    } else {
-        start_r = r1; start_c = c1;
-        end_r = r0; end_c = c0;
-    }
-
-    int total_history = static_cast<int>(tw->fpane().terminal.get_scrollback_size());
-    int cursor_row_active = tw->fpane().terminal.get_cursor_row();
-    int cursor_row_grid = cursor_row_active + total_history;
-    int cursor_col = tw->fpane().terminal.get_cursor_col();
-    int prompt_boundary = tw->fpane().terminal.get_prompt_boundary();
-    const auto& row_wrapped = tw->fpane().terminal.get_row_wrapped();
-
-    // Trace prompt start row in grid coordinates
-    int p_start_row_active = cursor_row_active;
-    while (p_start_row_active > 0 && (p_start_row_active - 1) < static_cast<int>(row_wrapped.size()) && row_wrapped[p_start_row_active - 1]) {
-        p_start_row_active--;
-    }
-    int p_start_row_grid = p_start_row_active + total_history;
-
-    // Trace prompt end row in grid coordinates
-    int p_end_row_active = cursor_row_active;
-    while (p_end_row_active < tw->fpane().terminal.get_rows() - 1 && p_end_row_active < static_cast<int>(row_wrapped.size()) && row_wrapped[p_end_row_active]) {
-        p_end_row_active++;
-    }
-    int p_end_row_grid = p_end_row_active + total_history;
-
-    // Check if selection is within the prompt rows
-    if (start_r >= p_start_row_grid && end_r <= p_end_row_grid) {
-        if (start_r == p_start_row_grid && prompt_boundary != -1 && start_c < prompt_boundary) {
-            return false;
-        }
-
-        int start_idx = (start_r - p_start_row_grid) * cols + start_c;
-        int end_idx = (end_r - p_start_row_grid) * cols + end_c;
-        int len = end_idx - start_idx + 1;
-        int cursor_idx = (cursor_row_grid - p_start_row_grid) * cols + cursor_col;
-
-        std::string payload;
-
-        // 1. Move cursor to start_idx
-        int move_offset = start_idx - cursor_idx;
-        if (move_offset > 0) {
-            for (int i = 0; i < move_offset; ++i) {
-                payload += "\x1b[C"; // Standard Right Arrow
-            }
-        } else if (move_offset < 0) {
-            for (int i = 0; i < -move_offset; ++i) {
-                payload += "\x1b[D"; // Standard Left Arrow
-            }
-        }
-
-        // 2. Send Delete keys forward
-        for (int i = 0; i < len; ++i) {
-            payload += "\x1b[3~"; // vt100 delete key sequence
-        }
-
-        // 3. Move cursor back to target position
-        if (cursor_idx > start_idx) {
-            int final_target = (cursor_idx >= start_idx + len) ? (cursor_idx - len) : start_idx;
-            int return_offset = final_target - start_idx;
-            for (int i = 0; i < return_offset; ++i) {
-                payload += "\x1b[C"; // Standard Right Arrow
-            }
-        } else if (cursor_idx < start_idx) {
-            int return_offset = start_idx - cursor_idx;
-            for (int i = 0; i < return_offset; ++i) {
-                payload += "\x1b[D"; // Standard Left Arrow
-            }
-        }
-
+    if (!payload.empty()) {
         tw->fpane().pty.write_to_pty(payload.data(), payload.size());
-        tw->fpane().terminal.clear_selection();
-        return true;
+        tw->fpane().terminal.note_user_edit();
     }
-    return false;
+    tw->fpane().terminal.clear_selection();
+    return true;
 }
 
 static void perform_cut_action(TerminalWindow* tw) {
@@ -1604,49 +1542,12 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 int clicks = event->button.clicks;
                 if (clicks == 1 && col == target_tw->fpane().mouse_down_col && row == target_tw->fpane().mouse_down_row) {
                     // Snapping cursor on mouse release
-                    if (!target_tw->fpane().terminal.is_alt_screen_active()) {
-                        int cols = target_tw->fpane().terminal.get_cols();
-                        int cursor_row = target_tw->fpane().terminal.get_cursor_row();
-                        int cursor_col = target_tw->fpane().terminal.get_cursor_col();
-                        const auto& row_wrapped = target_tw->fpane().terminal.get_row_wrapped();
-
-                        int p_start_row = cursor_row;
-                        while (p_start_row > 0 && (p_start_row - 1) < static_cast<int>(row_wrapped.size()) && row_wrapped[p_start_row - 1]) {
-                            p_start_row--;
-                        }
-
-                        int p_end_row = cursor_row;
-                        while (p_end_row < target_tw->fpane().terminal.get_rows() - 1 && p_end_row < static_cast<int>(row_wrapped.size()) && row_wrapped[p_end_row]) {
-                            p_end_row++;
-                        }
-
-                        if (target_tw->fpane().terminal.get_prompt_boundary() == -1) {
-                            target_tw->fpane().terminal.set_prompt_boundary(cursor_col);
-                        }
-
-                        if (row >= p_start_row && row <= p_end_row) {
-                            int prompt_boundary = target_tw->fpane().terminal.get_prompt_boundary();
-                            if (!(row == p_start_row && prompt_boundary != -1 && col < prompt_boundary)) {
-                                int cursor_idx = (cursor_row - p_start_row) * cols + cursor_col;
-                                int click_idx = (row - p_start_row) * cols + col;
-                                int offset = click_idx - cursor_idx;
-
-                                std::string move_payload;
-                                if (offset > 0) {
-                                    for (int o = 0; o < offset; ++o) {
-                                        move_payload += "\x1b[C"; // Standard Right Arrow
-                                    }
-                                } else if (offset < 0) {
-                                    for (int o = 0; o < -offset; ++o) {
-                                        move_payload += "\x1b[D"; // Standard Left Arrow
-                                    }
-                                }
-                                if (!move_payload.empty()) {
-                                    target_tw->fpane().pty.write_to_pty(move_payload.data(), move_payload.size());
-                                }
-                                target_tw->fpane().terminal.clear_selection();
-                            }
-                        }
+                    std::string move_payload =
+                        prompt_edit::click_payload(target_tw->fpane().terminal, row, col);
+                    if (!move_payload.empty()) {
+                        target_tw->fpane().pty.write_to_pty(move_payload.data(), move_payload.size());
+                        target_tw->fpane().terminal.note_user_edit();
+                        target_tw->fpane().terminal.clear_selection();
                     }
                 }
                 target_tw->fpane().terminal.end_selection();
@@ -1808,8 +1709,24 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         }
 
         for (auto* tw : target_windows) {
-            if (tw->fpane().terminal.get_prompt_boundary() == -1) {
-                tw->fpane().terminal.set_prompt_boundary(tw->fpane().terminal.get_cursor_col());
+            // Tell the grid what this key does to the line being edited (see
+            // prompt_editing.hpp). Modifier keys and Cmd shortcuts send
+            // nothing to the shell, so they don't count -- pressing Shift
+            // while a command runs must not pin the input start mid-output.
+            //
+            // Ctrl-D only ends the line when the line is empty -- that is EOF,
+            // which exits the shell or ends input to cat or python. With text
+            // on the line it is delete-char in zsh and readline, an edit like
+            // any other, and treating it as the end would let the next pause
+            // in output re-anchor the line mid-command.
+            if (!is_modifier_key(sym) && !(mod & SDL_KMOD_GUI)) {
+                bool ctrl = (mod & SDL_KMOD_CTRL) != 0;
+                bool submit = sym == SDLK_RETURN || sym == SDLK_KP_ENTER ||
+                              (ctrl && sym == SDLK_C) ||
+                              (ctrl && sym == SDLK_D &&
+                               prompt_edit::current_line_text(tw->fpane().terminal).empty());
+                if (submit) tw->fpane().terminal.note_user_submit();
+                else        tw->fpane().terminal.note_user_edit();
             }
             if ((mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) && sym == SDLK_X) {
                 perform_cut_action(tw);
@@ -1849,7 +1766,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             }
 
             if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) {
-                std::string typed_line = tw->fpane().terminal.get_current_line_text();
+                std::string typed_line = prompt_edit::current_line_text(tw->fpane().terminal);
                 
                 if (SinkDemo::is_demo_command(typed_line) && !SinkDemo::is_demo_running(tw)) {
                     const char cancel_cmd[] = "\x15\x03";
@@ -2270,6 +2187,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             if (SDL_HasClipboardText()) {
                 char* text = SDL_GetClipboardText();
                 if (text) {
+                    tw->fpane().terminal.note_user_edit();
                     if (tw->fpane().terminal.is_bracketed_paste_active()) {
                         // Wrap in bracketed-paste markers so the shell treats the
                         // content as literal text instead of executing embedded
@@ -2630,7 +2548,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             } else {
                 consumed = parse_within_budget(pane, out_data, out_size);
             }
-            pane.terminal.lock_prompt_boundary_if_unset();
+            pane.terminal.note_output_idle();
         }
 
         // Retire what was handled. A pane a demo has taken over drops its
@@ -2685,7 +2603,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             pane.animation_buffer.erase(pane.animation_buffer.begin(), pane.animation_buffer.begin() + chars_to_process);
             
             if (pane.animation_buffer.empty()) {
-                pane.terminal.lock_prompt_boundary_if_unset();
+                pane.terminal.note_output_idle();
             }
         }
         } // end per-pane read/parse loop
