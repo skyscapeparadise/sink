@@ -72,6 +72,17 @@ bool find_region(const TerminalGrid& g, Region& R) {
 
     int end = R.cursor_row;
     while (end + 1 < g.get_rows() && !row_blank(g, end + 1)) ++end;
+    // A line that exactly fills its last row ends at the start of the next,
+    // blank, one -- that is where the shell puts the cursor at its end. A
+    // full row with its wrap flag set really does continue; a wrap flag on a
+    // row that no longer reaches the edge is left over from when the line
+    // was longer.
+    int len = 0;
+    const Cell* last = g.line_cells(end, len);
+    if (end + 1 < g.get_rows() && g.line_wrapped(end) && last && len > 0 &&
+        !cell_blank(last[len - 1])) {
+        ++end;
+    }
     R.end_row = end;
     return true;
 }

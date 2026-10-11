@@ -56,6 +56,13 @@ struct Pane {
     int mouse_down_col = -1;
     int mouse_down_row = -1;
 
+    // A PTY size held back while the window is still being resized; see
+    // layout_pane_node(). Applied once it has stopped changing.
+    bool pty_resize_pending = false;
+    int pending_pty_cols = 0, pending_pty_rows = 0;
+    int pending_pty_px_w = 0, pending_pty_px_h = 0;
+    Uint64 pending_pty_since = 0;
+
     // Last cell sent as a mouse motion report; motion inside one cell is
     // pixel-level noise the app never wants repeated
     int last_mouse_report_col = -1;

@@ -121,6 +121,22 @@ void TerminalGrid::update_timers(float dt) {
 
 void TerminalGrid::resize(int cols, int rows) {
     if (cols == cols_ && rows == rows_) return;
+
+    // The line being edited at the shell, if there is one: where it begins
+    // and how many rows below that the cursor sits. See the re-placement of
+    // the cursor after the rewrap below for why it matters.
+    int line_top_raw = -1;
+    int line_top_offset = 0;
+    if (!cells_.empty() && cols_ > 0) {
+        int arow = 0, acol = 0;
+        if (input_start(arow, acol)) {
+            const int history = static_cast<int>(scrollback_history_.size());
+            int top = arow;
+            while (top - 1 >= -history && line_wrapped(top - 1)) --top;
+            line_top_raw = history + top;
+            line_top_offset = cursor_row_ - top;
+        }
+    }
     input_anchor_.refind = input_anchor_.valid;
     
     // If the grid is empty, initialize dimensions and return
@@ -169,8 +185,12 @@ void TerminalGrid::resize(int cols, int rows) {
     std::vector<bool> logical_prompt; // parallel: line began at a prompt mark
     std::vector<Cell> current_line;
     bool current_line_prompt = false;
+    int line_top_logical = -1;
     for (size_t row_idx = 0; row_idx < raw_rows.size(); ++row_idx) {
         const auto& rr = raw_rows[row_idx];
+        if (static_cast<int>(row_idx) == line_top_raw) {
+            line_top_logical = static_cast<int>(logical_lines.size());
+        }
         if (current_line.empty()) current_line_prompt = rr.prompt;
         for (size_t col_idx = 0; col_idx < rr.cells.size(); ++col_idx) {
             size_t cell_1d = row_idx * cols_ + col_idx;
@@ -229,9 +249,13 @@ void TerminalGrid::resize(int cols, int rows) {
     int new_cursor_row_wrapped = -1;
     int new_cursor_col_wrapped = -1;
     int current_wrapped_row_idx = 0;
+    int line_top_wrapped = -1;
 
     for (size_t line_idx = 0; line_idx < logical_lines.size(); ++line_idx) {
         const auto& line = logical_lines[line_idx];
+        if (static_cast<int>(line_idx) == line_top_logical) {
+            line_top_wrapped = current_wrapped_row_idx;
+        }
         if (line.empty()) {
             if (static_cast<int>(line_idx) == cursor_line_idx) {
                 new_cursor_row_wrapped = current_wrapped_row_idx;
@@ -267,6 +291,29 @@ void TerminalGrid::resize(int cols, int rows) {
                                      first_chunk && logical_prompt[line_idx] });
             current_wrapped_row_idx++;
         }
+    }
+
+    // 3b. Keep the cursor where the shell will look for it.
+    //
+    // A shell redraws its line after a resize by moving up the number of
+    // rows the line had *before* -- it cannot know the terminal rewrapped
+    // it -- then clearing below and printing the line again. zsh sends
+    // ESC[A per row then ESC[J; bash clears row by row on the way up. So the
+    // cursor has to sit exactly as many rows below the start of the line as
+    // it did, whatever the rewrap did to the line itself. Rewrapped wider,
+    // the line had shrunk and the shell climbed past its start, clearing the
+    // output above: a row of history lost on every widening. Rewrapped
+    // narrower, it stopped short and left a stale copy of the line's start
+    // behind. Nothing is deleted here -- only the cursor moves, onto blank
+    // rows added below if the line got shorter -- and the shell's redraw
+    // replaces the line moments later.
+    if (line_top_wrapped >= 0) {
+        int want = line_top_wrapped + line_top_offset;
+        while (static_cast<int>(wrapped_rows.size()) <= want) {
+            wrapped_rows.push_back({ std::vector<Cell>(cols, space_cell), false, false });
+        }
+        new_cursor_row_wrapped = want;
+        new_cursor_col_wrapped = std::clamp(new_cursor_col_wrapped, 0, cols - 1);
     }
 
     // 4. Distribute wrapped rows into new active cells and scrollback history

@@ -643,8 +643,30 @@ static void layout_pane_node(AppState* state, TerminalWindow* tw, PaneNode* node
         }
         if (cols != pane->terminal.get_cols() || rows != pane->terminal.get_rows()) {
             std::lock_guard<std::mutex> lock(pane->grid_mutex);
+            // While the shell is editing a line, it is told about the new
+            // size only once the size stops changing. It redraws by climbing
+            // the height its line had at the size it last drew, which the
+            // grid's reflow preserves (see TerminalGrid::resize) -- but a
+            // drag delivers a size a frame, and a shell answering one of
+            // them after the grid has moved on to the next draws for a width
+            // the screen no longer has. Its idea of the line's height then
+            // disagrees with the screen, and the next redraw climbs into the
+            // output above and clears it. Full-screen apps and running
+            // commands repaint from scratch and get every size at once.
+            int start_row = 0, start_col = 0;
+            bool at_command_line = pane->terminal.input_start(start_row, start_col);
             pane->terminal.resize(cols, rows);
-            pane->pty.resize_pty(cols, rows, cell_px_w, cell_px_h);
+            if (at_command_line) {
+                pane->pty_resize_pending = true;
+                pane->pending_pty_cols = cols;
+                pane->pending_pty_rows = rows;
+                pane->pending_pty_px_w = cell_px_w;
+                pane->pending_pty_px_h = cell_px_h;
+                pane->pending_pty_since = SDL_GetTicks();
+            } else {
+                pane->pty_resize_pending = false;
+                pane->pty.resize_pty(cols, rows, cell_px_w, cell_px_h);
+            }
         }
         return;
     }
@@ -2167,6 +2189,12 @@ static std::string strip_paste_markers(const char* text, size_t len) {
 // only engages when something misbehaves or streams updates continuously.
 static constexpr Uint64 kMaxSyncHoldMs = 100;
 
+// How long a window size has to hold before a shell at its command line is
+// told about it. See layout_pane_node(). Long enough to span the gap between
+// frames of a drag, short enough that the prompt reflows as soon as the
+// mouse stops.
+static constexpr Uint64 kPtyResizeSettleMs = 120;
+
 SDL_AppResult SDL_AppIterate(void* appstate) {
     AppState* state = static_cast<AppState*>(appstate);
     if (!state) return SDL_APP_FAILURE;
@@ -2411,6 +2439,14 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
 
         for (Pane* pane : all_panes(tw)) {
             pane->terminal.update_timers(dt);
+
+            // A size held back during a resize, now that it has settled.
+            if (pane->pty_resize_pending &&
+                current_tick - pane->pending_pty_since >= kPtyResizeSettleMs) {
+                pane->pty_resize_pending = false;
+                pane->pty.resize_pty(pane->pending_pty_cols, pane->pending_pty_rows,
+                                     pane->pending_pty_px_w, pane->pending_pty_px_h);
+            }
 
             // Process inertial scrolling physics
             if (std::abs(pane->scroll_velocity) > 0.01f) {
