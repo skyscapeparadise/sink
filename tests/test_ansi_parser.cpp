@@ -2181,6 +2181,18 @@ static void test_input_anchor() {
     }
 }
 
+// kitty f=100 means PNG. Other formats used to be decoded too -- SDL_image
+// detected the format from the data -- which put its SVG parser and older
+// decoders in reach of anything writing to the terminal. Now refused.
+static void test_kitty_png_only() {
+    TerminalGrid g; g.resize(20, 5);
+    ANSIParser p;
+    feed(p, g, "\x1b_Ga=T,i=5,f=100;PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPSc0JyBoZWlnaHQ9JzMnPjxyZWN0IHdpZHRoPSc0JyBoZWlnaHQ9JzMnLz48L3N2Zz4=\x1b\\");
+    CHECK(!g.images().has_image(5));
+    CHECK(g.has_pending_reply());
+    CHECK(g.take_pending_reply().find("EINVAL:could not decode PNG") != std::string::npos);
+}
+
 // ED 0 and ED 1 (CSI J, CSI 1 J): erase below and above the cursor.
 static void test_erase_in_display() {
     {
@@ -2317,6 +2329,7 @@ int main() {
     test_csi_param_flood();
     test_input_anchor();
     test_erase_in_display();
+    test_kitty_png_only();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;

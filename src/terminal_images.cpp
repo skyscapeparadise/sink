@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 TerminalImages::~TerminalImages() {
     release_textures();
@@ -411,11 +412,23 @@ bool decode_sixel(const char* data, size_t size, bool background_transparent,
 
 bool decode_png(const void* data, size_t size,
                 std::vector<uint32_t>& out_pixels, int& out_width, int& out_height) {
-    if (!data || size == 0) return false;
+    // PNG and nothing else. The kitty protocol's f=100 means PNG, and the
+    // bytes come from whatever is writing to the terminal -- any command's
+    // output, any remote host. IMG_Load_IO, used here before, detects the
+    // format from the data instead, so the same payload could reach
+    // SDL_image's SVG parser and its BMP, GIF, XPM, PCX, TGA, XCF and other
+    // decoders, several of which have a history of memory-safety bugs. None
+    // of them is anything a client of this protocol needs. So the PNG
+    // signature is required, and only the PNG loader is called.
+    static const unsigned char kSignature[8] = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n' };
+    if (!data || size < sizeof(kSignature) ||
+        std::memcmp(data, kSignature, sizeof(kSignature)) != 0) {
+        return false;
+    }
     SDL_IOStream* io = SDL_IOFromConstMem(data, size);
     if (!io) return false;
-    // true: the stream is closed for us however this turns out.
-    SDL_Surface* surf = IMG_Load_IO(io, true);
+    SDL_Surface* surf = IMG_LoadPNG_IO(io);
+    SDL_CloseIO(io);
     if (!surf) return false;
 
     if (surf->w <= 0 || surf->h <= 0 ||
