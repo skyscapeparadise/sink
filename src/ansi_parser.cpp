@@ -1485,8 +1485,16 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
             break;
         }
         case 'J': { // Erase in Display (ED)
+            // 0 (the default) erases from the cursor down and 1 from the top
+            // to the cursor. Both used to be ignored outright -- and zsh
+            // sends a bare ESC[J on every redraw of its line, to clear what
+            // the line's previous drawing left below it: a completion list,
+            // or the old copy of the line after a resize. Ignored, that text
+            // stayed on screen and the shell's next redraw wrote into it.
             int mode = get_param(0, 0);
-            if (mode == 2) {
+            if (mode == 0 || mode == 1) {
+                grid.erase_in_display(mode);
+            } else if (mode == 2) {
                 grid.clear_screen();
             } else if (mode == 3) {
                 grid.clear_screen();

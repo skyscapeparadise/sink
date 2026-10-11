@@ -2078,6 +2078,49 @@ static void test_osc_cwd() {
 // untrusted output), and must still dispatch correctly on its final byte.
 // Where mouse editing thinks the command line begins (TerminalGrid's input
 // anchor). The end-to-end suite drives real shells; these pin the rules.
+// ED 0 and ED 1 (CSI J, CSI 1 J): erase below and above the cursor.
+static void test_erase_in_display() {
+    {
+        TerminalGrid g; g.resize(10, 4);
+        ANSIParser p;
+        feed(p, g, "aaaaaaaaaa" "bbbbbbbbbb" "cccccccccc" "dddd");
+        // Cursor to row 1, col 4, then erase below (the default mode).
+        feed(p, g, "\x1b[2;5H\x1b[J");
+        CHECK(row_text(g, 0) == "aaaaaaaaaa");
+        CHECK(row_text(g, 1) == "bbbb");
+        CHECK(row_text(g, 2) == "");
+        CHECK(row_text(g, 3) == "");
+        // Nothing erased continues onto the next row any more.
+        CHECK(!g.line_wrapped(1));
+        CHECK(!g.line_wrapped(2));
+        CHECK(g.line_wrapped(0));   // untouched row keeps its soft wrap
+    }
+    {
+        TerminalGrid g; g.resize(10, 4);
+        ANSIParser p;
+        feed(p, g, "aaaaaaaaaa" "bbbbbbbbbb" "cccccccccc" "dddd");
+        feed(p, g, "\x1b[3;5H\x1b[1J");
+        CHECK(row_text(g, 0) == "");
+        CHECK(row_text(g, 1) == "");
+        CHECK(row_text(g, 2) == "     ccccc");   // through the cursor column
+        CHECK(row_text(g, 3) == "dddd");
+    }
+    // EL to the end of the row (0, and 2 for the whole row) ends the row's
+    // soft wrap, as xterm does; EL 1 leaves the end alone and keeps it.
+    {
+        TerminalGrid g; g.resize(10, 4);
+        ANSIParser p;
+        feed(p, g, "aaaaaaaaaa" "bbbbbbbbbb" "cccccccccc" "dd");
+        CHECK(g.line_wrapped(0) && g.line_wrapped(1) && g.line_wrapped(2));
+        feed(p, g, "\x1b[1;5H\x1b[K");
+        CHECK(!g.line_wrapped(0));
+        feed(p, g, "\x1b[2;5H\x1b[2K");
+        CHECK(!g.line_wrapped(1));
+        feed(p, g, "\x1b[3;5H\x1b[1K");
+        CHECK(g.line_wrapped(2));
+    }
+}
+
 static void test_input_anchor() {
     // The regression: a redraw starting with a carriage return used to reset
     // the boundary, which was then re-latched wherever the cursor rested --
@@ -2273,6 +2316,7 @@ int main() {
     test_app_keypad();
     test_csi_param_flood();
     test_input_anchor();
+    test_erase_in_display();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;

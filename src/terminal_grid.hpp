@@ -173,6 +173,9 @@ public:
     }
 
     void clear_line(int row, int mode); // 0 = cursor to end, 1 = start to cursor, 2 = entire line
+    // ED 0 and 1: erase from the cursor to the end of the screen, or from the
+    // start of the screen to the cursor. (ED 2 and 3 are clear_screen().)
+    void erase_in_display(int mode);
     void insert_character(int count); // ICH: open count blank cells at the cursor
     void delete_character(int count);
     void erase_characters(int count); // ECH: blank count cells at the cursor in place, no shift

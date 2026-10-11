@@ -1158,7 +1158,40 @@ void TerminalGrid::clear_line(int row, int mode) {
     if (end_col > start_col) {
         std::copy(blank, blank + (end_col - start_col), line + start_col);
     }
+    // With the end of the row erased, nothing on it carries on to the next
+    // row, as in xterm. Shells repaint a line with EL; a wrap flag left over
+    // from the line's last drawing made reflow and mouse editing join the
+    // row to the next as one line when the shell had ended it.
+    if ((mode == 0 || mode == 2) && row < static_cast<int>(row_wrapped_.size())) {
+        row_wrapped_[row] = false;
+    }
     wrap_pending_ = false;
+}
+
+void TerminalGrid::erase_in_display(int mode) {
+    if (cursor_row_ < 0 || cursor_row_ >= rows_) return;
+    // Erased rows hold nothing, so nothing on them continues onto the next
+    // row and no prompt starts there; left set, the flags would make reflow
+    // and mouse editing join blank rows onto the text around them.
+    auto forget_row = [&](int r) {
+        if (r < static_cast<int>(row_wrapped_.size())) row_wrapped_[r] = false;
+        if (r < static_cast<int>(row_prompt_.size())) row_prompt_[r] = false;
+    };
+    if (mode == 0) {
+        clear_line(cursor_row_, 0);
+        // The rest of the cursor's row is gone, so it no longer wraps.
+        if (cursor_row_ < static_cast<int>(row_wrapped_.size())) row_wrapped_[cursor_row_] = false;
+        for (int r = cursor_row_ + 1; r < rows_; ++r) {
+            clear_line(r, 2);
+            forget_row(r);
+        }
+    } else if (mode == 1) {
+        for (int r = 0; r < cursor_row_; ++r) {
+            clear_line(r, 2);
+            forget_row(r);
+        }
+        clear_line(cursor_row_, 1);
+    }
 }
 
 void TerminalGrid::set_cursor_col(int col) {
