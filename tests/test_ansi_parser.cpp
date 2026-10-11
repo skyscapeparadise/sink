@@ -2215,6 +2215,21 @@ static void test_kitty_png_only() {
     CHECK(g.take_pending_reply().find("EINVAL:could not decode PNG") != std::string::npos);
 }
 
+// Huge counts on cursor motions used to overflow (undefined behaviour) and
+// send the cursor the wrong way. Now they clamp like any count past the edge.
+static void test_huge_motion_counts() {
+    TerminalGrid g; g.resize(20, 10);
+    ANSIParser p;
+    feed(p, g, "\x1b[5;5H\x1b[2147483647B");
+    CHECK(g.get_cursor_row() == 9);
+    feed(p, g, "\x1b[2147483647C");
+    CHECK(g.get_cursor_col() == 19);
+    feed(p, g, "\x1b[2147483647A\x1b[2147483647D");
+    CHECK(g.get_cursor_row() == 0 && g.get_cursor_col() == 0);
+    feed(p, g, "\x1b[3;8r\x1b[?6h\x1b[2147483647;2147483647H");   // origin mode
+    CHECK(g.get_cursor_row() == 7 && g.get_cursor_col() == 19);
+}
+
 // ED 0 and ED 1 (CSI J, CSI 1 J): erase below and above the cursor.
 static void test_erase_in_display() {
     {
@@ -2353,6 +2368,7 @@ int main() {
     test_erase_in_display();
     test_sixel_past_size_limit();
     test_kitty_png_only();
+    test_huge_motion_counts();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;

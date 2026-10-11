@@ -1172,6 +1172,10 @@ static std::string cursor_position_report(const TerminalGrid& grid, bool extende
     return out;
 }
 
+// Largest count or position a CSI parameter is taken to mean; see
+// get_count_param in process_csi_sequence.
+static constexpr int kMaxCountParam = 65535;
+
 void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
     auto get_param = [&](size_t index, int default_val) {
         if (index < csi_params_.size()) {
@@ -1184,9 +1188,17 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
     // convention defaults Ps to 1 and also treats an explicitly-sent 0 (e.g.
     // "CSI 0 A") the same as if it were omitted -- unlike ED/EL/SM mode
     // parameters, where 0 is itself a meaningful, distinct value.
+    //
+    // Capped at kMaxCountParam. Parameters saturate at INT_MAX on the way in,
+    // and the motions add them to the cursor: "CSI 2147483647 B" overflowed
+    // `row + offset`, which is undefined behaviour -- the compiler may assume
+    // it cannot happen -- and in practice sent the cursor to the top rather
+    // than the bottom. No grid comes near the cap, so every command already
+    // clamps a count that large to the same result. (Found by tests/fuzz.)
     auto get_count_param = [&](size_t index, int default_val) {
         int v = get_param(index, default_val);
-        return v == 0 ? default_val : v;
+        if (v == 0) v = default_val;
+        return std::min(v, kMaxCountParam);
     };
 
     switch (command) {
