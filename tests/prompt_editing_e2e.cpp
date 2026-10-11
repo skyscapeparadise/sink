@@ -84,6 +84,24 @@ struct Report {
     std::u32string buffer;
 };
 
+class Session;
+
+struct Layout {
+    bool ok = false;
+    std::string why;
+    int start_row = -1, start_col = -1, end_row = -1;
+    // Buffer index under each cell, or -1. Cells past the end of a line on its
+    // last row map to that line's terminator, which is where a click there
+    // leaves the cursor in every editor.
+    std::vector<std::vector<int>> index_at;
+};
+
+Layout lay_out(Session& s, const Report& rep, const std::string& prompt);
+bool screen_shows(const Layout& L, const Report& rep, int cursor_row, int cursor_col);
+
+// Times a report's screen never caught up with the shell within the wait.
+int g_sync_timeouts = 0;
+
 // ---------------------------------------------------------------------------
 // A shell in a PTY, rendered by sink's parser into a grid.
 
@@ -120,9 +138,12 @@ public:
                 "PS1='ps1> '\n"
                 "bind 'set bell-style none'\n"
                 "_sink_n=0\n"
-                "_sink_report() { ((_sink_n++)); printf '%s\\n%s\\n%s' \"$_sink_n\" "
-                "\"$READLINE_POINT\" \"$READLINE_LINE\" > \"$SINK_REPORT.tmp\"; "
-                "mv -f \"$SINK_REPORT.tmp\" \"$SINK_REPORT\"; }\n"
+                // No mv: bash has no builtin for it, and a fork per report
+                // occasionally makes job control print a setpgid warning into
+                // the line under load. One small write instead, ended with a
+                // marker so a read that catches it half-done is ignored.
+                "_sink_report() { ((_sink_n++)); printf '%s\\n%s\\n%s\\n\\x1fEND' \"$_sink_n\" "
+                "\"$READLINE_POINT\" \"$READLINE_LINE\" > \"$SINK_REPORT\"; }\n"
                 "bind -x '\"\\e[24~\": _sink_report'\n" + extra_rc);
             argv = { "/opt/homebrew/bin/bash", "--noprofile", "--rcfile", dir_ + "/bashrc", "-i" };
             bash_ = true;
@@ -203,14 +224,18 @@ public:
 
     // A window resize, as the app handles it: the grid reflows, then the PTY
     // is told, and the shell redraws for the new width.
-    void resize(int cols, int rows) {
-        cols_ = cols;
-        rows_ = rows;
-        grid_.resize(cols, rows);
+    void tell_pty_size(int cols, int rows) {
         struct winsize ws{};
         ws.ws_col = static_cast<unsigned short>(cols);
         ws.ws_row = static_cast<unsigned short>(rows);
         ioctl(fd_, TIOCSWINSZ, &ws);
+    }
+
+    void resize(int cols, int rows) {
+        cols_ = cols;
+        rows_ = rows;
+        grid_.resize(cols, rows);
+        tell_pty_size(cols, rows);
         // Wait for the shell to react before settling: a shell handles
         // SIGWINCH at its own pace, and a sweep that starts before the
         // repaint lands is measuring the screen as it was.
@@ -220,6 +245,73 @@ public:
         // Round-trip once more so any repaint queued behind the signal has
         // been drawn before the caller looks at the screen.
         report();
+    }
+
+    // A window drag: a run of sizes a frame apart. The grid reflows at every
+    // one -- the hardest case for the shell, since the app may lay out less
+    // often -- and, as in the app, a shell at its command line is told the
+    // size once it has settled (main.cpp, kPtyResizeSettleMs); a shell
+    // running a command, or a full-screen app, gets every size.
+    void resize_drag(const std::vector<int>& widths, int rows) {
+        std::vector<std::pair<int, int>> sizes;
+        for (int w : widths) sizes.push_back({ w, rows });
+        resize_drag(sizes);
+    }
+    void resize_drag(const std::vector<std::pair<int, int>>& sizes) {
+        int r = 0, c = 0;
+        bool at_command_line = grid_.input_start(r, c);
+        for (auto [w, h] : sizes) {
+            cols_ = w;
+            rows_ = h;
+            grid_.resize(w, h);
+            if (!at_command_line) tell_pty_size(w, h);
+            pump(8);
+        }
+        if (at_command_line) tell_pty_size(sizes.back().first, sizes.back().second);
+        std::vector<int> widths;
+        for (auto [w, h] : sizes) widths.push_back(w);
+        capture_ = g_verbose;
+        captured_.clear();
+        if (g_verbose) {
+            pump(5);
+            dump(("drag reflowed to " + std::to_string(widths.back()) + ", before the shell redraws").c_str());
+        }
+        auto deadline = Clock::now() + std::chrono::seconds(2);
+        while (Clock::now() < deadline && !pump(10)) {}
+        settle(200, 2000);
+        if (g_verbose) {
+            capture_ = false;
+            std::string esc;
+            for (unsigned char ch : captured_) {
+                if (ch == 0x1b) esc += "\\e";
+                else if (ch == '\r') esc += "\\r";
+                else if (ch == '\n') esc += "\\n";
+                else if (ch < 32) { char b[8]; std::snprintf(b, sizeof(b), "\\x%02x", ch); esc += b; }
+                else esc += static_cast<char>(ch);
+            }
+            std::printf("    shell's redraw: %s\n", esc.c_str());
+        }
+        report();
+        if (g_verbose) dump(("after the shell redrew at " + std::to_string(widths.back())).c_str());
+    }
+
+    // Every row of scrollback and screen, as text.
+    std::vector<std::string> all_rows() {
+        std::vector<std::string> out;
+        int history = static_cast<int>(grid_.get_scrollback_size());
+        for (int r = -history; r < rows_; ++r) {
+            int len = 0;
+            const Cell* cells = grid_.line_cells(r, len);
+            std::string line;
+            for (int c = 0; c < len && cells; ++c) {
+                if (cells[c].attrs & ATTR_WIDE_CONT) continue;
+                char32_t cp = cells[c].codepoint;
+                line += utf8(cp < 32 ? U' ' : cp);
+            }
+            while (!line.empty() && line.back() == ' ') line.pop_back();
+            out.push_back(line);
+        }
+        return out;
     }
 
     // A click and release on the same cell, as main.cpp handles it.
@@ -260,6 +352,8 @@ public:
     // zsh's redraws for those keys reach the PTY before the file does.
     Report report() {
         int before = seq_;
+        since_report_.clear();
+        collecting_ = true;
         write_all("\x1b[24~");
         auto deadline = Clock::now() + std::chrono::seconds(3);
         Report r;
@@ -269,7 +363,13 @@ public:
             if (read_file(report_path_, text)) {
                 size_t a = text.find('\n');
                 size_t b = (a == std::string::npos) ? std::string::npos : text.find('\n', a + 1);
-                if (b != std::string::npos) {
+                // bash's report ends with a marker; without it the file was
+                // read mid-write.
+                const std::string end_marker = "\n\x1f" "END";
+                bool complete = !bash_ || (text.size() >= end_marker.size() &&
+                    text.compare(text.size() - end_marker.size(), end_marker.size(), end_marker) == 0);
+                if (bash_ && complete) text.resize(text.size() - end_marker.size());
+                if (b != std::string::npos && complete) {
                     int seq = std::atoi(text.substr(0, a).c_str());
                     if (seq > before) {
                         seq_ = seq;
@@ -288,9 +388,43 @@ public:
         // redrawn (the widget calls zle -R first); bash's readline repaints
         // the whole prompt and line once a bind -x command finishes, and a
         // click judged against a half-repainted screen is judged wrongly.
-        settle(bash_ ? 80 : 15, 1000);
+        //
+        // So wait for the screen to say what the shell said -- its buffer
+        // laid out after the prompt, the cursor where it reports it -- rather
+        // than for a quiet spell of some fixed length. On a machine busy with
+        // other work a repaint can stall for longer than any sensible fixed
+        // wait, and this suite is meant to run on such a machine.
+        //
+        // bash needs one thing more. Its repaint redraws identical text, so
+        // the screen already matches *before* the repaint starts, and a click
+        // computed then lands in the middle of rows being cleared and
+        // rewritten. The repaint always prints the prompt again, so for bash
+        // the prompt must also have come through since the report key.
+        if (!sync_prompt_.empty()) {
+            auto until = Clock::now() + std::chrono::seconds(2);
+            bool caught_up = false;
+            while (Clock::now() < until) {
+                bool repainted = !bash_ || since_report_.find(sync_prompt_) != std::string::npos;
+                if (repainted) {
+                    Layout L = lay_out(*this, r, sync_prompt_);
+                    if (screen_shows(L, r, grid_.get_cursor_row(), grid_.get_cursor_col())) {
+                        caught_up = true;
+                        break;
+                    }
+                }
+                pump(5);
+            }
+            if (!caught_up) ++g_sync_timeouts;
+        } else {
+            settle(bash_ ? 80 : 15, 1000);
+        }
+        collecting_ = false;
         return r;
     }
+
+    // The prompt report() waits to see the shell's buffer drawn after. Set
+    // by a sweep for its duration; empty falls back to waiting for quiet.
+    std::string sync_prompt_;
 
     // Reads until the shell has been quiet for `quiet_ms`.
     void settle(int quiet_ms, int max_ms) {
@@ -350,6 +484,8 @@ private:
         while (true) {
             ssize_t n = ::read(fd_, buf, sizeof(buf));
             if (n <= 0) break;
+            if (capture_) captured_.append(buf, static_cast<size_t>(n));
+            if (collecting_) since_report_.append(buf, static_cast<size_t>(n));
             any = true;
             parser_.parse(grid_, buf, static_cast<size_t>(n));
         }
@@ -387,6 +523,10 @@ private:
         return true;
     }
 
+    bool capture_ = false;
+    std::string captured_;
+    bool collecting_ = false;
+    std::string since_report_;  // everything the shell sent since the last report key
     int cols_, rows_;
     int fd_ = -1;
     pid_t pid_ = -1;
@@ -400,15 +540,6 @@ private:
 // ---------------------------------------------------------------------------
 // Where the shell drew each character of its buffer.
 
-struct Layout {
-    bool ok = false;
-    std::string why;
-    int start_row = -1, start_col = -1, end_row = -1;
-    // Buffer index under each cell, or -1. Cells past the end of a line on its
-    // last row map to that line's terminator, which is where a click there
-    // leaves the cursor in every editor.
-    std::vector<std::vector<int>> index_at;
-};
 
 // Lays `buffer` out after the prompt, the way zsh and readline draw it:
 // characters advance by their width, a wide character that would straddle the
@@ -464,6 +595,21 @@ Layout lay_out(Session& s, const Report& rep, const std::string& prompt) {
     return L;
 }
 
+// Whether the screen has caught up with a report: the buffer lays out against
+// what is drawn, and the cursor sits where the shell says it is -- the first
+// cell belonging to that index, which for a line end is just past the text.
+bool screen_shows(const Layout& L, const Report& rep, int cursor_row, int cursor_col) {
+    if (!L.ok) return false;
+    for (size_t r = 0; r < L.index_at.size(); ++r) {
+        for (size_t c = 0; c < L.index_at[r].size(); ++c) {
+            if (L.index_at[r][c] == rep.cursor) {
+                return static_cast<int>(r) == cursor_row && static_cast<int>(c) == cursor_col;
+            }
+        }
+    }
+    return false;
+}
+
 // ---------------------------------------------------------------------------
 
 struct Totals { int clicks = 0, failed = 0, scenarios = 0, broken = 0; };
@@ -473,6 +619,7 @@ Totals g_totals;
 // each against the shell. Expected is the character under the click, or "no
 // movement" for the prompt and rows outside the line.
 void sweep(Session& s, const char* name, const std::string& prompt, int col_step = 1) {
+    s.sync_prompt_ = prompt;
     Report base = s.report();
     Layout L = lay_out(s, base, prompt);
     if (!L.ok) {
@@ -522,6 +669,7 @@ void sweep(Session& s, const char* name, const std::string& prompt, int col_step
     g_totals.clicks += clicks;
     g_totals.failed += failed;
     ++g_totals.scenarios;
+    s.sync_prompt_.clear();
     std::printf("  [%s] %d/%d clicks correct\n", name, clicks - failed, clicks);
 }
 
@@ -557,9 +705,35 @@ void delete_check(Session& s, const char* name, const std::string& prompt,
     }
 }
 
-// --- scenarios ---------------------------------------------------------------
-
 const char* kPrompt = "ps1> ";
+
+// Output printed before a resize must survive it: present, and only once. A
+// shell redrawing after a reflow moves up by the height its line had before,
+// so a reflow that changes that height used to send it into the output above
+// (erasing it) or leave a stale copy of the line behind.
+void survives_resizes(Session& s, const char* name, const std::vector<std::string>& lines) {
+    std::vector<std::string> rows = s.all_rows();
+    bool ok = true;
+    for (const std::string& want : lines) {
+        int n = static_cast<int>(std::count(rows.begin(), rows.end(), want));
+        if (n != 1) {
+            std::printf("  [%s] \"%s\" appears %d times after resizing, expected once\n",
+                        name, want.c_str(), n);
+            ok = false;
+        }
+    }
+    int prompts = 0;
+    for (const std::string& r : rows) prompts += r.rfind(kPrompt, 0) == 0 ? 1 : 0;
+    ++g_totals.clicks;
+    if (!ok) {
+        ++g_totals.failed;
+        s.dump("after resizing");
+    } else {
+        std::printf("  [%s] earlier output intact\n", name);
+    }
+}
+
+// --- scenarios ---------------------------------------------------------------
 
 using Scenario = std::function<void(Session&)>;
 struct Named { const char* name; Scenario run; };
@@ -658,6 +832,64 @@ std::vector<Named> scenarios() {
             s.report();
             s.resize(64, 16);
             sweep(s, "resized wider mid-edit", kPrompt);
+        }},
+        { "dragged wider then narrower", [](Session& s) {
+            std::vector<std::string> outs;
+            for (char c = 'A'; c <= 'D'; ++c) {
+                s.type(std::string("printf 'out-%s\\n' ") + c);
+                s.enter();
+                outs.push_back(std::string("out-") + c);
+            }
+            s.settle(200, 2000);
+            s.type("echo the quick brown fox jumps over the lazy dog and keeps running far away");
+            s.report();
+            s.resize_drag({ 42, 45, 48, 52, 56, 60 }, 16);
+            survives_resizes(s, "dragged wider then narrower (wider)", outs);
+            s.resize_drag({ 55, 50, 44, 38, 33, 30 }, 16);
+            survives_resizes(s, "dragged wider then narrower (narrower)", outs);
+            s.resize_drag({ 36, 44, 52, 60, 52, 44, 40 }, 16);
+            survives_resizes(s, "dragged wider then narrower (back and forth)", outs);
+            sweep(s, "dragged wider then narrower", kPrompt);
+        }},
+        { "resized after editing a multi-line command", [](Session& s) {
+            std::vector<std::string> outs;
+            for (char c = 'A'; c <= 'C'; ++c) {
+                s.type(std::string("printf 'out-%s\\n' ") + c);
+                s.enter();
+                outs.push_back(std::string("out-") + c);
+            }
+            s.settle(200, 2000);
+            s.paste("echo the quick brown fox jumps over the lazy dog\necho second line\necho third line that is also fairly long");
+            Report rep = s.report();
+            Layout L = lay_out(s, rep, kPrompt);
+            s.click(L.start_row + 1, 8);
+            s.report();
+            s.type(" edited");
+            s.report();
+            s.resize_drag({ 46, 52, 60 }, 16);
+            s.resize_drag({ 50, 40, 32 }, 16);
+            s.resize_drag({ 40 }, 16);
+            survives_resizes(s, "resized after editing a multi-line command", outs);
+            sweep(s, "resized after editing a multi-line command", kPrompt);
+        }},
+        { "resized at the bottom of the screen", [](Session& s) {
+            std::vector<std::string> outs;
+            for (char c = 'A'; c <= 'F'; ++c) {
+                s.type(std::string("printf 'out-%s\\n' ") + c);
+                s.enter();
+                outs.push_back(std::string("out-") + c);
+            }
+            s.settle(200, 2000);
+            s.paste("echo the quick brown fox jumps over the lazy dog and keeps running\necho second line");
+            s.report();
+            // Narrower and shorter, then wider and taller, then back.
+            s.resize_drag({ { 36, 15 }, { 32, 14 }, { 28, 12 } });
+            survives_resizes(s, "resized at the bottom of the screen (smaller)", outs);
+            s.resize_drag({ { 36, 14 }, { 48, 16 }, { 60, 18 } });
+            survives_resizes(s, "resized at the bottom of the screen (larger)", outs);
+            s.resize_drag({ { 50, 16 }, { 40, 16 } });
+            survives_resizes(s, "resized at the bottom of the screen", outs);
+            sweep(s, "resized at the bottom of the screen", kPrompt);
         }},
         { "click, type, click again", [](Session& s) {
             s.type("echo the quick brown fox jumps over the lazy dog and keeps running");
@@ -780,5 +1012,8 @@ int main(int argc, char** argv) {
     }
     std::printf("%d clicks in %d scenarios, %d wrong, %d scenarios could not be laid out\n",
                 g_totals.clicks, g_totals.scenarios, g_totals.failed, g_totals.broken);
+    if (g_sync_timeouts) {
+        std::printf("(the screen lagged the shell by over 2s %d times)\n", g_sync_timeouts);
+    }
     return (g_totals.failed == 0 && g_totals.broken == 0) ? 0 : 1;
 }
