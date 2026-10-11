@@ -171,6 +171,32 @@ target_link_libraries(sink_tests PRIVATE
 )
 add_test(NAME ansi_parser COMMAND sink_tests)
 
+# Mouse editing of the command line, end to end. Runs a real zsh in a PTY,
+# renders it through the parser and grid, clicks through prompt_edit -- the
+# code main.cpp calls -- and asks the shell where its cursor ended up. Never
+# opens a window or touches the mouse, so it runs while the machine is in use.
+# Labelled "integration" since it spawns shells and depends on their timing.
+add_executable(prompt_editing_e2e
+    tests/prompt_editing_e2e.cpp
+    src/prompt_editing.cpp
+    src/ansi_parser.cpp
+    src/terminal_grid.cpp
+    src/terminal_images.cpp
+    src/font_manager.cpp
+)
+target_include_directories(prompt_editing_e2e PRIVATE src)
+target_link_libraries(prompt_editing_e2e PRIVATE
+    SDL3::SDL3
+    SDL3_ttf::SDL3_ttf
+    SDL3_image::SDL3_image
+)
+add_test(NAME prompt_editing_zsh COMMAND prompt_editing_e2e --shell zsh)
+# bash 5 from Homebrew; the binary reports a skip and passes when it is absent
+# (macOS's own bash 3.2 cannot report its cursor to the test).
+add_test(NAME prompt_editing_bash COMMAND prompt_editing_e2e --shell bash)
+set_tests_properties(prompt_editing_zsh prompt_editing_bash
+                     PROPERTIES LABELS integration TIMEOUT 900)
+
 # tmux compatibility proof. Drives a real tmux in a PTY, replays what it writes
 # through sink's parser, and compares against tmux's own view. Registered only
 # when tmux is installed, and labelled "integration" because it spawns servers
