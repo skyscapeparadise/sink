@@ -62,6 +62,9 @@ struct Pane {
     int pending_pty_cols = 0, pending_pty_rows = 0;
     int pending_pty_px_w = 0, pending_pty_px_h = 0;
     Uint64 pending_pty_since = 0;
+    // When the held-back size was last sent; the cursor stays hidden briefly
+    // after, until the shell's redraw has put it back on the text.
+    Uint64 pty_resize_sent_at = 0;
 
     // Last cell sent as a mouse motion report; motion inside one cell is
     // pixel-level noise the app never wants repeated
@@ -143,17 +146,22 @@ struct TerminalWindow {
     float cell_w = 0.0f;
     float cell_h = 0.0f;
 
-    // Debounces the (expensive: PTY SIGWINCH + full grid reflow) resize
-    // work so a burst of resize events -- a fast native window-zoom
-    // animation firing dozens of intermediate frames in ~200ms is the worst
-    // case, but a manual edge-drag does this too -- doesn't apply a reflow
-    // per intermediate frame (which was visibly corrupting the shell's
-    // prompt redraw). Only the latest pending size is kept; it's applied
-    // once no new resize event has arrived for a short quiet period.
+    // A resize in progress: a window edge being dragged, a zoom animation,
+    // or a pane divider being dragged. The grids follow it live, throttled
+    // by what reflowing costs -- see the layout step in SDL_AppIterate.
+    //
+    // This used to wait for the resize to stop before reflowing at all,
+    // because reflowing per frame corrupted the shell's prompt redraw. That
+    // corruption is fixed at its source now (TerminalGrid::resize keeps the
+    // cursor where the shell will look, and a shell editing a line is told
+    // the size only once it settles), so the wait went, and with it text that
+    // stayed unwrapped until the mouse was released.
     bool has_pending_resize = false;
     int pending_w = 0;
     int pending_h = 0;
     Uint64 last_resize_event_time = 0;
+    Uint64 last_live_layout_tick = 0;
+    Uint64 live_layout_gap_ms = 0;  // twice what the last layout took, capped
 
     // Last time this window actually presented. Synchronized output (DECSET
     // 2026) defers presentation, and this is what bounds that: the screen has

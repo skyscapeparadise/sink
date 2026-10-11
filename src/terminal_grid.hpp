@@ -302,6 +302,11 @@ public:
     bool is_alt_screen_active() const { return alt_screen_active_; }
 
     void set_cursor_visible(bool visible) { cursor_visible_ = visible; }
+    // Hides the cursor from rendering without touching the DECTCEM state the
+    // application set. Used while a resize waits for the shell to redraw:
+    // the cursor is parked where the shell will look for it (see resize()),
+    // which is not where the text it belongs to is drawn.
+    void set_cursor_suppressed(bool suppressed) { cursor_suppressed_ = suppressed; }
     bool is_cursor_visible() const { return cursor_visible_; }
 
     // Takes a raw DECSCUSR parameter (0-6); anything else falls back to a
@@ -723,6 +728,7 @@ private:
     bool selecting_ = false;
     bool alt_screen_active_ = false;
     bool cursor_visible_ = true;
+    bool cursor_suppressed_ = false;
     CursorShape cursor_shape_ = CursorShape::Block;
     bool bracketed_paste_active_ = false;
     bool synchronized_output_ = false;

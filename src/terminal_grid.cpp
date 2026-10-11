@@ -2267,7 +2267,7 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
     }
 
     // 2. Render Opaque Cursor (Append to background draw call)
-    if (cursor_visible_ &&
+    if (cursor_visible_ && !cursor_suppressed_ &&
         visual_cursor_col_ >= 0.0f && visual_cursor_col_ < cols_ && visual_cursor_row_ >= 0.0f && visual_cursor_row_ < rows_) {
         float cx0 = start_x + visual_cursor_col_ * cell_w;
         float cy0 = start_y + visual_cursor_row_ * cell_h;

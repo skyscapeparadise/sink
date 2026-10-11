@@ -1252,16 +1252,19 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                     r = (event->motion.y - node->rect.y) / std::max(1.0f, node->rect.h - kPaneGutterPts);
                 }
                 node->ratio = std::clamp(r, 0.1f, 0.9f);
-                // Rects (divider position, clipping) track the mouse live;
-                // the grid reflow + SIGWINCH are deferred to mouse-up, not
-                // debounced. A debounce still fires mid-drag whenever the
-                // gesture pauses for >100ms (people pause while dragging),
-                // and each such pause was sending the shell another SIGWINCH
-                // before the previous prompt redraw had settled -- the more
-                // hesitant the drag, the more corrupted/duplicated fragments
-                // piled up. Deferring unconditionally to release guarantees
-                // exactly one reflow per drag, no matter how it's paced.
+                // Rects (divider position, clipping) track the mouse at once;
+                // the grids follow through the same throttled live layout a
+                // window resize uses (see has_pending_resize).
+                //
+                // Grid reflow used to wait for mouse-up, because each pause
+                // in a drag sent the shell another SIGWINCH before its last
+                // redraw had settled and the fragments piled up. The shell is
+                // now told the size only once it holds (layout_pane_node), and
+                // the reflow keeps the cursor where its redraw will look, so
+                // the panes can rewrap as the divider moves.
                 layout_panes(state, target_tw, false);
+                target_tw->has_pending_resize = true;
+                target_tw->last_resize_event_time = SDL_GetTicks();
                 return SDL_APP_CONTINUE;
             }
 
@@ -2189,11 +2192,19 @@ static std::string strip_paste_markers(const char* text, size_t len) {
 // only engages when something misbehaves or streams updates continuously.
 static constexpr Uint64 kMaxSyncHoldMs = 100;
 
+// How long a resize has to stop before the final layout is taken as done.
+static constexpr Uint64 kResizeSettleMs = 100;
+
 // How long a window size has to hold before a shell at its command line is
 // told about it. See layout_pane_node(). Long enough to span the gap between
 // frames of a drag, short enough that the prompt reflows as soon as the
 // mouse stops.
 static constexpr Uint64 kPtyResizeSettleMs = 120;
+
+// After that size is sent, how long the cursor stays hidden while the shell
+// redraws its line. A redraw takes a millisecond or two; this only has to
+// outlast a frame or so of it.
+static constexpr Uint64 kPtyRedrawGraceMs = 60;
 
 SDL_AppResult SDL_AppIterate(void* appstate) {
     AppState* state = static_cast<AppState*>(appstate);
@@ -2414,15 +2425,24 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
 
     // Iterate all active windows
     for (auto* tw : state->windows) {
-        // Apply a debounced resize once the window has been settled at its
-        // current size for a short quiet period (see has_pending_resize),
-        // so a burst of resize events (a live drag, or an animated
-        // window-zoom firing many intermediate frames) doesn't reflow the
-        // grid and SIGWINCH the shell on every single one of them.
-        if (tw->has_pending_resize && (current_tick - tw->last_resize_event_time) >= 100) {
-            // layout_panes no-ops any pane whose cols/rows come out unchanged
-            layout_panes(state, tw);
-            tw->has_pending_resize = false;
+        // Follow a resize in progress live (see has_pending_resize). Each
+        // layout is timed, and the next waits twice as long as it took --
+        // every frame while reflowing is cheap, which it is unless
+        // scrollback is very long, and no more than a third of the time when
+        // it isn't, so a drag stays smooth either way. A last layout once the
+        // size has held for kResizeSettleMs lands the exact final size.
+        if (tw->has_pending_resize) {
+            bool settled = current_tick - tw->last_resize_event_time >= kResizeSettleMs;
+            bool due = current_tick - tw->last_live_layout_tick >= tw->live_layout_gap_ms;
+            if (settled || due) {
+                Uint64 started_ns = SDL_GetTicksNS();
+                // layout_panes no-ops any pane whose cols/rows come out unchanged
+                layout_panes(state, tw);
+                Uint64 cost_ms = (SDL_GetTicksNS() - started_ns) / 1000000;
+                tw->last_live_layout_tick = current_tick;
+                tw->live_layout_gap_ms = std::min<Uint64>(kResizeSettleMs, 2 * cost_ms);
+                if (settled) tw->has_pending_resize = false;
+            }
         }
 
         // A native tab bar appearing/disappearing changes the usable content
@@ -2444,9 +2464,17 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             if (pane->pty_resize_pending &&
                 current_tick - pane->pending_pty_since >= kPtyResizeSettleMs) {
                 pane->pty_resize_pending = false;
+                pane->pty_resize_sent_at = current_tick;
                 pane->pty.resize_pty(pane->pending_pty_cols, pane->pending_pty_rows,
                                      pane->pending_pty_px_w, pane->pending_pty_px_h);
             }
+            // While the shell hasn't redrawn for the new size, the cursor is
+            // parked where the shell will look for it rather than on the
+            // text (TerminalGrid::resize). Hidden until the redraw lands,
+            // rather than seen hopping about during the drag.
+            pane->terminal.set_cursor_suppressed(
+                pane->pty_resize_pending ||
+                (pane->pty_resize_sent_at && current_tick - pane->pty_resize_sent_at < kPtyRedrawGraceMs));
 
             // Process inertial scrolling physics
             if (std::abs(pane->scroll_velocity) > 0.01f) {
