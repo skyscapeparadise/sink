@@ -14,6 +14,15 @@ sink.app/
 # Icon design source & temporary assets
 icon.iconset/
 icon.psd
+# The previous icon, kept locally but no longer published (sink.icon replaced
+# it in 0.10), and loose exports from Icon Composer -- the artwork itself lives
+# in sink.icon/Assets.
+/icon.png
+/icon.icns
+/icon.sh
+/darkpool.png
+/glowpool.png
+/sink-iOS-Default-1024@1x.png
 
 # Release scripts. signapp.sh, makedmg.sh and updatepassword.sh stay out of
 # the repo (notarization credentials); package.sh and the entitlements plist
