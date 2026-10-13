@@ -96,6 +96,9 @@ else()
 endif()
 
 # Find FFmpeg using pkg-config
+# zlib, for kitty graphics' o=z compression. The SDK's own; nothing to bundle.
+find_package(ZLIB REQUIRED)
+
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(AVCODEC REQUIRED IMPORTED_TARGET libavcodec)
 pkg_check_modules(AVFORMAT REQUIRED IMPORTED_TARGET libavformat)
@@ -160,6 +163,7 @@ target_link_libraries(sink PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
     SDL3_image::SDL3_image
+    ZLIB::ZLIB
     PkgConfig::AVCODEC
     PkgConfig::AVFORMAT
     PkgConfig::AVUTIL
@@ -198,6 +202,7 @@ target_link_libraries(sink_tests PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
     SDL3_image::SDL3_image
+    ZLIB::ZLIB
 )
 add_test(NAME ansi_parser COMMAND sink_tests)
 
@@ -222,6 +227,7 @@ target_link_libraries(prompt_editing_e2e PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
     SDL3_image::SDL3_image
+    ZLIB::ZLIB
 )
 add_test(NAME prompt_editing_zsh COMMAND prompt_editing_e2e --shell zsh)
 # bash 5 from Homebrew; the binary reports a skip and passes when it is absent
@@ -278,6 +284,7 @@ target_link_libraries(sink_bench PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
     SDL3_image::SDL3_image
+    ZLIB::ZLIB
 )
 
 # Replays a captured terminal byte stream through the parser and prints the
@@ -295,6 +302,7 @@ target_link_libraries(tmux_replay PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
     SDL3_image::SDL3_image
+    ZLIB::ZLIB
 )
 
 # Frame-time benchmark for the render path, which sink_bench (headless by
@@ -313,6 +321,7 @@ target_link_libraries(pty_bench PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
     SDL3_image::SDL3_image
+    ZLIB::ZLIB
 )
 
 add_executable(render_bench
@@ -327,4 +336,5 @@ target_link_libraries(render_bench PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
     SDL3_image::SDL3_image
+    ZLIB::ZLIB
 )

@@ -71,6 +71,12 @@ TERMINAL = {
              + ESC + b"_Ga=p,i=7,p=2,c=2,r=1" + ST + ESC + b"_Ga=q,i=9;" + ST
              + ESC + b"_Ga=d,d=i,i=7" + ST + ESC + b"_Ga=t,t=f;" + base64.b64encode(b"/nonexistent/sink-fuzz") + ST,
     "kitty_png": ESC + b"_Ga=T,f=100;" + base64.b64encode(png_1x1()) + ST,
+    # o=z: compressed raw pixels, chunked; a compressed PNG; and a stream that
+    # inflates far past what s and v allow.
+    "kitty_zlib": ESC + b"_Ga=T,f=24,o=z,s=2,v=2,m=1;" + base64.b64encode(zlib.compress(b"\x00\xff\x00" * 4)) + ST
+                  + ESC + b"_Gm=0;" + ST
+                  + ESC + b"_Ga=T,f=100,o=z;" + base64.b64encode(zlib.compress(png_1x1())) + ST
+                  + ESC + b"_Ga=t,f=32,o=z,s=1,v=1;" + base64.b64encode(zlib.compress(b"\x00" * 65536)) + ST,
     "utf8": "wide 日本語 emoji 🎉 zwj 👩‍👩‍👧 combining é flags 🇯🇵 ".encode() + b"bad \xff\xfe\xc3 \xe2\x82",
     # What zsh sent when a multi-line command's first line filled the row
     # exactly -- the redraw that exposed the ED bug (see the git history).

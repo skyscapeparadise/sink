@@ -72,7 +72,8 @@ const std::regex& reply_grammar() {
         "("
         // kitty graphics status
         "\x1b_G(i=[0-9]+)?(,?p=[0-9]+)?;"
-        "(OK|EBADF:only direct transmission is supported|EINVAL:compression is not supported|"
+        "(OK|EBADF:only direct transmission is supported|EINVAL:unsupported compression|"
+        "EINVAL:could not decompress|"
         "EINVAL:could not decode PNG|EINVAL:raw pixels do not match s and v|"
         "EINVAL:unsupported format|ENOMEM:image rejected|ENOENT:no such image)\x1b\\\\"
         // OSC 4 / 10 / 11 / 12 colour reports

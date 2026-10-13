@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <zlib.h>
 
 // Dispatch table for STATE_NORMAL.
 //
@@ -285,8 +286,48 @@ static void place_kitty_image(TerminalGrid& grid, uint64_t image_id, uint64_t pl
 //   which is any command output and any remote host on the other end of an
 //   ssh session. Clients that ask get an EBADF back and fall back to sending
 //   the bytes inline, which is slower and entirely safe.
-// - No o=z compression, no animation frames, no unicode placeholders. Clients
-//   are told so and pick something else.
+// - No animation frames and no unicode placeholders. Clients are told so and
+//   pick something else.
+//
+// o=z compression is supported, inflated under a ceiling fixed before the
+// first byte is inflated (see inflate_zlib).
+
+// Inflates a zlib stream (RFC 1950, which is what kitty's o=z means) into out,
+// producing at most limit bytes. False if the stream is malformed, truncated,
+// or holds more than limit -- which is what stops a few kilobytes of payload
+// inflating into gigabytes. Output grows as it arrives rather than being
+// allocated at the limit up front, so a small image costs a small buffer.
+static bool inflate_zlib(const std::string& in, size_t limit, std::string& out) {
+    z_stream zs{};
+    if (inflateInit(&zs) != Z_OK) return false;
+    zs.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(in.data()));
+    zs.avail_in = static_cast<uInt>(in.size());
+    out.clear();
+
+    int ret = Z_OK;
+    while (ret == Z_OK) {
+        if (out.size() == limit) {
+            // Full. That's fine if all that is left is the stream's trailer,
+            // and a refusal if there is more data behind it.
+            unsigned char extra;
+            zs.next_out = &extra;
+            zs.avail_out = 1;
+            ret = inflate(&zs, Z_NO_FLUSH);
+            if (zs.avail_out == 0) ret = Z_DATA_ERROR;
+            break;
+        }
+        size_t at = out.size();
+        size_t grow = std::min<size_t>(limit - at, 256 * 1024);
+        out.resize(at + grow);
+        zs.next_out = reinterpret_cast<Bytef*>(&out[at]);
+        zs.avail_out = static_cast<uInt>(grow);
+        ret = inflate(&zs, Z_NO_FLUSH);
+        out.resize(at + grow - zs.avail_out);
+    }
+    inflateEnd(&zs);
+    return ret == Z_STREAM_END;
+}
+
 void ANSIParser::dispatch_apc(TerminalGrid& grid) {
     if (apc_buffer_.empty() || apc_buffer_[0] != 'G') return;
 
@@ -395,12 +436,36 @@ void ANSIParser::dispatch_apc(TerminalGrid& grid) {
             respond("EBADF:only direct transmission is supported", true);
             return;
         }
-        if (keys.count('o')) {
-            respond("EINVAL:compression is not supported", true);
-            return;
-        }
-
         const long format = num('f', 32);
+
+        if (keys.count('o')) {
+            if (letter('o', 0) != 'z') {
+                respond("EINVAL:unsupported compression", true);
+                return;
+            }
+            // The ceiling is decided before inflating: exactly what s and v
+            // call for with raw pixels, refused outright past what the image
+            // store would keep anyway; and for PNG, the same limit a PNG
+            // sent uncompressed is held to.
+            size_t limit = kApcMaxLen;
+            if (format == 32 || format == 24) {
+                const long w = num('s', 0), h = num('v', 0);
+                const size_t max_pixels =
+                    std::min(TerminalImages::kMaxImagePixels, TerminalImages::kMaxBytes / sizeof(uint32_t));
+                if (w <= 0 || h <= 0 || static_cast<size_t>(w) > max_pixels || static_cast<size_t>(h) > max_pixels ||
+                    static_cast<size_t>(w) * static_cast<size_t>(h) > max_pixels) {
+                    respond("EINVAL:raw pixels do not match s and v", true);
+                    return;
+                }
+                limit = static_cast<size_t>(w) * static_cast<size_t>(h) * (format == 32 ? 4 : 3);
+            }
+            std::string inflated;
+            if (!inflate_zlib(data, limit, inflated)) {
+                respond("EINVAL:could not decompress", true);
+                return;
+            }
+            data.swap(inflated);
+        }
         std::vector<uint32_t> pixels;
         int width = 0, height = 0;
 

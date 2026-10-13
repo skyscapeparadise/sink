@@ -15,6 +15,7 @@
 #include <sys/stat.h>
 #include <cstdlib>
 #include <vector>
+#include <zlib.h>
 
 static int checks_failed = 0;
 static int checks_run = 0;
@@ -1884,8 +1885,8 @@ static void test_kitty_graphics() {
         CHECK(reply.find("EBADF") != std::string::npos);
         CHECK(g.images().image_count() == 0);
 
-        feed(p, g, "\x1b_Ga=t,f=32,o=z,s=2,v=2,i=1;AA==\x1b\\");
-        CHECK(g.take_pending_reply().find("EINVAL") != std::string::npos);
+        feed(p, g, "\x1b_Ga=t,f=32,o=x,s=2,v=2,i=1;AA==\x1b\\");
+        CHECK(g.take_pending_reply().find("EINVAL:unsupported compression") != std::string::npos);
 
         feed(p, g, "\x1b_Ga=p,i=999\x1b\\");
         CHECK(g.take_pending_reply().find("ENOENT") != std::string::npos);
@@ -1911,6 +1912,100 @@ static void test_kitty_graphics() {
         feed(p, g, "\x1b_Xsomething\x1b\\hello");
         CHECK(g.images().image_count() == 0);
         CHECK(row_text(g, 0) == "hello");
+    }
+}
+
+static std::string zlib_compressed(const std::string& raw) {
+    uLongf size = compressBound(static_cast<uLong>(raw.size()));
+    std::string out(size, '\0');
+    compress2(reinterpret_cast<Bytef*>(&out[0]), &size,
+              reinterpret_cast<const Bytef*>(raw.data()), static_cast<uLong>(raw.size()), 9);
+    out.resize(size);
+    return out;
+}
+
+static std::string base64_encoded(const std::string& raw) {
+    static const char* abc = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    for (size_t i = 0; i < raw.size(); i += 3) {
+        uint32_t n = static_cast<unsigned char>(raw[i]) << 16;
+        if (i + 1 < raw.size()) n |= static_cast<unsigned char>(raw[i + 1]) << 8;
+        if (i + 2 < raw.size()) n |= static_cast<unsigned char>(raw[i + 2]);
+        out += abc[(n >> 18) & 63];
+        out += abc[(n >> 12) & 63];
+        out += i + 1 < raw.size() ? abc[(n >> 6) & 63] : '=';
+        out += i + 2 < raw.size() ? abc[n & 63] : '=';
+    }
+    return out;
+}
+
+// kitty o=z: the payload is zlib-compressed. It inflates under a ceiling set
+// before inflating -- exactly s x v pixels for raw formats -- so a small
+// payload can't grow into a huge allocation.
+static void test_kitty_zlib() {
+    std::string red4;
+    for (int i = 0; i < 4; ++i) red4 += std::string("\xff\x00\x00\xff", 4);
+
+    // Compressed raw pixels, inflating to exactly the size s and v call for.
+    {
+        TerminalGrid g; g.resize(80, 24);
+        g.set_cell_pixel_size(10, 20);
+        ANSIParser p;
+        feed(p, g, "\x1b_Ga=T,f=32,o=z,s=2,v=2,i=5;" + base64_encoded(zlib_compressed(red4)) + "\x1b\\");
+        CHECK(g.take_pending_reply() == "\x1b_Gi=5;OK\x1b\\");
+        const TerminalImage* img = g.images().find(5);
+        CHECK(img && img->width == 2 && img->height == 2);
+        CHECK(img && img->pixels[3] == (0xFFu << 24 | 0xFFu));
+    }
+
+    // Compression covers the whole transfer, so it is inflated only once the
+    // last chunk is in -- not chunk by chunk.
+    {
+        TerminalGrid g; g.resize(80, 24);
+        ANSIParser p;
+        std::string b64 = base64_encoded(zlib_compressed(red4));
+        std::string first = b64.substr(0, 8), rest = b64.substr(8);
+        feed(p, g, "\x1b_Ga=t,f=32,o=z,s=2,v=2,i=6,q=1,m=1;" + first + "\x1b\\");
+        CHECK(!g.images().has_image(6));
+        feed(p, g, "\x1b_Gm=0;" + rest + "\x1b\\");
+        CHECK(g.images().has_image(6));
+        CHECK(!g.has_pending_reply());
+    }
+
+    // A stream holding more than s and v allow is refused, not truncated --
+    // here 64KB of zeros, compressed to a few dozen bytes, claiming to be one
+    // pixel.
+    {
+        TerminalGrid g; g.resize(80, 24);
+        ANSIParser p;
+        feed(p, g, "\x1b_Ga=t,f=32,o=z,s=1,v=1,i=7;" + base64_encoded(zlib_compressed(std::string(65536, '\0'))) + "\x1b\\");
+        CHECK(g.take_pending_reply().find("EINVAL:could not decompress") != std::string::npos);
+        CHECK(!g.images().has_image(7));
+    }
+
+    // Too little data, a cut-off stream, or not zlib at all.
+    {
+        TerminalGrid g; g.resize(80, 24);
+        ANSIParser p;
+        feed(p, g, "\x1b_Ga=t,f=32,o=z,s=2,v=2,i=8;" + base64_encoded(zlib_compressed(red4.substr(0, 8))) + "\x1b\\");
+        CHECK(g.take_pending_reply().find("EINVAL") != std::string::npos);
+        std::string cut = zlib_compressed(red4);
+        cut.resize(cut.size() - 3);
+        feed(p, g, "\x1b_Ga=t,f=32,o=z,s=2,v=2,i=8;" + base64_encoded(cut) + "\x1b\\");
+        CHECK(g.take_pending_reply().find("EINVAL:could not decompress") != std::string::npos);
+        feed(p, g, "\x1b_Ga=t,f=32,o=z,s=2,v=2,i=8;" + base64_encoded("not zlib at all") + "\x1b\\");
+        CHECK(g.take_pending_reply().find("EINVAL:could not decompress") != std::string::npos);
+        CHECK(!g.images().has_image(8));
+    }
+
+    // s and v are checked before anything is inflated: absurd sizes are
+    // refused up front rather than setting an absurd ceiling.
+    {
+        TerminalGrid g; g.resize(80, 24);
+        ANSIParser p;
+        feed(p, g, "\x1b_Ga=t,f=32,o=z,s=2147483647,v=2147483647,i=9;" + base64_encoded(zlib_compressed(red4)) + "\x1b\\");
+        CHECK(g.take_pending_reply().find("EINVAL:raw pixels do not match s and v") != std::string::npos);
+        CHECK(!g.images().has_image(9));
     }
 }
 
@@ -2488,6 +2583,7 @@ int main() {
     test_erase_in_display();
     test_sixel_past_size_limit();
     test_kitty_png_only();
+    test_kitty_zlib();
     test_huge_motion_counts();
     test_demo_commands();
     test_submit_line();

@@ -34,6 +34,7 @@ LDFLAGS=(
     -L"$LLVM/lib/unwind" -lunwind
     -Wl,-rpath,"$PWD/vendor/textstack/lib" -Wl,-rpath,"$PWD/vendor/sdl3_image/lib"
     -Wl,-rpath,/opt/homebrew/lib
+    -lz
 )
 SDL_LIBS=(vendor/sdl3_image/lib/libSDL3_image.0.4.4.dylib /opt/homebrew/lib/libSDL3.0.dylib)
 TTF_LIBS=(vendor/textstack/lib/libSDL3_ttf.0.2.2.dylib)
