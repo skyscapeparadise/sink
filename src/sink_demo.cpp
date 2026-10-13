@@ -15,6 +15,10 @@
 #include <vector>
 #include <atomic>
 #include <filesystem>
+#include <functional>
+#include <cmath>
+#include <cctype>
+#include <mutex>
 #include <mach-o/dyld.h>
 
 extern "C" {
@@ -420,7 +424,409 @@ static void type_simulated_text(TerminalWindow* tw, const std::string& text) {
     }
 }
 
-static void play_cpp_video_as_text(TerminalWindow* tw, const std::string& dat_path) {
+// One character cell of the demo's ASCII video: a glyph, the colour it's
+// drawn in and the colour behind it.
+struct AsciiCell {
+    char ch = ' ';
+    uint8_t fg[3] = {0, 0, 0};
+    uint8_t bg[3] = {0, 0, 0};
+};
+
+static const char kAsciiRamp[] = " .:-=+*#%@";
+static constexpr int kAsciiRampLen = sizeof(kAsciiRamp) - 1;
+
+static int ramp_index(char ch) {
+    const char* at = std::strchr(kAsciiRamp, ch);
+    return (at && ch) ? static_cast<int>(at - kAsciiRamp) : 0;
+}
+
+static void set_rgb(uint8_t out[3], int r, int g, int b) {
+    out[0] = static_cast<uint8_t>(std::clamp(r, 0, 255));
+    out[1] = static_cast<uint8_t>(std::clamp(g, 0, 255));
+    out[2] = static_cast<uint8_t>(std::clamp(b, 0, 255));
+}
+
+// The video's look: a glyph picked by brightness, drawn brighter than the
+// pixel over a background darker than it.
+static AsciiCell ascii_cell_from_rgb(uint8_t cr, uint8_t cg, uint8_t cb) {
+    AsciiCell cell;
+    float lum = 0.2126f * cr + 0.7152f * cg + 0.0722f * cb;
+    set_rgb(cell.bg, static_cast<int>(cr * 0.45f), static_cast<int>(cg * 0.45f), static_cast<int>(cb * 0.45f));
+    set_rgb(cell.fg, static_cast<int>(cr * 1.25f + 15), static_cast<int>(cg * 1.25f + 15), static_cast<int>(cb * 1.25f + 15));
+    cell.ch = kAsciiRamp[std::clamp(static_cast<int>(lum / 256.0f * kAsciiRampLen), 0, kAsciiRampLen - 1)];
+    return cell;
+}
+
+static void append_cup(std::string& out, int row, int col) {
+    out += "\033[" + std::to_string(row + 1) + ";" + std::to_string(col + 1) + "H";
+}
+
+static void append_cell(std::string& out, const AsciiCell& cell) {
+    out += "\033[48;2;" + std::to_string(cell.bg[0]) + ";" + std::to_string(cell.bg[1]) + ";" + std::to_string(cell.bg[2]) + "m";
+    out += "\033[38;2;" + std::to_string(cell.fg[0]) + ";" + std::to_string(cell.fg[1]) + ";" + std::to_string(cell.fg[2]) + "m";
+    out += cell.ch;
+}
+
+// Where the finale's "swim with me" was typed, so the transition into the
+// video can pick it up from there. Zero-based, like the grid's cursor.
+struct SwimIntro {
+    std::string prompt;
+    int row = 0;
+    int prompt_col = 0;
+    std::string text;
+};
+
+// A stable pseudo-random value in [0, 1) for a cell, so per-cell timing and
+// shading survive a resize without any state to rebuild.
+static float cell_hash(int x, int y, uint32_t salt) {
+    uint32_t h = static_cast<uint32_t>(x) * 0x8da6b343u ^ static_cast<uint32_t>(y) * 0xd8163841u ^ salt * 0xcb1ab31fu;
+    h ^= h >> 13;
+    h *= 0x5bd1e995u;
+    h ^= h >> 15;
+    return static_cast<float>(h & 0xFFFFFF) / static_cast<float>(0x1000000);
+}
+
+static constexpr int kIntroFps = 30;
+static constexpr double kShakeMs = 2000.0;
+static constexpr double kBurstMs = 650.0;
+// How far into the burst the video starts playing underneath it. The rest of
+// the burst overlaps the dissolve, so the motion runs straight on into the
+// video instead of settling first.
+static constexpr double kVideoStartMs = 450.0;
+static constexpr double kDissolveMs = 300.0;
+// How far past the farthest corner the shockwave ends up, so the corners are
+// well inside it by the time the video starts.
+static constexpr double kBurstOvershoot = 1.08;
+// The video's ending: the water drains out of the screen over its last
+// kDrainMs, leaving the terminal behind.
+static constexpr double kDrainMs = 900.0;
+
+// Calls draw(t) about kIntroFps times a second, t being the fraction of
+// duration_ms gone by on the real clock, ending with draw(1). A slow frame is
+// caught up rather than stretching the phase. Returns false if Tab or a
+// closing window cut it short.
+static bool run_timed_phase(TerminalWindow* tw, double duration_ms, const std::function<void(double)>& draw) {
+    using clock = std::chrono::steady_clock;
+    const auto start = clock::now();
+    const auto frame = std::chrono::microseconds(1000000 / kIntroFps);
+    auto next = start;
+    for (;;) {
+        if (tw->demo_skip_requested.load() || tw->demo_abort.load()) return false;
+        double t = std::chrono::duration<double, std::milli>(clock::now() - start).count() / duration_ms;
+        if (t >= 1.0) {
+            draw(1.0);
+            return true;
+        }
+        draw(t);
+        next += frame;
+        auto now = clock::now();
+        if (next < now) next = now;
+        std::this_thread::sleep_until(next);
+    }
+}
+
+// Shockwave colour by how long ago the wave passed (as a fraction of its
+// full travel): white-hot at the front, cooling through cyan to deep water.
+static void burst_colour(double age, AsciiCell& cell) {
+    auto mix = [](int a, int b, double f) { return static_cast<int>(a + (b - a) * f); };
+    int r, g, b;
+    if (age < 0.08) {
+        double f = age / 0.08;
+        r = mix(255, 110, f); g = mix(255, 225, f); b = mix(255, 255, f);
+    } else {
+        double f = std::min(1.0, (age - 0.08) / 0.42);
+        r = mix(110, 25, f); g = mix(225, 95, f); b = mix(255, 150, f);
+    }
+    set_rgb(cell.fg, r, g, b);
+    set_rgb(cell.bg, static_cast<int>(r * 0.45f), static_cast<int>(g * 0.45f), static_cast<int>(b * 0.45f));
+}
+
+// Glyph brightness behind the shockwave: dense at the front, thinning out
+// as it cools.
+static int burst_ramp_index(double age) {
+    return std::clamp(kAsciiRampLen - 1 - static_cast<int>(age * 12.0), 2, kAsciiRampLen - 1);
+}
+
+// The shockwave's geometry on a grid of a given size. Distances count rows
+// double, since a cell is about twice as tall as it is wide -- so the wave
+// spreads as a circle. Rebuilt from the grid size each frame, so a resize
+// mid-transition just carries on at the new size.
+struct SwimBurst {
+    double x = 0.0;      // the column it bursts from: the middle of the text
+    int row = 0;
+    double max_d = 1.0;  // distance to the farthest corner
+
+    SwimBurst(const SwimIntro& intro, int cols, int rows)
+        : x(intro.prompt_col + static_cast<double>(intro.prompt.size()) +
+            (static_cast<double>(intro.text.size()) - 1.0) / 2.0),
+          row(std::clamp(intro.row, 0, rows - 1)) {
+        max_d = std::max({dist(0, 0), dist(cols - 1, 0), dist(0, rows - 1), dist(cols - 1, rows - 1), 1.0});
+    }
+
+    double dist(int cx, int cy) const {
+        double dx = cx - x, dy = 2.0 * (cy - row);
+        return std::sqrt(dx * dx + dy * dy);
+    }
+
+    // How far the front has got burst_ms in: fast at first, easing off as it
+    // reaches the corners.
+    double radius(double burst_ms) const {
+        double t = std::min(1.0, burst_ms / kBurstMs);
+        return max_d * kBurstOvershoot * (1.0 - std::pow(1.0 - t, 3.0));
+    }
+
+    // The shockwave at a cell, burst_ms in, its glyph flickering frame to
+    // frame. False if the front hasn't reached the cell yet.
+    bool cell(int cx, int cy, double burst_ms, std::mt19937& rng, AsciiCell& out) const {
+        double d = dist(cx, cy), r = radius(burst_ms);
+        if (d > r) return false;
+        double age = (r - d) / max_d;
+        burst_colour(age, out);
+        int jitter = static_cast<int>(rng() % 5) - 2;
+        out.ch = kAsciiRamp[std::clamp(burst_ramp_index(age) + jitter, 1, kAsciiRampLen - 1)];
+        return true;
+    }
+};
+
+// The finale's transition into the video. The typed "swim with me" shakes
+// and swells, faster and harder, for the two seconds the demo used to just
+// pause for; then bursts, a shockwave of ASCII filling the screen. The video
+// starts underneath before the burst is over, and blend_burst_into_video
+// dissolves one into the other.
+//
+// Returns whether it ran to the end. Tab cuts it short, straight to the
+// video with no dissolve; so does a closing window.
+static bool play_swim_intro(TerminalWindow* tw, const SwimIntro& intro) {
+    std::mt19937 rng(1337);
+    std::uniform_real_distribution<double> unit(0.0, 1.0);
+    auto dims = [&](int& cols, int& rows) {
+        cols = tw->demo_target().terminal.get_cols();
+        rows = tw->demo_target().terminal.get_rows();
+        if (cols <= 0) cols = 80;
+        if (rows <= 0) rows = 24;
+    };
+
+    const int n = static_cast<int>(intro.text.size());
+    const int text_col = intro.prompt_col + static_cast<int>(intro.prompt.size());
+    const double text_mid = text_col + (n - 1) / 2.0;
+
+    // Where letter i sits for a given swell and throb, before any shaking.
+    auto letter_x = [&](int i, double e, double throb) {
+        double spread = 1.0 + e * (0.35 + 0.2 * throb);
+        return text_mid + (text_col + i - text_mid) * spread;
+    };
+
+    // 1. Shake: the letters throb, spread, swap between upper and lower case
+    // and heat up to white, faster as it builds, throwing sparks near the end.
+    auto draw_shake = [&](double t) {
+        int cols, rows;
+        dims(cols, rows);
+        const int row = std::clamp(intro.row, 0, rows - 1);
+        const double e = t * t;
+        const double throb = std::sin(2.0 * M_PI * (1.5 * t + 4.0 * t * t * t));
+
+        std::string out = "\033[0m";
+        for (int r = std::max(0, row - 2); r <= std::min(rows - 1, row + 2); ++r) {
+            append_cup(out, r, 0);
+            out += "\033[2K";
+        }
+        if (intro.prompt_col < cols) {
+            append_cup(out, row, intro.prompt_col);
+            out += intro.prompt.substr(0, cols - intro.prompt_col);
+        }
+
+        AsciiCell hot;
+        set_rgb(hot.fg, static_cast<int>(170 + 85 * e), static_cast<int>(230 + 25 * e), static_cast<int>(245 + 10 * e));
+        out += "\033[38;2;" + std::to_string(hot.fg[0]) + ";" + std::to_string(hot.fg[1]) + ";" + std::to_string(hot.fg[2]) + "m";
+        if (e > 0.5) out += "\033[1m";
+        for (int i = 0; i < n; ++i) {
+            char ch = intro.text[i];
+            if (ch == ' ') continue;
+            if (throb > 1.0 - 1.6 * e) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+            double x = letter_x(i, e, throb);
+            int y = row;
+            if (unit(rng) < 0.25 + 0.75 * e) x += (unit(rng) * 2.0 - 1.0) * 2.5 * e;
+            if (unit(rng) < 0.6 * e * e) y += unit(rng) < 0.5 ? -1 : 1;
+            int col = static_cast<int>(std::lround(x));
+            if (col < 0 || col >= cols || y < 0 || y >= rows) continue;
+            append_cup(out, y, col);
+            out += ch;
+        }
+        if (e > 0.6) {
+            static const char sparks[] = ".'`*+";
+            int count = static_cast<int>((e - 0.6) * 30.0);
+            double reach = (n / 2.0 + 3.0) * (1.0 + 0.55 * e);
+            out += "\033[38;2;255;240;220m";
+            for (int k = 0; k < count; ++k) {
+                int col = static_cast<int>(std::lround(text_mid + (unit(rng) * 2.0 - 1.0) * reach));
+                int y = row + static_cast<int>(rng() % 5) - 2;
+                if (col < 0 || col >= cols || y < 0 || y >= rows) continue;
+                append_cup(out, y, col);
+                out += sparks[rng() % 5];
+            }
+        }
+        out += "\033[0m";
+        feed_to_terminal(tw, out);
+    };
+
+    auto finish = [&](bool completed) {
+        // Tab skips straight to the video; it's spent here so the video
+        // doesn't take it as a request to skip itself too.
+        if (!completed && !tw->demo_abort.load()) tw->demo_skip_requested.store(false);
+        return completed;
+    };
+
+    if (!finish(run_timed_phase(tw, kShakeMs, draw_shake))) return false;
+
+    // The letters fly off as debris from where they were at the peak.
+    struct Debris { double x, y, vx, vy; char ch; };
+    std::vector<Debris> debris;
+    {
+        int cols, rows;
+        dims(cols, rows);
+        SwimBurst burst(intro, cols, rows);
+        const double speed = burst.max_d * 1.3 / (kBurstMs / 1000.0);
+        for (int i = 0; i < n; ++i) {
+            if (intro.text[i] == ' ') continue;
+            for (int k = 0; k < 10; ++k) {
+                double angle = unit(rng) * 2.0 * M_PI;
+                double v = speed * (0.5 + unit(rng));
+                char ch = k < 3 ? intro.text[i] : "*+'."[rng() % 4];
+                debris.push_back({letter_x(i, 1.0, 1.0), static_cast<double>(burst.row),
+                                  std::cos(angle) * v, std::sin(angle) * v * 0.5, ch});
+            }
+        }
+    }
+
+    // 2. Burst: a shockwave fills the screen behind it with ASCII, up to the
+    // point the video takes over.
+    std::vector<char> overlay;
+    auto draw_burst = [&](double t) {
+        int cols, rows;
+        dims(cols, rows);
+        SwimBurst burst(intro, cols, rows);
+        const double burst_ms = t * kVideoStartMs;
+        const double secs = burst_ms / 1000.0;
+
+        overlay.assign(static_cast<size_t>(cols) * rows, 0);
+        for (const Debris& d : debris) {
+            int x = static_cast<int>(std::lround(d.x + d.vx * secs));
+            int y = static_cast<int>(std::lround(d.y + d.vy * secs));
+            if (x >= 0 && x < cols && y >= 0 && y < rows) overlay[static_cast<size_t>(y) * cols + x] = d.ch;
+        }
+
+        std::string out;
+        out.reserve(static_cast<size_t>(cols) * rows * 25);
+        for (int y = 0; y < rows; ++y) {
+            append_cup(out, y, 0);
+            for (int x = 0; x < cols; ++x) {
+                AsciiCell cell;
+                char debris_ch = overlay[static_cast<size_t>(y) * cols + x];
+                if (burst.cell(x, y, burst_ms, rng, cell)) {
+                    append_cell(out, cell);
+                } else if (debris_ch) {
+                    out += "\033[0m\033[1;38;2;255;250;235m";
+                    out += debris_ch;
+                } else {
+                    out += "\033[0m ";
+                }
+            }
+        }
+        out += "\033[0m";
+        feed_to_terminal(tw, out);
+    };
+
+    return finish(run_timed_phase(tw, kVideoStartMs, draw_burst));
+}
+
+// 3. Dissolve, over the video's first kDissolveMs: outward from where it
+// burst, each cell settles from the still-running shockwave into the playing
+// video, its glyph flickering toward the frame's. video_ms is how far into
+// the video this frame is.
+static void blend_burst_into_video(std::vector<AsciiCell>& cells, int cols, int rows,
+                                   const SwimIntro& intro, double video_ms, std::mt19937& rng) {
+    SwimBurst burst(intro, cols, rows);
+    std::uniform_real_distribution<double> unit(0.0, 1.0);
+    const double t = video_ms / kDissolveMs;
+    const double burst_ms = kVideoStartMs + video_ms;
+    for (int y = 0; y < rows; ++y) {
+        for (int x = 0; x < cols; ++x) {
+            double delay = 0.6 * std::min(1.0, burst.dist(x, y) / burst.max_d) + 0.12 * cell_hash(x, y, 1);
+            double p = std::clamp((t - delay) / 0.28, 0.0, 1.0);
+            if (p >= 1.0) continue;
+            AsciiCell from;
+            if (!burst.cell(x, y, burst_ms, rng, from)) continue;
+            p = p * p * (3.0 - 2.0 * p);
+
+            AsciiCell& cell = cells[static_cast<size_t>(y) * cols + x];
+            const AsciiCell want = cell;
+            for (int c = 0; c < 3; ++c) {
+                cell.fg[c] = static_cast<uint8_t>(from.fg[c] + (want.fg[c] - from.fg[c]) * p);
+                cell.bg[c] = static_cast<uint8_t>(from.bg[c] + (want.bg[c] - from.bg[c]) * p);
+            }
+            if (unit(rng) >= p * p) {
+                double idx = ramp_index(from.ch) + (ramp_index(want.ch) - ramp_index(from.ch)) * p;
+                int jitter = static_cast<int>(rng() % 3) - 1;
+                cell.ch = kAsciiRamp[std::clamp(static_cast<int>(std::lround(idx)) + jitter, 0, kAsciiRampLen - 1)];
+            }
+        }
+    }
+}
+
+// The video's ending: the screen drains like a sink. A wavy water surface
+// falls from above the top row to below the bottom one as u goes from 0 to
+// 1, slowly at first and then faster. Above it the video is gone, but for a
+// few droplets left behind; the surface itself is a line of foam that follows
+// the waves' slopes; below it the video plays on, rippling and lit up near
+// the surface. Everything is worked out from u, so a drain carried on over a
+// frozen last frame picks up exactly where the playing one left off.
+static void draw_drain(std::string& out, const std::vector<AsciiCell>& video, int cols, int rows, double u) {
+    const double secs = u * kDrainMs / 1000.0;
+    const double eased = u * u * (3.0 - 2.0 * u);
+    const double level = -2.5 + (rows + 5.0) * eased;
+    auto surface = [&](int x) {
+        return level + 1.6 * (0.65 * std::sin(0.23 * x + 5.0 * secs) +
+                              0.35 * std::sin(0.09 * x - 3.1 * secs + 1.3));
+    };
+
+    out.reserve(out.size() + static_cast<size_t>(cols) * rows * 40);
+    for (int y = 0; y < rows; ++y) {
+        append_cup(out, y, 0);
+        for (int x = 0; x < cols; ++x) {
+            const double s = surface(x);
+            const int top = static_cast<int>(std::lround(s));
+            if (y < top) {
+                // Spray clinging just above the water, thinning out as it drains.
+                if (y > s - 4.0 && cell_hash(x, y, 7) < 0.06 * (1.0 - u)) {
+                    out += "\033[0m\033[38;2;120;200;230m";
+                    out += cell_hash(x, y, 8) < 0.5 ? '.' : '\'';
+                } else {
+                    out += "\033[0m ";
+                }
+            } else if (y == top) {
+                double slope = surface(x + 1) - surface(x - 1);
+                char ch = slope > 0.7 ? '\\' : slope < -0.7 ? '/' : (cell_hash(x, 0, 9) < 0.7 ? '~' : '-');
+                out += "\033[0m\033[1;38;2;225;248;255m";
+                out += ch;
+            } else {
+                // Below the surface: the video, bent sideways and brightened
+                // the nearer it is to the top of the water.
+                double near = std::max(0.0, 1.0 - (y - s) / 4.0);
+                int sx = x + static_cast<int>(std::lround(std::sin(0.7 * y + 0.3 * x + 6.0 * secs) * near));
+                AsciiCell cell = video[static_cast<size_t>(y) * cols + std::clamp(sx, 0, cols - 1)];
+                static const int glow[3] = {200, 240, 255};
+                for (int c = 0; c < 3; ++c) {
+                    cell.fg[c] = static_cast<uint8_t>(cell.fg[c] + (glow[c] - cell.fg[c]) * 0.35 * near);
+                }
+                append_cell(out, cell);
+            }
+        }
+    }
+    out += "\033[0m";
+}
+
+static void play_cpp_video_as_text(TerminalWindow* tw, const std::string& dat_path,
+                                   const SwimIntro* intro = nullptr) {
     std::ifstream file(dat_path, std::ios::binary | std::ios::ate);
     if (!file.is_open()) return;
 
@@ -540,26 +946,38 @@ static void play_cpp_video_as_text(TerminalWindow* tw, const std::string& dat_pa
     update_buffer(cols, rows);
 
     AVPacket packet;
-    const char* chars = " .:-=+*#%@";
-    int char_len = std::strlen(chars);
 
-    feed_to_terminal(tw, "\033[?25l\033[2J\033[3J\033[H"); // Hide cursor, clear screen & scrollback
+    // With an intro, "swim with me" stays on screen for it to pick up;
+    // otherwise playback starts from a clean screen.
+    feed_to_terminal(tw, intro ? "\033[?25l\033[3J" : "\033[?25l\033[2J\033[3J\033[H"); // Hide cursor, clear scrollback (and screen)
 
     auto start_clock = std::chrono::high_resolution_clock::now();
     int frame_count = 0;
     double frame_delay_sec = 1.0 / 23.976;
+    bool intro_pending = intro != nullptr;
+    bool blending = false;
+    std::mt19937 blend_rng(1337);
 
-    auto render_frame_lambda = [&]() {
-        if (frame->width <= 0 || frame->height <= 0) return;
+    // When to start draining (see draw_drain), on the same frame-count clock
+    // the frames are paced by. Unknown length: drain after the last frame.
+    AVStream* video_stream = fmt_ctx->streams[video_stream_idx];
+    double total_frames = 0.0;
+    if (video_stream->nb_frames > 0) {
+        total_frames = static_cast<double>(video_stream->nb_frames);
+    } else if (video_stream->duration != AV_NOPTS_VALUE) {
+        total_frames = video_stream->duration * av_q2d(video_stream->time_base) / frame_delay_sec;
+    }
+    const double drain_start_ms = total_frames * frame_delay_sec * 1000.0 - kDrainMs;
+    double drain_u = 0.0;
+    std::vector<AsciiCell> cells;
 
-        int cur_cols = tw->demo_target().terminal.get_cols();
-        int cur_rows = tw->demo_target().terminal.get_rows();
-        if (cur_cols <= 0) cur_cols = 80;
-        if (cur_rows <= 0) cur_rows = 24;
+    // Scales the current decoded frame to a c x r grid of cells.
+    auto scale_frame = [&](int c, int r, std::vector<AsciiCell>& out) {
+        if (frame->width <= 0 || frame->height <= 0) return false;
 
-        if (cur_cols != cols || cur_rows != rows || !buffer) {
-            cols = cur_cols;
-            rows = cur_rows;
+        if (c != cols || r != rows || !buffer) {
+            cols = c;
+            rows = r;
             update_buffer(cols, rows);
         }
 
@@ -570,7 +988,7 @@ static void play_cpp_video_as_text(TerminalWindow* tw, const std::string& dat_pa
             SWS_BILINEAR, nullptr, nullptr, nullptr
         );
 
-        if (!sws_ctx) return;
+        if (!sws_ctx) return false;
 
         sws_scale(
             sws_ctx,
@@ -579,40 +997,65 @@ static void play_cpp_video_as_text(TerminalWindow* tw, const std::string& dat_pa
             rgb_frame->data, rgb_frame->linesize
         );
 
+        out.resize(static_cast<size_t>(cols) * rows);
+        for (int y = 0; y < rows; ++y) {
+            const uint8_t* line = rgb_frame->data[0] + y * rgb_frame->linesize[0];
+            for (int x = 0; x < cols; ++x) {
+                out[static_cast<size_t>(y) * cols + x] = ascii_cell_from_rgb(line[x * 3], line[x * 3 + 1], line[x * 3 + 2]);
+            }
+        }
+        return true;
+    };
+
+    auto render_frame_lambda = [&]() {
+        if (frame->width <= 0 || frame->height <= 0) return;
+
+        // The intro plays once the first frame is decoded and ready, so the
+        // video can start the moment the intro hands over; its clock starts
+        // then too.
+        if (intro_pending) {
+            intro_pending = false;
+            blending = play_swim_intro(tw, *intro);
+            if (tw->demo_abort.load()) return;
+            start_clock = std::chrono::high_resolution_clock::now();
+            frame_count = 0;
+        }
+
+        int cur_cols = tw->demo_target().terminal.get_cols();
+        int cur_rows = tw->demo_target().terminal.get_rows();
+        if (cur_cols <= 0) cur_cols = 80;
+        if (cur_rows <= 0) cur_rows = 24;
+
+        if (!scale_frame(cur_cols, cur_rows, cells)) return;
+
+        if (blending) {
+            double video_ms = frame_count * frame_delay_sec * 1000.0;
+            if (video_ms < kDissolveMs) {
+                blend_burst_into_video(cells, cols, rows, *intro, video_ms, blend_rng);
+            } else {
+                blending = false;
+            }
+        }
+
         auto target_time = start_clock + std::chrono::microseconds(static_cast<long long>(frame_count * frame_delay_sec * 1000000.0));
         std::this_thread::sleep_until(target_time);
 
         std::string frame_buf;
         frame_buf.reserve(cols * rows * 25);
 
-        for (int r = 0; r < rows; ++r) {
-            frame_buf += "\033[" + std::to_string(r + 1) + ";1H";
-
-            for (int c = 0; c < cols; ++c) {
-                int idx = (r * rgb_frame->linesize[0]) + c * 3;
-                uint8_t cr = rgb_frame->data[0][idx];
-                uint8_t cg = rgb_frame->data[0][idx + 1];
-                uint8_t cb = rgb_frame->data[0][idx + 2];
-                float lum = 0.2126f * cr + 0.7152f * cg + 0.0722f * cb;
-
-                int bg_r = std::max(0, static_cast<int>(cr * 0.45f));
-                int bg_g = std::max(0, static_cast<int>(cg * 0.45f));
-                int bg_b = std::max(0, static_cast<int>(cb * 0.45f));
-
-                int fg_r = std::min(255, static_cast<int>(cr * 1.25f + 15));
-                int fg_g = std::min(255, static_cast<int>(cg * 1.25f + 15));
-                int fg_b = std::min(255, static_cast<int>(cb * 1.25f + 15));
-
-                int ch_idx = std::min(char_len - 1, static_cast<int>(lum / 256.0f * char_len));
-                if (ch_idx < 0) ch_idx = 0;
-                char ch = chars[ch_idx];
-
-                frame_buf += "\033[48;2;" + std::to_string(bg_r) + ";" + std::to_string(bg_g) + ";" + std::to_string(bg_b) + "m";
-                frame_buf += "\033[38;2;" + std::to_string(fg_r) + ";" + std::to_string(fg_g) + ";" + std::to_string(fg_b) + "m";
-                frame_buf += ch;
+        double video_ms = frame_count * frame_delay_sec * 1000.0;
+        if (total_frames > 0.0 && video_ms >= drain_start_ms) {
+            drain_u = std::min(1.0, (video_ms - drain_start_ms) / kDrainMs);
+            draw_drain(frame_buf, cells, cols, rows, drain_u);
+        } else {
+            for (int r = 0; r < rows; ++r) {
+                frame_buf += "\033[" + std::to_string(r + 1) + ";1H";
+                for (int c = 0; c < cols; ++c) {
+                    append_cell(frame_buf, cells[static_cast<size_t>(r) * cols + c]);
+                }
             }
+            frame_buf += "\033[0m";
         }
-        frame_buf += "\033[0m";
         feed_to_terminal(tw, frame_buf);
         frame_count++;
     };
@@ -621,8 +1064,12 @@ static void play_cpp_video_as_text(TerminalWindow* tw, const std::string& dat_pa
         return tw->demo_skip_requested.load() || tw->demo_abort.load();
     };
 
+    // Tab during the video ends it there and then, drain and all. The skip
+    // is spent below, so remember it.
+    bool cut_short = false;
     while (av_read_frame(fmt_ctx, &packet) >= 0) {
         if (should_stop()) {
+            cut_short = true;
             tw->demo_skip_requested.store(false);
             av_packet_unref(&packet);
             break;
@@ -645,6 +1092,28 @@ static void play_cpp_video_as_text(TerminalWindow* tw, const std::string& dat_pa
             }
         }
         av_packet_unref(&packet);
+    }
+
+    cut_short = cut_short || should_stop();
+    if (!cut_short) {
+        // The decoder holds back its last few frames until told the input
+        // has ended; without them the drain would come up short.
+        avcodec_send_packet(codec_ctx, nullptr);
+        while (!should_stop() && avcodec_receive_frame(codec_ctx, frame) == 0) {
+            render_frame_lambda();
+        }
+    }
+
+    // The video ran out before the water did (or its length was unknown):
+    // finish draining over the last frame.
+    if (!cut_short && !should_stop() && !cells.empty() && drain_u < 1.0) {
+        const double from = drain_u;
+        bool finished = run_timed_phase(tw, (1.0 - from) * kDrainMs, [&](double t) {
+            std::string out;
+            draw_drain(out, cells, cols, rows, from + (1.0 - from) * t);
+            feed_to_terminal(tw, out);
+        });
+        if (!finished && !tw->demo_abort.load()) tw->demo_skip_requested.store(false);
     }
 
     feed_to_terminal(tw, "\033[?25h\033[0m\033[2J\033[3J\033[H"); // Restore cursor, clear screen & scrollback
@@ -701,19 +1170,26 @@ void run_demo(TerminalWindow* tw, AppState* state) {
     if (tw->demo_abort.load()) { tw->demo_running.store(false); return; }
 
     // Finale sequence
+    SwimIntro intro;
+    intro.prompt = prompt;
+    intro.text = "swim with me";
+    {
+        std::lock_guard<std::mutex> lock(tw->demo_target().grid_mutex);
+        intro.row = tw->demo_target().terminal.get_cursor_row();
+        intro.prompt_col = tw->demo_target().terminal.get_cursor_col();
+    }
     feed_to_terminal(tw, prompt);
     sleep_interruptible(tw, 1000); // 1s pause
-    type_simulated_text(tw, "swim with me");
+    type_simulated_text(tw, intro.text);
     sleep_interruptible(tw, 200); // 0.2s hesitation
     feed_to_terminal(tw, "\r\n");
 
-    sleep_interruptible(tw, 2000); // 2s pause
-
     if (tw->demo_abort.load()) { tw->demo_running.store(false); return; }
 
-    // Resolve splash.dat path dynamically
+    // Resolve splash.dat path dynamically. The words shake, burst and
+    // dissolve into the video (see play_swim_intro).
     std::string splash_path = resolve_splash_path();
-    play_cpp_video_as_text(tw, splash_path);
+    play_cpp_video_as_text(tw, splash_path, &intro);
 
     // Reset demo state flags for this window
     tw->demo_running.store(false);
