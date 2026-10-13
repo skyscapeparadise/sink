@@ -396,6 +396,46 @@ static float get_top_offset_pts(TerminalWindow* tw) {
     return base;
 }
 
+// Pixels per point for a window's backing store: what layout's points have to
+// be multiplied by to land on the right pixels.
+static float window_pixel_density(SDL_Window* window) {
+    float density = window ? SDL_GetWindowPixelDensity(window) : 0.0f;
+    return density > 0.0f ? density : 1.0f;
+}
+
+// The window's font at its current scale, and the cell size that follows.
+static void load_window_font(AppState* state, TerminalWindow* tw) {
+    std::string path = state->font_path.empty() ? "/System/Library/Fonts/SFNSMono.ttf" : state->font_path;
+    float font_size_px = state->base_font_size * tw->display_scale;
+    if (!tw->font_manager.load_font(tw->renderer, path, font_size_px, false)) {
+        tw->font_manager.load_font(tw->renderer, "/System/Library/Fonts/Supplemental/Courier New.ttf", font_size_px, false);
+    }
+    tw->cell_w = (tw->font_manager.get_cell_width() / tw->display_scale) + 1.0f;
+    tw->cell_h = (tw->font_manager.get_cell_height() / tw->display_scale) - 0.8f;
+}
+
+static void layout_panes(AppState* state, TerminalWindow* tw, bool apply_grids);
+
+// Follows the window to a display of another density. The scale used to be
+// read once, when the window opened, and kept for the whole app: a window
+// opened on a Retina screen (2) and then shown on a 1x display -- moved
+// there, or put full screen on it -- went on drawing everything at twice the
+// size, so only the top-left quarter of the grid fit in the window. Normal
+// shell use hid it, since a prompt sits top-left; the demo's full-screen video
+// was the first thing to fill the grid.
+//
+// Checked every frame -- one cheap call -- rather than trusting a particular
+// window event to arrive for every way a window can change displays. On a
+// change: the font is rasterized again at the new size and the panes are laid
+// out again, which resizes the grids and tells the shells.
+static void refresh_display_scale(AppState* state, TerminalWindow* tw) {
+    float density = window_pixel_density(tw->window);
+    if (std::fabs(density - tw->display_scale) < 0.01f) return;
+    tw->display_scale = density;
+    load_window_font(state, tw);
+    layout_panes(state, tw, true);
+}
+
 static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* parent_tab_window, const Preset* preset_override = nullptr) {
     TerminalWindow* tw = new TerminalWindow();
 
@@ -498,9 +538,8 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     enable_macos_window_vibrancy(tw->window, tw->vibrancy_enabled);
 #endif
 
-    float scale = SDL_GetWindowDisplayScale(tw->window);
-    if (scale <= 0.0f) scale = 1.0f;
-    state->display_scale = scale;
+    float scale = window_pixel_density(tw->window);
+    tw->display_scale = scale;
 
     if (typeface_path.empty()) {
         typeface_path = "/System/Library/Fonts/SFNSMono.ttf";
@@ -625,8 +664,8 @@ static void layout_pane_node(AppState* state, TerminalWindow* tw, PaneNode* node
         int rows = std::max(5, static_cast<int>((rect.h - 2 * state->padding) / tw->cell_h));
         // cell_w/cell_h are in points; the pty and the geometry reports both
         // want real pixels, so scale back up.
-        int cell_px_w = static_cast<int>(std::lround(tw->cell_w * state->display_scale));
-        int cell_px_h = static_cast<int>(std::lround(tw->cell_h * state->display_scale));
+        int cell_px_w = static_cast<int>(std::lround(tw->cell_w * tw->display_scale));
+        int cell_px_h = static_cast<int>(std::lround(tw->cell_h * tw->display_scale));
         pane->terminal.set_cell_pixel_size(cell_px_w, cell_px_h);
 
         // How many cells the display this window is on would hold, for the
@@ -947,12 +986,12 @@ static bool recreate_renderer_for_hdr_console(AppState* state, TerminalWindow* t
     tw->hue_shift.init(tw->renderer, want_linear_colorspace);
     tw->crt_shader.init(tw->renderer, want_linear_colorspace);
 
-    float font_size_px = state->base_font_size * state->display_scale;
+    float font_size_px = state->base_font_size * tw->display_scale;
     if (!tw->font_manager.load_font(tw->renderer, state->font_path, font_size_px, false)) {
         tw->font_manager.load_font(tw->renderer, "/System/Library/Fonts/Supplemental/Courier New.ttf", font_size_px, false);
     }
-    tw->cell_w = (tw->font_manager.get_cell_width() / state->display_scale) + 1.0f;
-    tw->cell_h = (tw->font_manager.get_cell_height() / state->display_scale) - 0.8f;
+    tw->cell_w = (tw->font_manager.get_cell_width() / tw->display_scale) + 1.0f;
+    tw->cell_h = (tw->font_manager.get_cell_height() / tw->display_scale) - 0.8f;
 
     if (had_video && !video_path_to_reopen.empty() && video_path_to_reopen != "None") {
         if (tw->video_engine.open_video(tw->renderer, video_path_to_reopen)) {
@@ -1003,9 +1042,9 @@ static void apply_preset_to_state_and_windows(AppState* state, const Preset& p) 
             }
         }
 
-        if (tw->font_manager.load_font(tw->renderer, state->font_path, state->base_font_size * state->display_scale, false)) {
-            tw->cell_w = (tw->font_manager.get_cell_width() / state->display_scale) + 1.0f;
-            tw->cell_h = (tw->font_manager.get_cell_height() / state->display_scale) - 0.8f;
+        if (tw->font_manager.load_font(tw->renderer, state->font_path, state->base_font_size * tw->display_scale, false)) {
+            tw->cell_w = (tw->font_manager.get_cell_width() / tw->display_scale) + 1.0f;
+            tw->cell_h = (tw->font_manager.get_cell_height() / tw->display_scale) - 0.8f;
 
             layout_panes(state, tw);
         }
@@ -1928,9 +1967,9 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             state->font_path = new_font_path;
 
             for (auto* tw : state->windows) {
-                if (tw->font_manager.load_font(tw->renderer, new_font_path, state->base_font_size * state->display_scale, false)) {
-                    tw->cell_w = (tw->font_manager.get_cell_width() / state->display_scale) + 1.0f;
-                    tw->cell_h = (tw->font_manager.get_cell_height() / state->display_scale) - 0.8f;
+                if (tw->font_manager.load_font(tw->renderer, new_font_path, state->base_font_size * tw->display_scale, false)) {
+                    tw->cell_w = (tw->font_manager.get_cell_width() / tw->display_scale) + 1.0f;
+                    tw->cell_h = (tw->font_manager.get_cell_height() / tw->display_scale) - 0.8f;
 
                     layout_panes(state, tw);
                 }
@@ -2420,6 +2459,8 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
 
     // Iterate all active windows
     for (auto* tw : state->windows) {
+        refresh_display_scale(state, tw);
+
         // Follow a resize in progress live (see has_pending_resize). Each
         // layout is timed, and the next waits twice as long as it took --
         // every frame while reflowing is cheap, which it is unless
@@ -2720,23 +2761,23 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             Pane& pane = *pane_ptr;
             std::lock_guard<std::mutex> lock(pane.grid_mutex);
             pane.terminal.set_enable_ligatures(state->ligatures_enabled);
-            float start_x = (pane.rect.x + state->padding) * state->display_scale;
-            float start_y = (pane.rect.y + state->padding) * state->display_scale;
+            float start_x = (pane.rect.x + state->padding) * tw->display_scale;
+            float start_y = (pane.rect.y + state->padding) * tw->display_scale;
 
             // Clip each pane so its margin fill and glyphs can't bleed
             // across the divider into a neighbor
             SDL_Rect clip = {
-                static_cast<int>(pane.rect.x * state->display_scale),
-                static_cast<int>(pane.rect.y * state->display_scale),
-                static_cast<int>(pane.rect.w * state->display_scale),
-                static_cast<int>(pane.rect.h * state->display_scale)
+                static_cast<int>(pane.rect.x * tw->display_scale),
+                static_cast<int>(pane.rect.y * tw->display_scale),
+                static_cast<int>(pane.rect.w * tw->display_scale),
+                static_cast<int>(pane.rect.h * tw->display_scale)
             };
             SDL_SetRenderClipRect(tw->renderer, &clip);
 
             if (tw->hdr_console_enabled) {
                 SDL_SetRenderColorScale(tw->renderer, kHdrConsoleTextBoost);
             }
-            pane.terminal.render(tw->renderer, tw->font_manager, start_x, start_y, state->display_scale, dt, tw->animated_typing);
+            pane.terminal.render(tw->renderer, tw->font_manager, start_x, start_y, tw->display_scale, dt, tw->animated_typing);
             if (tw->hdr_console_enabled) {
                 SDL_SetRenderColorScale(tw->renderer, 1.0f);
             }
@@ -2744,10 +2785,10 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             // Dim unfocused panes so the active one reads at a glance
             if (pane_ptr != tw->focused && !tw->root->is_leaf()) {
                 SDL_FRect dim = {
-                    pane.rect.x * state->display_scale,
-                    pane.rect.y * state->display_scale,
-                    pane.rect.w * state->display_scale,
-                    pane.rect.h * state->display_scale
+                    pane.rect.x * tw->display_scale,
+                    pane.rect.y * tw->display_scale,
+                    pane.rect.w * tw->display_scale,
+                    pane.rect.h * tw->display_scale
                 };
                 SDL_SetRenderDrawBlendMode(tw->renderer, SDL_BLENDMODE_BLEND);
                 SDL_SetRenderDrawColor(tw->renderer, 0, 0, 0, 64);
@@ -2758,7 +2799,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
 
         // Divider lines between panes
         if (!tw->root->is_leaf()) {
-            render_pane_dividers(tw, tw->root.get(), state->display_scale);
+            render_pane_dividers(tw, tw->root.get(), tw->display_scale);
         }
 
         // C. Composite with the CRT shader, or fall back to the plain
@@ -2766,7 +2807,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         if (use_crt_shader) {
             tw->crt_shader.end_scene(tw->renderer);
         } else if (tw->crt_mode_enabled) {
-            render_crt_effects(tw->renderer, draw_w, draw_h, state->display_scale);
+            render_crt_effects(tw->renderer, draw_w, draw_h, tw->display_scale);
         }
 
         // D. Draw Search Bar Drawer UI if open

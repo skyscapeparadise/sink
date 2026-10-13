@@ -146,6 +146,15 @@ struct TerminalWindow {
     float cell_w = 0.0f;
     float cell_h = 0.0f;
 
+    // Pixels per point of the display this window is on -- 2 on a Retina
+    // screen, 1 on most external ones. Layout works in points and rendering
+    // in pixels, so every point is multiplied by this on the way to the
+    // screen, and the font is rasterized at base size times this. Per window,
+    // because two windows can be on displays with different densities, and
+    // kept current (refresh_display_scale) because a window can move between
+    // them -- including by going full screen on another display.
+    float display_scale = 1.0f;
+
     // A resize in progress: a window edge being dragged, a zoom animation,
     // or a pane divider being dragged. The grids follow it live, throttled
     // by what reflowing costs -- see the layout step in SDL_AppIterate.
@@ -210,7 +219,6 @@ struct AppState {
     std::string active_preset_name = "pool";
     float padding = 2.0f;
     float base_font_size = 15.0f;
-    float display_scale = 1.0f;
     Uint64 last_tick = 0;
     bool input_broadcasting = false;
     // Set when a keypad press was already answered with an SS3 sequence, so
