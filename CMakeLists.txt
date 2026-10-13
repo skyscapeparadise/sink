@@ -109,6 +109,7 @@ set(SOURCES
     src/terminal_grid.cpp
     src/terminal_images.cpp
     src/pty_bridge.cpp
+    src/private_files.cpp
     src/prompt_editing.cpp
     src/ansi_parser.cpp
     src/video_engine.cpp
@@ -267,6 +268,7 @@ add_executable(pty_bench
     src/terminal_images.cpp
     src/font_manager.cpp
     src/pty_bridge.cpp
+    src/private_files.cpp
 )
 target_include_directories(pty_bench PRIVATE src)
 target_link_libraries(pty_bench PRIVATE

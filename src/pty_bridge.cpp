@@ -1,4 +1,5 @@
 #include "pty_bridge.hpp"
+#include "private_files.hpp"
 #include <iostream>
 #include <unistd.h>
 #include <sys/ioctl.h>
@@ -18,30 +19,6 @@
 
 namespace {
 
-// Writes one stub executable, replacing whatever is at `path`. Opened with
-// O_NOFOLLOW and O_EXCL after an unlink, so a symlink planted at the target
-// can never redirect the write somewhere else.
-bool write_stub(const std::string& path) {
-    ::unlink(path.c_str());
-    int fd = ::open(path.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0700);
-    if (fd < 0) return false;
-    static const char kBody[] = "#!/bin/sh\nexit 0\n";
-    const size_t len = sizeof(kBody) - 1;
-    size_t off = 0;
-    while (off < len) {
-        ssize_t n = ::write(fd, kBody + off, len - off);
-        if (n < 0) {
-            if (errno == EINTR) continue;
-            ::close(fd);
-            return false;
-        }
-        off += static_cast<size_t>(n);
-    }
-    bool ok = (::fchmod(fd, 0700) == 0);
-    ::close(fd);
-    return ok;
-}
-
 // The directory of stub executables for sink's built-in commands (sinkdemo,
 // sinksing), which spawn() prepends to the child shell's PATH.
 //
@@ -59,25 +36,13 @@ bool write_stub(const std::string& path) {
 // the result is reused by every later spawn.
 const std::string& stub_bin_dir() {
     static const std::string dir = [] () -> std::string {
-        const char* home = getenv("HOME");
-        if (!home || !*home) return {};
-        std::string base = std::string(home) + "/.config/sink";
-        ::mkdir((std::string(home) + "/.config").c_str(), 0755);
-        ::mkdir(base.c_str(), 0700);
-        std::string path = base + "/bin";
-        if (::mkdir(path.c_str(), 0700) != 0 && errno != EEXIST) return {};
-
-        // Vet what we ended up with rather than assuming mkdir made it. It may
-        // have already existed as something else entirely, and EEXIST above is
-        // deliberately tolerated so a second launch reuses the first's work.
-        struct stat st;
-        if (::lstat(path.c_str(), &st) != 0) return {};
-        if (!S_ISDIR(st.st_mode)) return {};           // a file, or a symlink to one
-        if (st.st_uid != ::getuid()) return {};        // someone else owns it
-        if (st.st_mode & (S_IWGRP | S_IWOTH)) return {}; // others can drop binaries in
-
-        if (!write_stub(path + "/sinkdemo")) return {};
-        if (!write_stub(path + "/sinksing")) return {};
+        std::string root = private_files::config_root();
+        if (root.empty()) return {};
+        std::string path = root + "/bin";
+        if (!private_files::ensure_dir(path)) return {};
+        static const char kStub[] = "#!/bin/sh\nexit 0\n";
+        if (!private_files::write_file(path + "/sinkdemo", kStub, 0700)) return {};
+        if (!private_files::write_file(path + "/sinksing", kStub, 0700)) return {};
         return path;
     }();
     return dir;
