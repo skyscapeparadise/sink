@@ -387,10 +387,18 @@ static void load_config(AppState* state) {
 // never happens on its own; without this the tab strip just overlaps the
 // first row of terminal content). Only ever *adds* to the tuned 32/34pt
 // base, so a single-tab window's already pixel-matched layout is untouched.
+//
+// Except in full screen, where there is no title bar to make room for: macOS
+// hides it and slides it down over the content only while the pointer is at
+// the top edge, as Terminal.app does. The base used to apply there too,
+// leaving a 34pt strip of background above the grid in every full-screen
+// window. In full screen the native inset is used alone -- normally 0, and
+// anything macOS does keep on screen, like a tab bar, still respected.
 static float get_top_offset_pts(TerminalWindow* tw) {
     float base = tw->vibrancy_enabled ? 32.0f : 34.0f;
 #if defined(__APPLE__)
     float native = get_native_content_top_inset(tw->window);
+    if (is_native_fullscreen(tw->window)) return std::max(0.0f, native);
     if (native > base) return native;
 #endif
     return base;

@@ -19,6 +19,10 @@ void add_window_as_tab(SDL_Window* parent_sdl_win, SDL_Window* child_sdl_win);
 // non-Apple build wouldn't call this at all).
 float get_native_content_top_inset(SDL_Window* sdl_win);
 
+// Whether the window is in macOS full screen (its own Space), however it got
+// there -- the green button, the menu, or the keyboard shortcut.
+bool is_native_fullscreen(SDL_Window* sdl_win);
+
 // Opens a URI via NSWorkspace (no shell involved -- terminal output is
 // attacker-controlled, e.g. `cat`'d files or a compromised remote SSH
 // session, so this must never go through system()/popen()). Only

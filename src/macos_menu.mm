@@ -707,6 +707,15 @@ void add_window_as_tab(SDL_Window* parent_sdl_win, SDL_Window* child_sdl_win) {
     }
 }
 
+bool is_native_fullscreen(SDL_Window* sdl_win) {
+    @autoreleasepool {
+        if (!sdl_win) return false;
+        SDL_PropertiesID props = SDL_GetWindowProperties(sdl_win);
+        NSWindow* nswin = (__bridge NSWindow*)SDL_GetPointerProperty(props, "SDL.window.cocoa.window", NULL);
+        return nswin && ([nswin styleMask] & NSWindowStyleMaskFullScreen) != 0;
+    }
+}
+
 float get_native_content_top_inset(SDL_Window* sdl_win) {
     @autoreleasepool {
         if (!sdl_win) return -1.0f;
