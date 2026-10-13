@@ -32,8 +32,6 @@ icon.psd
 releases/*
 !releases/package.sh
 !releases/sink.entitlements
-# Release notes, one file per release (v0.10-beta.md, ...).
-!releases/*.md
 
 # Rust build artifacts (bench/vte_bench)
 bench/vte_bench/target/
