@@ -1485,6 +1485,14 @@ void TerminalGrid::note_user_submit() {
     input_anchor_.valid = false;
     input_anchor_.frozen = false;
     input_anchor_.exact = false;
+    input_anchor_.line_length = -1;
+}
+
+void TerminalGrid::set_line_length(int chars) {
+    // Kept until the line is submitted, not reset when the shell re-sends
+    // its start-of-line mark: zsh reports the length just before a redraw,
+    // and a redraw of the whole prompt (Ctrl-L) sends the mark after it.
+    if (input_anchor_.valid && chars >= 0) input_anchor_.line_length = chars;
 }
 
 void TerminalGrid::mark_input_start() {

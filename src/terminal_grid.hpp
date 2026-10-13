@@ -387,6 +387,11 @@ public:
         // the edge rather than a column so it is still found after a resize.
         std::u32string right_prompt;
         int right_prompt_gap = 0;
+        // The command line's length in characters, when the shell reports it
+        // (OSC 6973, from sink's zsh integration); -1 when it hasn't. Clicks
+        // past it stop at the end of the line instead of stepping into text
+        // drawn after it -- an autosuggestion, which a step right accepts.
+        int line_length = -1;
     };
     const InputAnchor& input_anchor() const { return input_anchor_; }
     // Active-screen position of the input start. `row` is negative when it
@@ -397,6 +402,7 @@ public:
     void note_user_submit();      // the line was submitted or abandoned
     void mark_input_start();      // OSC 133;B
     void mark_command_output();   // OSC 133;C
+    void set_line_length(int chars);  // OSC 6973;L=n
 
     // Cells of an active row, or of a history row when `active_row` is
     // negative (-1 is the newest history line). Null past either end.

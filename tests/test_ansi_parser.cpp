@@ -2318,6 +2318,23 @@ static void test_shell_integration_plan() {
     CHECK(off.set.empty() && off.unset.empty());
 }
 
+// OSC 6973;L=n, the line length from the zsh integration: clicks past it stop
+// at the end of the line; malformed reports are ignored.
+static void test_line_length_report() {
+    TerminalGrid g; g.resize(40, 5);
+    ANSIParser p;
+    feed(p, g, "\x1b]133;B\x07" "echo hi --suggested text");
+    feed(p, g, "\x1b[8G");                        // cursor back to the end of "echo hi"
+    feed(p, g, "\x1b]6973;L=7\x07");
+    CHECK(g.input_anchor().line_length == 7);
+    // A click on the suggestion text goes no further than the line's end.
+    CHECK(prompt_edit::click_payload(g, 0, 30).empty());
+    feed(p, g, "\x1b]6973;L=x\x07\x1b]6973;7\x07\x1b]6973;L=99999999999\x07");
+    CHECK(g.input_anchor().line_length == 7);
+    g.note_user_submit();
+    CHECK(g.input_anchor().line_length == -1);
+}
+
 // ED 0 and ED 1 (CSI J, CSI 1 J): erase below and above the cursor.
 static void test_erase_in_display() {
     {
@@ -2460,6 +2477,7 @@ int main() {
     test_demo_commands();
     test_shell_integration_install();
     test_shell_integration_plan();
+    test_line_length_report();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;

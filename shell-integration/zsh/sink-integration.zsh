@@ -8,6 +8,9 @@
 #   OSC 133;B      the command line starts here: mouse editing
 #   OSC 133;C      the command is running: that line is finished
 #   OSC 7          the current directory: new tabs and splits start there
+#   OSC 6973;L=n   the command line is n characters long, so a click past its
+#                  end can't step into text that isn't part of it -- an
+#                  autosuggestion, which a step to the right would accept
 #
 # Nothing here changes how the shell behaves. To turn it off, put
 #   shell_integration = false
@@ -31,6 +34,7 @@ _sink_first_prompt() {
     if is-at-least 5.3; then
         builtin autoload -Uz add-zle-hook-widget
         add-zle-hook-widget line-init _sink_line_init
+        add-zle-hook-widget line-pre-redraw _sink_line_pre_redraw
     fi
     _sink_precmd
     return ret
@@ -76,6 +80,10 @@ _sink_line_init() {
         builtin print -rn -- $'\e]133;A\a'
     fi
     builtin print -rn -- $'\e]133;B\a'
+}
+
+_sink_line_pre_redraw() {
+    builtin print -rn -- $'\e]6973;L='"${#BUFFER}"$'\a'
 }
 
 # file://host/path, with the path percent-encoded byte by byte.

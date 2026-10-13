@@ -59,6 +59,9 @@ bool row_blank(const TerminalGrid& g, int row) {
     return true;
 }
 
+int index_at(const TerminalGrid& g, const Region& R, int row, int col);
+bool soft_wrapped(const TerminalGrid& g, const Region& R, int row);
+
 // Finds the line being edited: from the input start down through the cursor,
 // and on through any rows directly below it that still hold text -- the
 // cursor can be partway up a multi-line command.
@@ -84,6 +87,23 @@ bool find_region(const TerminalGrid& g, Region& R) {
         ++end;
     }
     R.end_row = end;
+
+    // When the shell has said how long the line is, where it ends needn't be
+    // guessed from the screen: it is the row holding that position. Text
+    // drawn after the line -- an autosuggestion -- otherwise looks like more
+    // of it, and when it reached the edge, the blank row below was taken in
+    // too. A line ending exactly at the edge of a wrapping row ends at the
+    // start of the next.
+    const int length = g.input_anchor().line_length;
+    if (length >= 0) {
+        for (int r = R.start_row; r < R.end_row; ++r) {
+            int end_of_row = index_at(g, R, r, R.cols);
+            if (end_of_row > length || (end_of_row == length && !soft_wrapped(g, R, r))) {
+                R.end_row = std::max(r, R.cursor_row);
+                break;
+            }
+        }
+    }
     return true;
 }
 
@@ -200,6 +220,12 @@ std::string click_payload(const TerminalGrid& grid, int row, int col) {
 
     int target = index_at(grid, R, row, col);
     int cursor = index_at(grid, R, R.cursor_row, R.cursor_col);
+    // The screen can't tell a line's own text from text drawn after it -- an
+    // autosuggestion looks like more of the line. When the shell has said how
+    // long the line really is, a click past that stops at its end: one step
+    // further right is what accepts a suggestion.
+    const int length = grid.input_anchor().line_length;
+    if (length >= 0) target = std::min(target, length);
     return arrows(target - cursor, grid.is_app_cursor_keys());
 }
 
@@ -217,8 +243,10 @@ bool delete_selection_payload(const TerminalGrid& grid, std::string& out) {
 
     int a = index_at(grid, R, r0, c0);
     int b = index_at(grid, R, r1, c1);  // inclusive
-    // Past the end of the last row there is nothing to delete.
+    // Past the end of the last row there is nothing to delete -- nor past the
+    // length the shell reported, if it has.
     int line_end = index_at(grid, R, R.end_row, R.cols);
+    if (grid.input_anchor().line_length >= 0) line_end = std::min(line_end, grid.input_anchor().line_length);
     b = std::min(b, line_end - 1);
 
     out.clear();

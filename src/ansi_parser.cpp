@@ -1090,6 +1090,21 @@ void ANSIParser::dispatch_osc(TerminalGrid& grid) {
                 else if (pt[0] == 'C') grid.mark_command_output();
             }
             break;
+        case 6973: {
+            // sink's own: "L=<n>", the command line's length in characters,
+            // from the zsh integration (shell-integration/zsh). Anything can
+            // send it, so all it can do is make clicks stop short of text
+            // past that length -- bounded, and only while a line is edited.
+            if (pt.size() > 2 && pt.compare(0, 2, "L=") == 0 && pt.size() <= 10) {
+                int n = 0;
+                for (size_t k = 2; k < pt.size(); ++k) {
+                    if (pt[k] < '0' || pt[k] > '9') { n = -1; break; }
+                    n = n * 10 + (pt[k] - '0');
+                }
+                if (n >= 0) grid.set_line_length(n);
+            }
+            break;
+        }
         default:
             break;
     }

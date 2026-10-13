@@ -916,6 +916,24 @@ std::vector<Named> integration_scenarios() {
         }, [](bool bash) -> std::string {
             return bash ? "PROMPT_COMMAND='true'\n" : "";
         }},
+        { "clicks don't accept an autosuggestion", [](Session& s) {
+            if (s.is_bash()) return;  // a zsh plugin; bash has no equivalent
+            s.type("echo hello world");
+            sweep(s, "clicks don't accept an autosuggestion", kPrompt);
+        }, [](bool bash) -> std::string {
+            if (bash) return "";
+            // zsh-autosuggestions in miniature: grey text after the line
+            // (POSTDISPLAY), accepted by a step right from the line's end.
+            return "_fake_suggest() { if [[ -n $BUFFER ]]; then POSTDISPLAY=' --and-a-suggestion'; else POSTDISPLAY=; fi }\n"
+                   "autoload -Uz add-zle-hook-widget\n"
+                   "add-zle-hook-widget line-pre-redraw _fake_suggest\n"
+                   "_fake_forward_char() {\n"
+                   "  if (( CURSOR == ${#BUFFER} )) && [[ -n $POSTDISPLAY ]]; then\n"
+                   "    BUFFER+=$POSTDISPLAY; POSTDISPLAY=; CURSOR=${#BUFFER}\n"
+                   "  else zle .forward-char; fi\n"
+                   "}\n"
+                   "zle -N forward-char _fake_forward_char\n";
+        }},
     };
 }
 
