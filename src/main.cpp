@@ -1745,13 +1745,18 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             // on the line it is delete-char in zsh and readline, an edit like
             // any other, and treating it as the end would let the next pause
             // in output re-anchor the line mid-command.
+            //
+            // The submitted line's text is kept: the built-in commands below
+            // check it, and once the line is submitted the grid no longer
+            // knows where it was.
+            std::string submitted_line;
             if (!is_modifier_key(sym) && !(mod & SDL_KMOD_GUI)) {
                 bool ctrl = (mod & SDL_KMOD_CTRL) != 0;
                 bool submit = sym == SDLK_RETURN || sym == SDLK_KP_ENTER ||
                               (ctrl && sym == SDLK_C) ||
                               (ctrl && sym == SDLK_D &&
                                prompt_edit::current_line_text(tw->fpane().terminal).empty());
-                if (submit) tw->fpane().terminal.note_user_submit();
+                if (submit) submitted_line = prompt_edit::submit_line(tw->fpane().terminal);
                 else        tw->fpane().terminal.note_user_edit();
             }
             if ((mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) && sym == SDLK_X) {
@@ -1792,7 +1797,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             }
 
             if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) {
-                std::string typed_line = prompt_edit::current_line_text(tw->fpane().terminal);
+                const std::string& typed_line = submitted_line;
                 
                 if (SinkDemo::is_demo_command(typed_line) && !SinkDemo::is_demo_running(tw)) {
                     const char cancel_cmd[] = "\x15\x03";

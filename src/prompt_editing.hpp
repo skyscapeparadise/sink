@@ -39,4 +39,11 @@ bool delete_selection_payload(const TerminalGrid& grid, std::string& out);
 // newlines in it. Empty when there is no line being edited.
 std::string current_line_text(const TerminalGrid& grid);
 
+// Ends the line being edited (TerminalGrid::note_user_submit) and returns its
+// text as it was. In that order on purpose: once submitted, where the line
+// was is forgotten, so asking for its text afterwards gets nothing -- which is
+// how the built-in commands (sinkdemo, sinksing) stopped being recognised when
+// Enter marked the line submitted before main.cpp looked at it.
+std::string submit_line(TerminalGrid& grid);
+
 } // namespace prompt_edit

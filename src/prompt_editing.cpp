@@ -284,4 +284,10 @@ std::string current_line_text(const TerminalGrid& grid) {
     return (last == std::string::npos) ? std::string() : text.substr(0, last + 1);
 }
 
+std::string submit_line(TerminalGrid& grid) {
+    std::string text = current_line_text(grid);
+    grid.note_user_submit();
+    return text;
+}
+
 } // namespace prompt_edit

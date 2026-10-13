@@ -2335,6 +2335,21 @@ static void test_line_length_report() {
     CHECK(g.input_anchor().line_length == -1);
 }
 
+// Enter: the line's text is read before the line is marked submitted. The
+// other way round, the text came back empty, and sinkdemo/sinksing were never
+// recognised -- Enter just ran the stub commands.
+static void test_submit_line() {
+    TerminalGrid g; g.resize(40, 5);
+    ANSIParser p;
+    feed(p, g, "kady@Aquarius sink % ");
+    g.note_output_idle();
+    g.note_user_edit();
+    feed(p, g, "sinkdemo");
+    CHECK(prompt_edit::submit_line(g) == "sinkdemo");
+    CHECK(SinkDemo::is_demo_command("sinkdemo"));
+    CHECK(prompt_edit::current_line_text(g).empty());   // submitted: forgotten
+}
+
 // ED 0 and ED 1 (CSI J, CSI 1 J): erase below and above the cursor.
 static void test_erase_in_display() {
     {
@@ -2475,6 +2490,7 @@ int main() {
     test_kitty_png_only();
     test_huge_motion_counts();
     test_demo_commands();
+    test_submit_line();
     test_shell_integration_install();
     test_shell_integration_plan();
     test_line_length_report();
