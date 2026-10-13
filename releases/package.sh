@@ -46,12 +46,34 @@ mkdir -p "${RESOURCES_DIR}"
 echo "  copying binary..."
 cp build/sink "${MACOS_DIR}/${APP_NAME}"
 
-echo "  copying app icon..."
-if [ -f "icon.icns" ]; then
-    cp icon.icns "${RESOURCES_DIR}/icon.icns"
-else
-    echo "  warning: icon.icns not found! app bundle will use default fallback icon."
+# The app icon, from sink.icon -- an Icon Composer document, layered artwork
+# with Liquid Glass and separate light, dark and tinted appearances. It is
+# compiled, not copied: actool turns it into Assets.car, which macOS 26 draws
+# natively, plus a flattened sink.icns for anything that only reads classic
+# icons. Info.plist names both (CFBundleIconName, CFBundleIconFile).
+#
+# No fallback to the old icon.icns: a release that quietly shipped the
+# previous branding would be worse than a packaging run that stops.
+echo "  compiling app icon (sink.icon)..."
+if [ ! -d "sink.icon" ]; then
+    echo "  ERROR: sink.icon not found" >&2
+    exit 1
 fi
+ICON_WORK="$(mktemp -d)"
+if ! xcrun actool sink.icon --compile "${RESOURCES_DIR}" \
+        --output-format human-readable-text --errors --warnings \
+        --output-partial-info-plist "${ICON_WORK}/icon.plist" \
+        --app-icon sink --include-all-app-icons \
+        --enable-on-demand-resources NO --development-region en \
+        --target-device mac --platform macosx \
+        --minimum-deployment-target "${MACOSX_DEPLOYMENT_TARGET}" > "${ICON_WORK}/actool.log" 2>&1 \
+   || [ ! -f "${RESOURCES_DIR}/Assets.car" ] || [ ! -f "${RESOURCES_DIR}/sink.icns" ]; then
+    echo "  ERROR: actool could not compile sink.icon (needs Xcode 26 or later):" >&2
+    cat "${ICON_WORK}/actool.log" >&2
+    rm -rf "${ICON_WORK}"
+    exit 1
+fi
+rm -rf "${ICON_WORK}"
 
 echo "  copying background video..."
 if [ -f "sinkpool.mp4" ]; then
@@ -290,7 +312,9 @@ cat <<EOF > "${CONTENTS_DIR}/Info.plist"
     <key>CFBundleExecutable</key>
     <string>${APP_NAME}</string>
     <key>CFBundleIconFile</key>
-    <string>icon.icns</string>
+    <string>sink</string>
+    <key>CFBundleIconName</key>
+    <string>sink</string>
     <key>CFBundleIdentifier</key>
     <string>com.rainmultimedia.${APP_NAME}</string>
     <key>CFBundleInfoDictionaryVersion</key>
@@ -305,6 +329,8 @@ cat <<EOF > "${CONTENTS_DIR}/Info.plist"
     <string>????</string>
     <key>CFBundleVersion</key>
     <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>${MACOSX_DEPLOYMENT_TARGET}</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSHumanReadableCopyright</key>
