@@ -111,12 +111,16 @@ fi
 echo "  copying third-party license texts..."
 LICENSE_DIR="${RESOURCES_DIR}/licenses"
 mkdir -p "${LICENSE_DIR}"
+# A missing license stops the build: shipping a library or font without the
+# license text it requires isn't allowed, and a warning scrolls past unread --
+# which is how the fonts' licenses went missing until 0.10.
 copy_license() {
     src="$1"; dst="$2"
     if [ -f "${src}" ]; then
         cp "${src}" "${LICENSE_DIR}/${dst}"
     else
-        echo "  warning: license text not found: ${src}"
+        echo "  ERROR: license text not found: ${src}" >&2
+        exit 1
     fi
 }
 copy_license "vendor/ffmpeg/COPYING.LGPLv2.1"   "FFmpeg-COPYING.LGPLv2.1"
@@ -127,6 +131,10 @@ copy_license "vendor/sdl3_image/LICENSE.txt"    "SDL3_image-LICENSE.txt"
 copy_license "/opt/homebrew/opt/sdl3/LICENSE.txt"     "SDL3-LICENSE.txt"
 copy_license "/opt/homebrew/opt/freetype/LICENSE.TXT" "FreeType-LICENSE.txt"
 copy_license "/opt/homebrew/opt/libpng/LICENSE"       "libpng-LICENSE"
+# The bundled fonts are under the SIL Open Font License, which requires its
+# text to travel with them.
+copy_license "fonts/MonaspaceNeon-OFL.txt"           "MonaspaceNeon-OFL.txt"
+copy_license "fonts/MonaSans-OFL.txt"                "MonaSans-OFL.txt"
 
 # 4. Bundle third-party dylibs into the app
 #
