@@ -1,0 +1,47 @@
+# Builds sink and runs the quick tests on every push to main and every pull
+# request. The integration tests (real shells and tmux, timing-dependent) are
+# left out, the same way `ctest -LE integration` leaves them out locally.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch makes an in-progress run pointless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # macOS 26 on Apple silicon, matching what sink supports. Xcode 26 is
+    # preinstalled.
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: brew install cmake pkg-config sdl3 freetype
+
+      # The vendored FFmpeg, SDL3_image and text stack take a while to build.
+      # Each build script stamps its output with its own hash and rebuilds when
+      # that changes, so keying the cache on the scripts keeps the two in step.
+      - name: Cache vendored dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            vendor/ffmpeg
+            vendor/sdl3_image
+            vendor/textstack
+            vendor/.cache
+          key: vendor-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vendor/build_*.sh') }}
+          restore-keys: vendor-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build
+        run: ./build.sh
+
+      - name: Test
+        run: ctest --test-dir build -LE integration --output-on-failure
