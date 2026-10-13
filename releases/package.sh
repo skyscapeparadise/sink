@@ -76,9 +76,13 @@ fi
 rm -rf "${ICON_WORK}"
 
 echo "  copying background video..."
-if [ -f "sinkpool.mp4" ]; then
-    cp sinkpool.mp4 "${RESOURCES_DIR}/sinkpool.mp4"
+# Required, not skipped when missing: it is the default background, and
+# skipping it would quietly ship an app without one.
+if [ ! -f "backgrounds/sinkpool.mp4" ]; then
+    echo "  ERROR: backgrounds/sinkpool.mp4 is missing" >&2
+    exit 1
 fi
+cp backgrounds/sinkpool.mp4 "${RESOURCES_DIR}/sinkpool.mp4"
 
 echo "  copying default monaspace neon font..."
 if [ -f "fonts/MonaspaceNeon-Regular.otf" ]; then

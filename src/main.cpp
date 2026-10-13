@@ -258,8 +258,8 @@ static std::string resolve_default_video_path() {
     
     // Check fallback locations
     const char* fallbacks[] = {
-        "sinkpool.mp4",
-        "../sinkpool.mp4"
+        "backgrounds/sinkpool.mp4",
+        "../backgrounds/sinkpool.mp4"
     };
     for (const char* fb : fallbacks) {
         FILE* f_fb = fopen(fb, "r");
