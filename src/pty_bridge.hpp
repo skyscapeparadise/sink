@@ -35,7 +35,12 @@ public:
 
     bool is_running() const { return running_; }
 
+    // Whether shells start with sink's shell integration (shell_integration.hpp).
+    // Set from the config before spawning; applies to shells started after.
+    static void set_shell_integration_enabled(bool enabled) { shell_integration_enabled_ = enabled; }
+
 private:
+    static bool shell_integration_enabled_;
     int master_fd_ = -1;
     pid_t child_pid_ = -1;
     std::atomic<bool> running_{false};

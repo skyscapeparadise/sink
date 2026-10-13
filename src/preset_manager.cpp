@@ -369,4 +369,8 @@ void set_active_preset_name(const std::string& name) {
     save_document(doc);
 }
 
+bool shell_integration_enabled() {
+    return load_document()["shell_integration"].value_or(true);
+}
+
 } // namespace presets

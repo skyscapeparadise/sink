@@ -1,5 +1,6 @@
 #include "pty_bridge.hpp"
 #include "private_files.hpp"
+#include "shell_integration.hpp"
 #include <iostream>
 #include <unistd.h>
 #include <sys/ioctl.h>
@@ -8,6 +9,7 @@
 #include <signal.h>
 #include <poll.h>
 #include <chrono>
+#include <vector>
 #include <sys/stat.h>
 #include <cerrno>
 
@@ -48,7 +50,17 @@ const std::string& stub_bin_dir() {
     return dir;
 }
 
+// The installed shell integration (see shell_integration.hpp), or empty if it
+// couldn't be installed safely, in which case shells start without it.
+// Computed once per run, so every shell gets the scripts this build carries.
+const std::string& integration_dir() {
+    static const std::string dir = shell_integration::install(private_files::config_root());
+    return dir;
+}
+
 } // namespace
+
+bool PTYBridge::shell_integration_enabled_ = true;
 
 PTYBridge::PTYBridge() {}
 
@@ -67,6 +79,17 @@ bool PTYBridge::spawn(int cols, int rows, const std::string& cwd) {
     // neither of which is safe to do between fork() and exec() in a process
     // that has other threads running (sink's reader threads do).
     const std::string& stub_bin = stub_bin_dir();
+
+    // The shell and how to start it. Also before the fork, for the same
+    // reason: installing the integration scripts writes files.
+    const char* shell_env = getenv("SHELL");
+#if defined(__APPLE__)
+    const std::string shell = shell_env ? shell_env : "/bin/zsh";
+#else
+    const std::string shell = shell_env ? shell_env : "/bin/bash";
+#endif
+    const shell_integration::Launch launch =
+        shell_integration::plan(shell, shell_integration_enabled_ ? integration_dir() : std::string());
 
     running_ = true;
     child_pid_ = forkpty(&master_fd_, nullptr, nullptr, &ws);
@@ -130,19 +153,15 @@ bool PTYBridge::spawn(int cols, int rows, const std::string& cwd) {
         setenv("TERM_PROGRAM", "sink", 1);
         setenv("TERM_PROGRAM_VERSION", SINK_VERSION, 1);
 
-        // Determine user shell
-        const char* shell = getenv("SHELL");
-        if (!shell) {
-#if defined(__APPLE__)
-            shell = "/bin/zsh";
-#else
-            shell = "/bin/bash";
-#endif
-        }
+        // The login shell, with shell integration if it applies -- worked out
+        // before the fork (see launch above); only applied here.
+        for (const auto& kv : launch.set) setenv(kv.first.c_str(), kv.second.c_str(), 1);
+        for (const auto& key : launch.unset) unsetenv(key.c_str());
+        std::vector<char*> argv;
+        for (const std::string& arg : launch.argv) argv.push_back(const_cast<char*>(arg.c_str()));
+        argv.push_back(nullptr);
+        execv(argv[0], argv.data());
 
-        // Replace process with a login shell
-        execl(shell, shell, "-l", (char*)nullptr);
-        
         // Fallback to basic /bin/sh
         execl("/bin/sh", "/bin/sh", (char*)nullptr);
         _exit(1);

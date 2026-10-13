@@ -21,6 +21,7 @@
 
 #include "ansi_parser.hpp"
 #include "prompt_editing.hpp"
+#include "shell_integration.hpp"
 #include "terminal_grid.hpp"
 
 #include <algorithm>
@@ -46,6 +47,10 @@
 namespace {
 
 bool g_verbose = false;
+// Start shells the way sink does by default: through shell_integration's
+// install() and plan(), with HOME pointing at a scratch folder of test
+// dotfiles. Never the real home folder.
+bool g_integration = false;
 
 using Clock = std::chrono::steady_clock;
 
@@ -116,11 +121,39 @@ public:
 
         std::string rc;
         std::vector<std::string> argv;
+        shell_integration::Launch launch;
+        if (g_integration) {
+            // HOME is this scratch folder, holding test dotfiles that each log
+            // that they ran; the integration installs into a config folder
+            // inside it. Startup then has to match what the shell does
+            // without sink: each file once, in order, ZDOTDIR or ENV restored.
+            std::string config = dir_ + "/config";
+            ::mkdir(config.c_str(), 0700);
+            std::string installed = shell_integration::install(config);
+            const char* path = shell == "zsh" ? "/bin/zsh"
+                             : shell == "bash32" ? "/bin/bash" : "/opt/homebrew/bin/bash";
+            launch = shell_integration::plan(path, installed);
+            if (installed.empty()) std::printf("  shell integration failed to install\n");
+        }
+        if (shell == "zsh" && g_integration) {
+            write_file(dir_ + "/.zshenv", "print -rn -- 'zshenv ' >> $HOME/startup.log\n");
+            write_file(dir_ + "/.zprofile", "print -rn -- 'zprofile ' >> $HOME/startup.log\n");
+            write_file(dir_ + "/.zlogin", "print -rn -- 'zlogin ' >> $HOME/startup.log\n");
+        } else if (g_integration) {
+            write_file(dir_ + "/.bash_profile",
+                "printf 'bash_profile ' >> ~/startup.log\n"
+                "source ~/.bashrc\n");
+        }
         if (shell == "zsh") {
             write_file(dir_ + "/.zshrc",
+                std::string(g_integration
+                    ? "print -rn -- \"zshrc[zdotdir=${ZDOTDIR-unset},dir=${SINK_SHELL_INTEGRATION_DIR-none},orig=${SINK_ZSH_ZDOTDIR-none}] \" >> $HOME/startup.log\n"
+                    : "") +
                 "PS1='ps1> '\n"
                 "RPROMPT=''\n"
-                "HISTFILE=$ZDOTDIR/hist; HISTSIZE=100; SAVEHIST=0\n"
+                // Inside the scratch folder in both modes: ZDOTDIR is it in
+                // plain mode, HOME in integration mode.
+                "HISTFILE=${ZDOTDIR:-$HOME}/hist; HISTSIZE=100; SAVEHIST=0\n"
                 "unsetopt BEEP\n"
                 "zmodload -F zsh/files b:zf_mv\n"
                 "typeset -gi _sink_n=0\n"
@@ -132,10 +165,16 @@ public:
                 "}\n"
                 "zle -N _sink_report\n"
                 "bindkey '^[[24~' _sink_report\n" + extra_rc);
-            argv = { "/bin/zsh", "-i" };
+            argv = g_integration ? launch.argv : std::vector<std::string>{ "/bin/zsh", "-i" };
         } else {
-            write_file(dir_ + "/bashrc",
+            write_file(dir_ + (g_integration ? "/.bashrc" : "/bashrc"),
+                std::string(g_integration
+                    ? "printf 'bashrc[login=%s,posix=%s] ' \"$(shopt -q login_shell && echo yes || echo no)\" "
+                      "\"$(shopt -qo posix && echo on || echo off)\" >> ~/startup.log\n"
+                    : "") +
                 "PS1='ps1> '\n"
+                // Never save history: in plain mode HOME is the real one.
+                "unset HISTFILE\n"
                 "bind 'set bell-style none'\n"
                 "_sink_n=0\n"
                 // No mv: bash has no builtin for it, and a fork per report
@@ -145,7 +184,8 @@ public:
                 "_sink_report() { ((_sink_n++)); printf '%s\\n%s\\n%s\\n\\x1fEND' \"$_sink_n\" "
                 "\"$READLINE_POINT\" \"$READLINE_LINE\" > \"$SINK_REPORT\"; }\n"
                 "bind -x '\"\\e[24~\": _sink_report'\n" + extra_rc);
-            argv = { "/opt/homebrew/bin/bash", "--noprofile", "--rcfile", dir_ + "/bashrc", "-i" };
+            argv = g_integration ? launch.argv
+                 : std::vector<std::string>{ "/opt/homebrew/bin/bash", "--noprofile", "--rcfile", dir_ + "/bashrc", "-i" };
             bash_ = true;
         }
 
@@ -159,9 +199,15 @@ public:
             setenv("TERM_PROGRAM", "sink", 1);
             setenv("LANG", "en_US.UTF-8", 1);
             setenv("LC_ALL", "en_US.UTF-8", 1);
-            setenv("ZDOTDIR", dir_.c_str(), 1);
             setenv("SINK_REPORT", report_path_.c_str(), 1);
             unsetenv("PROMPT_COMMAND");
+            if (g_integration) {
+                setenv("HOME", dir_.c_str(), 1);
+                for (const auto& kv : launch.set) setenv(kv.first.c_str(), kv.second.c_str(), 1);
+                for (const auto& key : launch.unset) unsetenv(key.c_str());
+            } else {
+                setenv("ZDOTDIR", dir_.c_str(), 1);
+            }
             std::vector<char*> args;
             for (auto& a : argv) args.push_back(const_cast<char*>(a.c_str()));
             args.push_back(nullptr);
@@ -184,6 +230,17 @@ public:
 
     TerminalGrid& grid() { return grid_; }
     bool is_bash() const { return bash_; }
+    const std::string& home() const { return dir_; }
+    std::string read_home_file(const std::string& name) {
+        std::string text;
+        read_file(dir_ + "/" + name, text);
+        return text;
+    }
+    std::string startup_log() {
+        std::string text;
+        read_file(dir_ + "/startup.log", text);
+        return text;
+    }
     int cols() const { return cols_; }
     int rows() const { return rows_; }
 
@@ -765,7 +822,102 @@ void survives_resizes(Session& s, const char* name, const std::vector<std::strin
 // --- scenarios ---------------------------------------------------------------
 
 using Scenario = std::function<void(Session&)>;
-struct Named { const char* name; Scenario run; };
+// `rc` adds lines to the shell's startup file for that scenario alone.
+struct Named {
+    const char* name;
+    Scenario run;
+    std::function<std::string(bool bash)> rc = nullptr;
+};
+
+// A check that isn't a click sweep, counted in the totals like one.
+void verdict(const char* name, bool ok, const std::string& detail) {
+    ++g_totals.clicks;
+    ++g_totals.scenarios;
+    if (ok) {
+        std::printf("  [%s] ok\n", name);
+    } else {
+        ++g_totals.failed;
+        std::printf("  [%s] FAILED: %s\n", name, detail.c_str());
+    }
+}
+
+// What only shell integration makes possible, run with --integration.
+std::vector<Named> integration_scenarios() {
+    return {
+        { "startup files load as they would without sink", [](Session& s) {
+            // Each test dotfile logs when it runs. zsh: ZDOTDIR back as it was
+            // (unset here) and sink's own variables gone before any of the
+            // user's files ran. bash: a real login shell, never POSIX mode.
+            std::string want = s.is_bash()
+                ? "bash_profile bashrc[login=yes,posix=off] "
+                : "zshenv zprofile zshrc[zdotdir=unset,dir=none,orig=none] zlogin ";
+            std::string got = s.startup_log();
+            verdict("startup files load as they would without sink", got == want,
+                    "log \"" + got + "\", want \"" + want + "\"");
+            verdict("the shell reports where the command line starts",
+                    s.grid().input_anchor().exact, "no OSC 133;B seen");
+        }},
+        { "nothing passed on to programs the shell starts", [](Session& s) {
+            // The integration's loader and bookkeeping must not reach child
+            // processes: a nested shell would load it again, and nothing else
+            // has any business seeing it.
+            s.type("env | grep -c -e '^PROMPT_COMMAND=' -e '^SINK_BASH_INTEGRATION=' "
+                   "-e '^SINK_SHELL_INTEGRATION_DIR=' -e '^SINK_ZSH_ZDOTDIR=' -e '^ZDOTDIR=' > ~/leaked");
+            s.enter();
+            s.settle(150, 1500);
+            std::string leaked = s.read_home_file("leaked");
+            while (!leaked.empty() && (leaked.back() == '\n' || leaked.back() == ' ')) leaked.pop_back();
+            verdict("nothing passed on to programs the shell starts", leaked == "0",
+                    "variables found in a child's environment: " + leaked);
+        }},
+        { "working directory reported", [](Session& s) {
+            s.type("cd ~ && mkdir -p 'dir with space/é' && cd 'dir with space/é'");
+            s.enter();
+            s.settle(150, 1500);
+            std::string want = s.home() + "/dir with space/é";
+            std::string got = s.grid().get_working_directory();
+            verdict("working directory reported", got == want, "got \"" + got + "\"");
+        }},
+        { "typed ahead of the prompt", [](Session& s) {
+            // Typed while the last command still runs, so it reaches the
+            // shell before its prompt does -- the case sink can only guess at
+            // without integration, and now knows exactly.
+            s.type("sleep 0.4");
+            s.key("\r");
+            s.type("echo typed while the last command ran");
+            sweep(s, "typed ahead of the prompt", kPrompt);
+        }},
+        { "a theme that rebuilds the prompt", [](Session& s) {
+            s.type("echo first");
+            s.enter();
+            s.paste("for i in 1 2\ndo\n  echo $i\ndone");
+            s.report();   // everything the shell sent so far, processed
+            verdict("a theme that rebuilds the prompt keeps the marks",
+                    s.grid().input_anchor().exact, "no OSC 133;B on the rebuilt prompt");
+            sweep(s, "a theme that rebuilds the prompt", kPrompt);
+        }, [](bool bash) -> std::string {
+            // As prompt themes do: PS1 rebuilt in a hook before every prompt.
+            // bash themes (starship, oh-my-bash) add theirs to whatever
+            // PROMPT_COMMAND already holds rather than replacing it.
+            return bash ? "_theme() { PS1='ps1> '; }\n"
+                          "PROMPT_COMMAND=\"${PROMPT_COMMAND:+$PROMPT_COMMAND;}_theme\"\n"
+                        : "precmd() { PS1='ps1> ' }\n";
+        }},
+        { "startup files that replace PROMPT_COMMAND", [](Session& s) {
+            if (!s.is_bash()) return;
+            // The one way the bash integration can be lost: a startup file
+            // that sets PROMPT_COMMAND outright, discarding the loader. The
+            // shell must then just run as it would without sink -- no marks,
+            // and clicks still working from sink's own reading of the screen.
+            verdict("replacing PROMPT_COMMAND leaves the integration off",
+                    !s.grid().input_anchor().exact, "a start-of-line mark arrived anyway");
+            s.paste("echo one\necho two that is a fair bit longer than one");
+            sweep(s, "startup files that replace PROMPT_COMMAND", kPrompt);
+        }, [](bool bash) -> std::string {
+            return bash ? "PROMPT_COMMAND='true'\n" : "";
+        }},
+    };
+}
 
 std::vector<Named> scenarios() {
     return {
@@ -1008,18 +1160,42 @@ int main(int argc, char** argv) {
         if (a == "--verbose") g_verbose = true;
         else if (a == "--only" && i + 1 < argc) only = argv[++i];
         else if (a == "--shell" && i + 1 < argc) shell = argv[++i];
+        else if (a == "--integration") g_integration = true;
+    }
+    // shell_integration::plan() reads these from this process's environment;
+    // whatever launched the test must not leak into the shells it starts.
+    for (const char* var : { "ZDOTDIR", "PROMPT_COMMAND", "SINK_ZSH_ZDOTDIR",
+                             "SINK_BASH_INTEGRATION", "SINK_SHELL_INTEGRATION_DIR" }) {
+        unsetenv(var);
     }
     if (shell == "bash" && access("/opt/homebrew/bin/bash", X_OK) != 0) {
         std::printf("bash 4+ not found at /opt/homebrew/bin/bash; skipping\n");
         return 0;
     }
 
-    std::printf("prompt editing, %s\n", shell.c_str());
-    for (const Named& sc : scenarios()) {
+    std::printf("prompt editing, %s%s\n", shell.c_str(), g_integration ? ", with shell integration" : "");
+    std::vector<Named> all = scenarios();
+    if (g_integration) {
+        for (Named& n : integration_scenarios()) all.push_back(n);
+    }
+    for (const Named& sc : all) {
         if (!only.empty() && only != sc.name) continue;
         // A fresh shell per scenario, so one can't leave state for the next.
-        Session s(shell, 40, 16);
+        Session s(shell, 40, 16, sc.rc ? sc.rc(shell == "bash") : std::string());
         sc.run(s);
+    }
+
+    // macOS's own bash is 3.2, too old to report its cursor (READLINE_POINT),
+    // so it can't be swept -- but it is what $SHELL=/bin/bash users get, so
+    // its startup has to come out right too.
+    if (g_integration && shell == "bash" && (only.empty() || only == "bash 3.2") && access("/bin/bash", X_OK) == 0) {
+        Session s("bash32", 40, 16);
+        std::string want = "bash_profile bashrc[login=yes,posix=off] ";
+        std::string got = s.startup_log();
+        verdict("bash 3.2: startup files load as they would without sink", got == want,
+                "log \"" + got + "\", want \"" + want + "\"");
+        verdict("bash 3.2: the shell reports where the command line starts",
+                s.grid().input_anchor().exact, "no OSC 133;B seen");
     }
 
     // The same clicks with the shell in application cursor-key mode, which

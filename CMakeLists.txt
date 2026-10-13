@@ -102,14 +102,39 @@ pkg_check_modules(AVFORMAT REQUIRED IMPORTED_TARGET libavformat)
 pkg_check_modules(AVUTIL REQUIRED IMPORTED_TARGET libavutil)
 pkg_check_modules(SWSCALE REQUIRED IMPORTED_TARGET libswscale)
 
+# Shell integration scripts (shell-integration/), embedded in the binary so
+# the app installs exactly the version it was built with. Regenerated when a
+# script changes.
+set(SHELL_INTEGRATION_INC ${CMAKE_BINARY_DIR}/generated/shell_integration_scripts.inc)
+set(SHELL_INTEGRATION_FILES
+    ${CMAKE_SOURCE_DIR}/shell-integration/zsh/.zshenv
+    ${CMAKE_SOURCE_DIR}/shell-integration/zsh/sink-integration.zsh
+    ${CMAKE_SOURCE_DIR}/shell-integration/bash/sink.bash
+)
+add_custom_command(
+    OUTPUT ${SHELL_INTEGRATION_INC}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/generated
+    COMMAND ${CMAKE_COMMAND} -DSRC=${CMAKE_SOURCE_DIR}/shell-integration
+            -DOUT=${SHELL_INTEGRATION_INC}
+            -P ${CMAKE_SOURCE_DIR}/cmake/embed_shell_integration.cmake
+    DEPENDS ${SHELL_INTEGRATION_FILES} ${CMAKE_SOURCE_DIR}/cmake/embed_shell_integration.cmake
+    COMMENT "Embedding shell integration scripts"
+)
+# What a target needs to spawn shells (PTYBridge) with the integration.
+set(SHELL_SPAWN_SOURCES
+    src/pty_bridge.cpp
+    src/private_files.cpp
+    src/shell_integration.cpp
+    ${SHELL_INTEGRATION_INC}
+)
+
 # Common Source Files
 set(SOURCES
     src/main.cpp
     src/font_manager.cpp
     src/terminal_grid.cpp
     src/terminal_images.cpp
-    src/pty_bridge.cpp
-    src/private_files.cpp
+    ${SHELL_SPAWN_SOURCES}
     src/prompt_editing.cpp
     src/ansi_parser.cpp
     src/video_engine.cpp
@@ -127,6 +152,7 @@ endif()
 
 # Renamed executable target to "sink"
 add_executable(sink ${SOURCES})
+target_include_directories(sink PRIVATE ${CMAKE_BINARY_DIR}/generated)
 
 target_include_directories(sink PRIVATE src vendor/tomlplusplus)
 
@@ -158,13 +184,16 @@ endif()
 enable_testing()
 add_executable(sink_tests
     tests/test_ansi_parser.cpp
+    src/private_files.cpp
+    src/shell_integration.cpp
+    ${SHELL_INTEGRATION_INC}
     src/prompt_editing.cpp
     src/ansi_parser.cpp
     src/terminal_grid.cpp
     src/terminal_images.cpp
     src/font_manager.cpp
 )
-target_include_directories(sink_tests PRIVATE src)
+target_include_directories(sink_tests PRIVATE src ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(sink_tests PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
@@ -179,13 +208,16 @@ add_test(NAME ansi_parser COMMAND sink_tests)
 # Labelled "integration" since it spawns shells and depends on their timing.
 add_executable(prompt_editing_e2e
     tests/prompt_editing_e2e.cpp
+    src/private_files.cpp
+    src/shell_integration.cpp
+    ${SHELL_INTEGRATION_INC}
     src/prompt_editing.cpp
     src/ansi_parser.cpp
     src/terminal_grid.cpp
     src/terminal_images.cpp
     src/font_manager.cpp
 )
-target_include_directories(prompt_editing_e2e PRIVATE src)
+target_include_directories(prompt_editing_e2e PRIVATE src ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(prompt_editing_e2e PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
@@ -195,7 +227,14 @@ add_test(NAME prompt_editing_zsh COMMAND prompt_editing_e2e --shell zsh)
 # bash 5 from Homebrew; the binary reports a skip and passes when it is absent
 # (macOS's own bash 3.2 cannot report its cursor to the test).
 add_test(NAME prompt_editing_bash COMMAND prompt_editing_e2e --shell bash)
+# The same, with each shell started the way sink starts it by default: with
+# shell integration, against a scratch HOME of test dotfiles. Adds checks only
+# integration makes possible -- startup files loading exactly as without sink,
+# typing ahead of the prompt, autosuggestions, the reported directory.
+add_test(NAME prompt_editing_zsh_integration COMMAND prompt_editing_e2e --shell zsh --integration)
+add_test(NAME prompt_editing_bash_integration COMMAND prompt_editing_e2e --shell bash --integration)
 set_tests_properties(prompt_editing_zsh prompt_editing_bash
+                     prompt_editing_zsh_integration prompt_editing_bash_integration
                      PROPERTIES LABELS integration TIMEOUT 900)
 
 # tmux compatibility proof. Drives a real tmux in a PTY, replays what it writes
@@ -267,10 +306,9 @@ add_executable(pty_bench
     src/terminal_grid.cpp
     src/terminal_images.cpp
     src/font_manager.cpp
-    src/pty_bridge.cpp
-    src/private_files.cpp
+    ${SHELL_SPAWN_SOURCES}
 )
-target_include_directories(pty_bench PRIVATE src)
+target_include_directories(pty_bench PRIVATE src ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(pty_bench PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf

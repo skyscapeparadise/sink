@@ -72,4 +72,9 @@ std::string unique_name(const std::string& base);
 std::string get_active_preset_name();
 void set_active_preset_name(const std::string& name);
 
+// The top-level `shell_integration` key: whether shells start with sink's
+// shell integration (shell_integration.hpp). On unless set to false. Not part
+// of a preset -- it is about how the shell starts, not how sink looks.
+bool shell_integration_enabled();
+
 } // namespace presets

@@ -328,6 +328,7 @@ static void save_config(AppState* state) {
 // either way, so there's always a known-good fallback.
 static void load_config(AppState* state) {
     presets::migrate_legacy_config_if_needed();
+    PTYBridge::set_shell_integration_enabled(presets::shell_integration_enabled());
 
     std::string requested_preset = presets::get_active_preset_name();
 

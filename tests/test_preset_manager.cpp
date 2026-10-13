@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <iterator>
 #include <sys/stat.h>
 
 static int checks_failed = 0;
@@ -28,7 +29,7 @@ static void write_file(const std::string& path, const std::string& contents) {
 
 static void test_fresh_install_defaults_to_pool() {
     setenv("HOME", "/tmp/sink_test_fresh", 1);
-    system("rm -rf /tmp/sink_test_fresh && mkdir -p /tmp/sink_test_fresh");
+    system("rm -rf /tmp/sink_test_shellint /tmp/sink_test_fresh && mkdir -p /tmp/sink_test_fresh");
 
     presets::migrate_legacy_config_if_needed();
     CHECK(presets::exists("pool"));
@@ -125,6 +126,31 @@ static void test_active_preset_pointer() {
     CHECK(presets::get_active_preset_name() == "focused");
 }
 
+// The top-level shell_integration switch: on unless set to false, and kept
+// when presets are saved around it -- it is not part of any preset.
+static void test_shell_integration_setting() {
+    setenv("HOME", "/tmp/sink_test_shellint", 1);
+    system("rm -rf /tmp/sink_test_shellint && mkdir -p /tmp/sink_test_shellint");
+    presets::migrate_legacy_config_if_needed();
+    CHECK(presets::shell_integration_enabled());
+
+    std::string toml;
+    {
+        std::ifstream in(presets::config_path());
+        toml.assign(std::istreambuf_iterator<char>(in), {});
+    }
+    {
+        std::ofstream out(presets::config_path());
+        out << "shell_integration = false\n" << toml;
+    }
+    CHECK(!presets::shell_integration_enabled());
+
+    Preset p; p.name = "another";
+    presets::save(p);
+    presets::set_active_preset_name("another");
+    CHECK(!presets::shell_integration_enabled());
+}
+
 static void test_legacy_migration_preserves_all_presets() {
     setenv("HOME", "/tmp/sink_test_legacy", 1);
     system("rm -rf /tmp/sink_test_legacy && mkdir -p /tmp/sink_test_legacy/.config/sink/presets");
@@ -179,6 +205,7 @@ int main() {
     test_rename_and_remove();
     test_unique_name();
     test_active_preset_pointer();
+    test_shell_integration_setting();
     test_legacy_migration_preserves_all_presets();
     test_malformed_toml_does_not_crash();
 

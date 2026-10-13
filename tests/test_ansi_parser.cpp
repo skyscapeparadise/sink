@@ -4,12 +4,16 @@
 #include "ansi_parser.hpp"
 #include "prompt_editing.hpp"
 #include "sink_demo.hpp"
+#include "shell_integration.hpp"
 #include "terminal_grid.hpp"
 #include "terminal_images.hpp"
 
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <cstdlib>
 #include <vector>
 
 static int checks_failed = 0;
@@ -2249,6 +2253,71 @@ static void test_demo_commands() {
     CHECK(SinkDemo::sing_argument("echo sinksing you") == "");
 }
 
+// Shell integration: where the scripts go, and how each shell is started.
+// Anything a shell runs must be somewhere only the user can write.
+static void test_shell_integration_install() {
+    char tmpl[] = "/tmp/sink_si_XXXXXX";
+    std::string root = mkdtemp(tmpl);
+    std::string dir = shell_integration::install(root);
+    CHECK(dir == root + "/shell-integration");
+    struct stat st;
+    CHECK(stat((dir + "/zsh/.zshenv").c_str(), &st) == 0 && (st.st_mode & 0777) == 0600);
+    CHECK(stat((dir + "/zsh/sink-integration.zsh").c_str(), &st) == 0);
+    CHECK(stat((dir + "/bash/sink.bash").c_str(), &st) == 0 && (st.st_mode & 0777) == 0600);
+    CHECK(stat(dir.c_str(), &st) == 0 && (st.st_mode & 0777) == 0700);
+    // A second install rewrites in place.
+    CHECK(shell_integration::install(root) == dir);
+
+    // Refused: a folder others can write to, and a symlink in its place.
+    chmod((dir + "/zsh").c_str(), 0777);
+    CHECK(shell_integration::install(root).empty());
+    chmod((dir + "/zsh").c_str(), 0700);
+    char other[] = "/tmp/sink_si_other_XXXXXX";
+    std::string elsewhere = mkdtemp(other);
+    std::string cmd = "rm -rf '" + dir + "' && ln -s '" + elsewhere + "' '" + dir + "'";
+    CHECK(std::system(cmd.c_str()) == 0);
+    CHECK(shell_integration::install(root).empty());
+    std::system(("rm -rf '" + root + "' '" + elsewhere + "'").c_str());
+}
+
+static void test_shell_integration_plan() {
+    unsetenv("ZDOTDIR");
+    unsetenv("PROMPT_COMMAND");
+    auto has = [](const shell_integration::Launch& l, const std::string& k, const std::string& v) {
+        for (const auto& kv : l.set) if (kv.first == k && kv.second == v) return true;
+        return false;
+    };
+    auto unsets = [](const shell_integration::Launch& l, const std::string& k) {
+        for (const auto& u : l.unset) if (u == k) return true;
+        return false;
+    };
+    // zsh: ZDOTDIR at the bootstrap; "nothing to restore" made explicit.
+    auto z = shell_integration::plan("/bin/zsh", "/d");
+    CHECK((z.argv == std::vector<std::string>{ "/bin/zsh", "-l" }));
+    CHECK(has(z, "ZDOTDIR", "/d/zsh") && has(z, "SINK_SHELL_INTEGRATION_DIR", "/d"));
+    CHECK(unsets(z, "SINK_ZSH_ZDOTDIR"));
+    // ...and the user's own ZDOTDIR carried through to be put back.
+    setenv("ZDOTDIR", "/my/zdotdir", 1);
+    auto z2 = shell_integration::plan("/usr/local/bin/zsh", "/d");
+    CHECK(has(z2, "SINK_ZSH_ZDOTDIR", "/my/zdotdir"));
+    unsetenv("ZDOTDIR");
+    // bash: a plain login shell, the loader in PROMPT_COMMAND after the
+    // user's own.
+    auto b = shell_integration::plan("/bin/bash", "/d");
+    CHECK((b.argv == std::vector<std::string>{ "/bin/bash", "-l" }));
+    CHECK(has(b, "SINK_BASH_INTEGRATION", "/d/bash/sink.bash"));
+    CHECK(has(b, "PROMPT_COMMAND", "builtin source \"$SINK_BASH_INTEGRATION\""));
+    setenv("PROMPT_COMMAND", "mine", 1);
+    auto b2 = shell_integration::plan("/opt/homebrew/bin/bash", "/d");
+    CHECK(has(b2, "PROMPT_COMMAND", "mine\nbuiltin source \"$SINK_BASH_INTEGRATION\""));
+    unsetenv("PROMPT_COMMAND");
+    // Anything else, or no integration directory: started plainly.
+    auto f = shell_integration::plan("/opt/homebrew/bin/fish", "/d");
+    CHECK((f.argv == std::vector<std::string>{ "/opt/homebrew/bin/fish", "-l" }) && f.set.empty());
+    auto off = shell_integration::plan("/bin/zsh", "");
+    CHECK(off.set.empty() && off.unset.empty());
+}
+
 // ED 0 and ED 1 (CSI J, CSI 1 J): erase below and above the cursor.
 static void test_erase_in_display() {
     {
@@ -2389,6 +2458,8 @@ int main() {
     test_kitty_png_only();
     test_huge_motion_counts();
     test_demo_commands();
+    test_shell_integration_install();
+    test_shell_integration_plan();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;
