@@ -311,6 +311,69 @@ std::string get_song_lyrics(const std::string& song_name) {
     return "";
 }
 
+// Types a song out a character at a time, so the cursor glides across each
+// line the way it does when the demo types a command -- the renderer eases the
+// cursor toward wherever the last character landed. Lyrics used to appear a
+// whole line at a time.
+//
+// Paced to the song, not to a typist: at command-typing speed a song runs to a
+// minute, and sinkdemo plays four. Each song takes about kLyricSongMs, with a
+// short pause at the end of every line for phrasing. Progress follows the real
+// clock rather than counting sleeps, so a stalled frame catches up instead of
+// stretching the song. Characters are emitted whole: the lyrics have curly
+// apostrophes, which are several bytes each.
+//
+// Returns true if the user skipped (Tab): the line in progress is finished at
+// once and the rest of the song is left out, as before.
+static constexpr double kLyricSongMs = 8000.0;
+static constexpr double kLyricLinePauseMs = 90.0;
+static constexpr double kLyricMinMsPerChar = 3.0;
+
+static bool type_lyrics(TerminalWindow* tw, const std::string& lyrics) {
+    std::vector<std::string> lines;
+    std::stringstream ss(lyrics);
+    std::string line;
+    while (std::getline(ss, line)) lines.push_back(line);
+    if (lines.empty()) return false;
+
+    auto is_continuation = [](unsigned char b) { return (b & 0xC0) == 0x80; };
+    size_t chars = 0;
+    for (const auto& l : lines) {
+        for (unsigned char b : l) chars += is_continuation(b) ? 0 : 1;
+    }
+    double typing_ms = kLyricSongMs - kLyricLinePauseMs * static_cast<double>(lines.size());
+    double ms_per_char = std::max(kLyricMinMsPerChar, typing_ms / static_cast<double>(std::max<size_t>(chars, 1)));
+
+    using clock = std::chrono::steady_clock;
+    for (const auto& l : lines) {
+        size_t i = 0;
+        double owed = 0.0;  // characters due but not yet typed
+        auto last = clock::now();
+        while (i < l.size()) {
+            if (sleep_interruptible(tw, 10)) {
+                feed_to_terminal(tw, l.substr(i) + "\r\n");
+                return true;
+            }
+            auto now = clock::now();
+            owed += std::chrono::duration<double, std::milli>(now - last).count() / ms_per_char;
+            last = now;
+            size_t j = i;
+            while (owed >= 1.0 && j < l.size()) {
+                ++j;
+                while (j < l.size() && is_continuation(static_cast<unsigned char>(l[j]))) ++j;
+                owed -= 1.0;
+            }
+            if (j > i) {
+                feed_to_terminal(tw, l.substr(i, j - i));
+                i = j;
+            }
+        }
+        feed_to_terminal(tw, "\r\n");
+        if (sleep_interruptible(tw, static_cast<int>(kLyricLinePauseMs))) return true;
+    }
+    return false;
+}
+
 void run_sing(TerminalWindow* tw, const std::string& song_name) {
     if (!tw) return;
     tw->demo_running.store(true);
@@ -326,29 +389,9 @@ void run_sing(TerminalWindow* tw, const std::string& song_name) {
         return;
     }
 
-    std::vector<std::string> lines;
-    std::stringstream ss(lyrics);
-    std::string line;
-    while (std::getline(ss, line)) {
-        lines.push_back(line);
-    }
-
-    if (lines.empty()) {
-        tw->demo_running.store(false);
-        tw->demo_skip_requested.store(false);
-        return;
-    }
-
     // Create a new line before starting lyrics
     feed_to_terminal(tw, "\r\n");
-
-    double delay_per_line_ms = 3000.0 / lines.size();
-    for (const auto& l : lines) {
-        feed_to_terminal(tw, l + "\r\n");
-        if (sleep_interruptible(tw, static_cast<int>(delay_per_line_ms))) {
-            break;
-        }
-    }
+    type_lyrics(tw, lyrics);
 
     // Ensure finished lyrics return cleanly to the shell prompt
     feed_to_terminal(tw, "\r\n");
@@ -633,24 +676,8 @@ void run_demo(TerminalWindow* tw, AppState* state) {
         sleep_interruptible(tw, 200); // 0.2s hesitation
         feed_to_terminal(tw, "\r\n\r\n");
 
-        // Print song lyrics line by line
-        std::string lyrics = get_song_lyrics(song_name);
-        std::vector<std::string> lines;
-        std::stringstream ss(lyrics);
-        std::string line;
-        while (std::getline(ss, line)) {
-            lines.push_back(line);
-        }
-
-        if (!lines.empty()) {
-            double delay_per_line_ms = 3000.0 / lines.size();
-            for (const auto& l : lines) {
-                feed_to_terminal(tw, l + "\r\n");
-                if (sleep_interruptible(tw, static_cast<int>(delay_per_line_ms))) {
-                    break; // TAB pressed: skip rest of song immediately!
-                }
-            }
-        }
+        // The lyrics, typed out (Tab skips the rest of the song).
+        type_lyrics(tw, get_song_lyrics(song_name));
 
         sleep_interruptible(tw, 200);
         feed_to_terminal(tw, prompt);
