@@ -3,6 +3,7 @@
 // grid state is asserted on. Run via `ctest --test-dir build` or ./build/sink_tests.
 #include "ansi_parser.hpp"
 #include "prompt_editing.hpp"
+#include "sink_demo.hpp"
 #include "terminal_grid.hpp"
 #include "terminal_images.hpp"
 
@@ -2230,6 +2231,24 @@ static void test_huge_motion_counts() {
     CHECK(g.get_cursor_row() == 7 && g.get_cursor_col() == 19);
 }
 
+// The built-in commands match only when the line is the command. Matching
+// the name anywhere swallowed Enter for ordinary commands that mentioned it.
+static void test_demo_commands() {
+    CHECK(SinkDemo::is_demo_command("sinkdemo"));
+    CHECK(SinkDemo::is_demo_command("  sinkdemo  "));
+    CHECK(!SinkDemo::is_demo_command("grep sinkdemo notes.txt"));
+    CHECK(!SinkDemo::is_demo_command("sinkdemos"));
+    CHECK(!SinkDemo::is_demo_command("echo sinkdemo"));
+    CHECK(!SinkDemo::is_demo_command("sinkdemo\necho hi"));
+    CHECK(SinkDemo::is_sing_command("sinksing"));
+    CHECK(SinkDemo::is_sing_command("sinksing coelacanth"));
+    CHECK(!SinkDemo::is_sing_command("git commit -m 'add sinksing'"));
+    CHECK(!SinkDemo::is_sing_command("sinksinger"));
+    CHECK(SinkDemo::sing_argument("sinksing   snake  ") == "snake");
+    CHECK(SinkDemo::sing_argument("sinksing") == "");
+    CHECK(SinkDemo::sing_argument("echo sinksing you") == "");
+}
+
 // ED 0 and ED 1 (CSI J, CSI 1 J): erase below and above the cursor.
 static void test_erase_in_display() {
     {
@@ -2369,6 +2388,7 @@ int main() {
     test_sixel_past_size_limit();
     test_kitty_png_only();
     test_huge_motion_counts();
+    test_demo_commands();
 
     std::printf("%d checks, %d failed\n", checks_run, checks_failed);
     return checks_failed == 0 ? 0 : 1;

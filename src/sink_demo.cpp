@@ -311,14 +311,6 @@ std::string get_song_lyrics(const std::string& song_name) {
     return "";
 }
 
-bool is_demo_command(const std::string& cmd) {
-    return (cmd.find("sinkdemo") != std::string::npos);
-}
-
-bool is_sing_command(const std::string& cmd) {
-    return (cmd.find("sinksing") != std::string::npos);
-}
-
 void run_sing(TerminalWindow* tw, const std::string& song_name) {
     if (!tw) return;
     tw->demo_running.store(true);
