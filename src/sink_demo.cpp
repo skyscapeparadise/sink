@@ -321,7 +321,7 @@ std::string get_song_lyrics(const std::string& song_name) {
 // whole line at a time.
 //
 // Paced to the song, not to a typist: at command-typing speed a song runs to a
-// minute, and sinkdemo plays four. Each song takes about kLyricSongMs, with a
+// minute, far too long for sinkdemo. Each song takes about kLyricSongMs, with a
 // short pause at the end of every line for phrasing. Progress follows the real
 // clock rather than counting sleeps, so a stalled frame catches up instead of
 // stretching the song. Characters are emitted whole: the lyrics have curly
@@ -1161,12 +1161,6 @@ void run_demo(TerminalWindow* tw, AppState* state) {
     // thread finishes quickly and the caller can safely delete tw.
     if (tw->demo_abort.load()) { tw->demo_running.store(false); return; }
     do_song_step("coelacanth");
-    if (tw->demo_abort.load()) { tw->demo_running.store(false); return; }
-    do_song_step("snake");
-    if (tw->demo_abort.load()) { tw->demo_running.store(false); return; }
-    do_song_step("sink");
-    if (tw->demo_abort.load()) { tw->demo_running.store(false); return; }
-    do_song_step("you");
     if (tw->demo_abort.load()) { tw->demo_running.store(false); return; }
 
     // Finale sequence
