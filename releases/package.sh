@@ -32,6 +32,11 @@ if [ -z "${SINK_VERSION}" ]; then
     exit 1
 fi
 echo "  version ${SINK_VERSION}"
+
+# Where a packaged sink looks for updates, and the key it trusts them from.
+# See the Sparkle block in the Info.plist below.
+SPARKLE_FEED_URL="https://github.com/skyscapeparadise/sink/releases/latest/download/appcast.xml"
+SPARKLE_PUBLIC_KEY="C8yQWWr+t9Z2xCdOovTL0KPcM0JFrLmR9vLdC4R2XrE="
 APP_DIR="${APP_NAME}.app"
 CONTENTS_DIR="${APP_DIR}/Contents"
 MACOS_DIR="${CONTENTS_DIR}/MacOS"
@@ -312,6 +317,16 @@ codesign --force --sign - "${BIN}" 2>/dev/null
 
 echo "  bundled $(ls -1 "${FRAMEWORKS_DIR}" | wc -l | tr -d ' ') dylibs."
 
+# Sparkle, the updater. Copied after the dylib walk above, which only handles
+# loose *.dylib files: the binary doesn't link Sparkle (src/macos_menu.mm loads
+# it at runtime), so there are no load commands to rewrite. ditto keeps the
+# framework's internal symlinks; a flattening copy would break its signature.
+# signapp.sh re-signs it, helpers first, with the Developer ID.
+echo "  bundling Sparkle (updater)..."
+./vendor/fetch_sparkle.sh > /dev/null
+ditto vendor/sparkle/Sparkle.framework "${FRAMEWORKS_DIR}/Sparkle.framework"
+copy_license "vendor/sparkle/LICENSE" "Sparkle-LICENSE.txt"
+
 # 5. Generate the Info.plist file
 echo "  generating Info.plist..."
 cat <<EOF > "${CONTENTS_DIR}/Info.plist"
@@ -340,7 +355,7 @@ cat <<EOF > "${CONTENTS_DIR}/Info.plist"
     <key>CFBundleSignature</key>
     <string>????</string>
     <key>CFBundleVersion</key>
-    <string>1</string>
+    <string>${SINK_VERSION}</string>
     <key>LSMinimumSystemVersion</key>
     <string>${MACOSX_DEPLOYMENT_TARGET}</string>
     <key>NSHighResolutionCapable</key>
@@ -349,6 +364,29 @@ cat <<EOF > "${CONTENTS_DIR}/Info.plist"
     <string>copyright © 2026 rain multimedia. all rights reserved.</string>
     <key>LSApplicationCategoryType</key>
     <string>public.app-category.developer-tools</string>
+
+    <!-- Updates (Sparkle). The feed is the appcast.xml attached to whichever
+         GitHub release is marked latest -- releases/publish_update.sh puts it
+         there -- so there is no server to run. Both the feed and the DMG it
+         names must carry an EdDSA signature from the key whose public half is
+         below; the private half lives in the release machine's Keychain
+         under the account com.rainmultimedia.sink. Sparkle decides "newer" by
+         comparing CFBundleVersion above, so it must rise with every release.
+         SUEnableAutomaticChecks skips Sparkle's "check automatically?" prompt
+         on second launch. Checks are daily; sink has no switch for them yet,
+         but "defaults write com.rainmultimedia.sink SUEnableAutomaticChecks
+         -bool NO" turns them off. (No backticks in here: this heredoc is
+         unquoted so the variables expand, and backticks would run.) -->
+    <key>SUFeedURL</key>
+    <string>${SPARKLE_FEED_URL}</string>
+    <key>SUPublicEDKey</key>
+    <string>${SPARKLE_PUBLIC_KEY}</string>
+    <key>SURequireSignedFeed</key>
+    <true/>
+    <key>SUVerifyUpdateBeforeExtraction</key>
+    <true/>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
 
     <!-- TCC usage descriptions.
          A terminal runs arbitrary commands, and macOS attributes what those

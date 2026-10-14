@@ -385,6 +385,55 @@ extern "C" void trigger_menu_render_tick();
 
 static MenuHandler* g_menu_handler = nil;
 
+// Sparkle is loaded at runtime rather than linked, so only a packaged sink.app
+// -- which carries Contents/Frameworks/Sparkle.framework and the SUFeedURL /
+// SUPublicEDKey Info.plist keys releases/package.sh writes -- offers updates.
+// A bare build/sink has neither, and an updater started there would try to
+// replace build/ with a downloaded app. This protocol only gives the compiler
+// the two selectors sink calls on SPUStandardUpdaterController.
+@protocol SinkUpdaterController
+- (instancetype)initWithStartingUpdater:(BOOL)startUpdater
+                        updaterDelegate:(id)updaterDelegate
+                     userDriverDelegate:(id)userDriverDelegate;
+- (void)checkForUpdates:(id)sender;
+@end
+
+static id g_updater_controller = nil;
+
+// Starts Sparkle's scheduled background checks and adds "Check for Updates…"
+// under "About sink". Does nothing outside a packaged app.
+static void setup_updater(NSMenu* appMenu) {
+    if (g_updater_controller) return;
+
+    NSBundle* mainBundle = [NSBundle mainBundle];
+    if (![mainBundle objectForInfoDictionaryKey:@"SUFeedURL"]) return;
+
+    NSString* path = [[mainBundle privateFrameworksPath]
+        stringByAppendingPathComponent:@"Sparkle.framework"];
+    NSBundle* sparkle = [NSBundle bundleWithPath:path];
+    NSError* error = nil;
+    if (!sparkle || ![sparkle loadAndReturnError:&error]) {
+        NSLog(@"sink: updates unavailable, could not load Sparkle: %@", error);
+        return;
+    }
+    Class controllerClass = NSClassFromString(@"SPUStandardUpdaterController");
+    if (!controllerClass) return;
+
+    g_updater_controller = [[controllerClass alloc] initWithStartingUpdater:YES
+                                                            updaterDelegate:nil
+                                                         userDriverDelegate:nil];
+
+    // The app menu has auto-enabling turned off (see below), so the item is
+    // simply always enabled; a second click while a check is running just
+    // brings Sparkle's window forward.
+    NSMenuItem* updateItem = [[NSMenuItem alloc] initWithTitle:@"Check for Updates…"
+                                                        action:@selector(checkForUpdates:)
+                                                 keyEquivalent:@""];
+    [updateItem setTarget:g_updater_controller];
+    [updateItem setEnabled:YES];
+    [appMenu insertItem:updateItem atIndex:1];
+}
+
 void setup_macos_menu() {
     @autoreleasepool {
         NSApplication* app = [NSApplication sharedApplication];
@@ -444,6 +493,8 @@ void setup_macos_menu() {
             [settingsItem setEnabled:YES];
             [appMenu insertItem:settingsItem atIndex:2];
         }
+
+        setup_updater(appMenu);
 
         // Setup the File Menu (Insert at index 1)
         NSMenuItem* fileItem = nil;

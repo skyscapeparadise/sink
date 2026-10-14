@@ -25,13 +25,14 @@ icon.psd
 /sink-iOS-Default-1024@1x.png
 
 # Release scripts. signapp.sh, makedmg.sh and updatepassword.sh stay out of
-# the repo (notarization credentials); package.sh and the entitlements plist
-# carry no secrets and are tracked. Note the releases/* form -- a bare
-# "releases/" makes git skip the directory entirely and the negations below
-# would never be considered.
+# the repo (notarization credentials); package.sh, publish_update.sh and the
+# entitlements plist carry no secrets and are tracked. Note the releases/*
+# form -- a bare "releases/" makes git skip the directory entirely and the
+# negations below would never be considered.
 releases/*
 !releases/package.sh
 !releases/sink.entitlements
+!releases/publish_update.sh
 
 # Rust build artifacts (bench/vte_bench)
 bench/vte_bench/target/
@@ -43,6 +44,7 @@ vendor/.cache/
 vendor/.build/
 vendor/sdl3_image/
 vendor/textstack/
+vendor/sparkle/
 
 # Generated benchmark workloads (~32MB, recreate with bench/gen_workloads.py)
 bench/workloads/
@@ -50,5 +52,6 @@ bench/workloads/
 # Packaged release artifacts
 *.dmg
 *.zip
+/appcast.xml
 build-asan/
 build-fuzz/
