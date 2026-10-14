@@ -151,6 +151,35 @@ static void test_shell_integration_setting() {
     CHECK(!presets::shell_integration_enabled());
 }
 
+static void test_option_as_meta_setting() {
+    setenv("HOME", "/tmp/sink_test_optmeta", 1);
+    system("rm -rf /tmp/sink_test_optmeta && mkdir -p /tmp/sink_test_optmeta");
+    presets::migrate_legacy_config_if_needed();
+    CHECK(presets::option_as_meta() == "none");
+
+    std::string toml;
+    {
+        std::ifstream in(presets::config_path());
+        toml.assign(std::istreambuf_iterator<char>(in), {});
+    }
+    auto with = [&](const std::string& line) {
+        std::ofstream out(presets::config_path());
+        out << line << "\n" << toml;
+    };
+    with("option_as_meta = true");
+    CHECK(presets::option_as_meta() == "both");
+    with("option_as_meta = false");
+    CHECK(presets::option_as_meta() == "none");
+    with("option_as_meta = \"left\"");
+    CHECK(presets::option_as_meta() == "left");
+    with("option_as_meta = \"right\"");
+    CHECK(presets::option_as_meta() == "right");
+    with("option_as_meta = \"sideways\"");
+    CHECK(presets::option_as_meta() == "none");
+    with("option_as_meta = 3");
+    CHECK(presets::option_as_meta() == "none");
+}
+
 static void test_legacy_migration_preserves_all_presets() {
     setenv("HOME", "/tmp/sink_test_legacy", 1);
     system("rm -rf /tmp/sink_test_legacy && mkdir -p /tmp/sink_test_legacy/.config/sink/presets");
@@ -206,6 +235,7 @@ int main() {
     test_unique_name();
     test_active_preset_pointer();
     test_shell_integration_setting();
+    test_option_as_meta_setting();
     test_legacy_migration_preserves_all_presets();
     test_malformed_toml_does_not_crash();
 

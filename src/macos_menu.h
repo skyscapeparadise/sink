@@ -80,6 +80,23 @@ bool get_close_pane_requested();
 // 4 = down. The getter consumes the pending request.
 void set_pane_focus_requested(int direction);
 int get_pane_focus_requested();
+// Step pane focus through the window's panes in order: 1 = next, -1 =
+// previous, 0 = none. The getter consumes the pending request.
+void set_pane_cycle_requested(int step);
+int get_pane_cycle_requested();
+// Zoom the focused pane to fill its window, or put it back (Window menu).
+void set_zoom_pane_requested(bool requested);
+bool get_zoom_pane_requested();
+// Clear the screen and scrollback (Edit menu).
+void set_clear_screen_requested(bool requested);
+bool get_clear_screen_requested();
+// Font size for the active window (View menu): 1 = bigger, -1 = smaller,
+// 2 = back to the default, 0 = none. The getter consumes the pending request.
+void set_font_size_requested(int change);
+int get_font_size_requested();
+// Brings the window's index-th native tab (1-based) to the front; 9 or more
+// means the last tab, as in Safari and Terminal. No-op without tabs.
+void select_native_tab(SDL_Window* sdl_win, int index);
 
 // Enable or disable macOS native translucent window vibrancy / acrylic blur
 void enable_macos_window_vibrancy(SDL_Window* sdl_win, bool enable);

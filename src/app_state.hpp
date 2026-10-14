@@ -21,6 +21,7 @@
 #include "settings_ui.hpp"
 #include "terminal_grid.hpp"
 #include "video_engine.hpp"
+#include "key_bindings.hpp"
 
 // One shell session: grid + PTY + parser and all the per-session input and
 // pacing state that used to live directly on TerminalWindow. A window shows
@@ -112,6 +113,16 @@ struct TerminalWindow {
 
     // Internal node whose divider is being dragged (null when not dragging)
     PaneNode* dragging_divider = nullptr;
+
+    // The pane zoomed to fill the window (⇧⌘↩), or null. The others keep
+    // running, and keep their size, but aren't laid out, drawn or clickable
+    // until it's put back. Anything that changes which pane is focused or
+    // how the tree is split puts it back first.
+    Pane* zoomed = nullptr;
+
+    // Font size in points. Per window, like Terminal's View > Bigger and
+    // Smaller; every window starts at AppState::base_font_size.
+    float font_size = 15.0f;
 
     std::atomic<bool> demo_running{false};
     std::atomic<bool> demo_skip_requested{false};
@@ -225,6 +236,8 @@ struct AppState {
     // the text-input event SDL sends for the same key is dropped rather than
     // reaching the shell twice. Armed and cleared within one key press.
     bool suppress_next_text_input = false;
+    // sink.toml's option_as_meta (see key_bindings.hpp).
+    key_bindings::OptionAsMeta option_as_meta = key_bindings::OptionAsMeta::None;
     float exposure = 0.7f;
     float hue_shift = 0.0f;
     bool animated_typing = true;

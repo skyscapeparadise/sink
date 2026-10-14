@@ -77,4 +77,10 @@ void set_active_preset_name(const std::string& name);
 // of a preset -- it is about how the shell starts, not how sink looks.
 bool shell_integration_enabled();
 
+// The top-level `option_as_meta` key: which Option keys act as Meta. false
+// (the default) or true, or "left" or "right" for just that one. Returned as
+// "none", "left", "right" or "both"; anything unrecognised is "none". Not part
+// of a preset, for the same reason as shell_integration.
+std::string option_as_meta();
+
 } // namespace presets

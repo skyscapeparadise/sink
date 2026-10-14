@@ -54,15 +54,29 @@ sink is still in beta, so you might hit a rough edge here and there. if you do, 
 | --- | --- |
 | ⌘N | new window |
 | ⌘T | new tab |
+| ⌘1 – ⌘9 | jump to a tab (⌘9 is the last one) |
 | ⌘D | split pane right |
 | ⇧⌘D | split pane down |
 | ⌥⌘ + arrow keys | move between panes |
+| ⌘] / ⌘[ | next / previous pane |
+| ⇧⌘↩ | zoom a pane to fill the window (and back) |
 | ⇧⌘W | close pane |
 | ⌘W | close window |
 | ⌘↑ / ⌘↓ | jump to the previous / next prompt |
+| ⌘K | clear the screen and scrollback |
+| ⌘= / ⌘- / ⌘0 | bigger / smaller / default text size |
 | ⌘F | find |
 | ⌘, | settings |
 | ⌘P | print |
+
+and the editing keys your fingers already know from other Mac terminals:
+
+| shortcut | what it does |
+| --- | --- |
+| ⌥← / ⌥→ | move back / forward a word |
+| ⌘← / ⌘→ | jump to the start / end of the line |
+| ⌥⌫ | delete the word before the cursor |
+| ⌘⌫ | delete everything before the cursor |
 
 ## config
 
@@ -71,8 +85,12 @@ most things live in the settings window (⌘,): your background, font, exposure,
 under the hood everything is saved to `~/.config/sink/sink.toml`, which you can edit by hand too. each preset gets its own `[presets.<name>]` section, and `active_preset` picks which one you're using. a couple of things only live in the file:
 
 ```toml
-# put this at the top to keep sink's shell integration out of your shell
+# put these at the top
+# keep sink's shell integration out of your shell
 shell_integration = false
+# make option act as meta (handy for emacs and readline). true for both
+# option keys, or "left" or "right" for just one
+option_as_meta = true
 
 [presets.pool]
 scrollback_lines = 10000

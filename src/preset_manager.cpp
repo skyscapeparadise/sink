@@ -373,4 +373,16 @@ bool shell_integration_enabled() {
     return load_document()["shell_integration"].value_or(true);
 }
 
+std::string option_as_meta() {
+    toml::table doc = load_document();
+    auto node = doc["option_as_meta"];
+    // Exact types only: toml++'s value<bool>() would read a number as a bool.
+    if (const auto* on = node.as_boolean()) return on->get() ? "both" : "none";
+    if (const auto* side = node.as_string()) {
+        const std::string& v = side->get();
+        if (v == "left" || v == "right" || v == "both") return v;
+    }
+    return "none";
+}
+
 } // namespace presets

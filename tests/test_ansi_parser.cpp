@@ -7,6 +7,7 @@
 #include "shell_integration.hpp"
 #include "terminal_grid.hpp"
 #include "terminal_images.hpp"
+#include "key_bindings.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -2009,6 +2010,56 @@ static void test_kitty_zlib() {
     }
 }
 
+// The keys other terminals have trained everyone's fingers on, and the
+// control characters on symbol keys (key_bindings.hpp).
+static void test_key_bindings() {
+    using namespace key_bindings;
+    const SDL_Keymod opt = SDL_KMOD_LALT, cmd = SDL_KMOD_LGUI;
+
+    CHECK(std::string(editing_sequence(SDLK_LEFT, opt)) == "\x1b" "b");
+    CHECK(std::string(editing_sequence(SDLK_RIGHT, opt)) == "\x1b" "f");
+    CHECK(std::string(editing_sequence(SDLK_LEFT, cmd)) == "\x01");
+    CHECK(std::string(editing_sequence(SDLK_RIGHT, cmd)) == "\x05");
+    CHECK(std::string(editing_sequence(SDLK_BACKSPACE, opt)) == "\x1b\x7f");
+    CHECK(std::string(editing_sequence(SDLK_BACKSPACE, cmd)) == "\x15");
+    CHECK(std::string(editing_sequence(SDLK_DELETE, opt)) == "\x1b" "d");
+    CHECK(std::string(editing_sequence(SDLK_LEFT, SDL_KMOD_RALT | SDL_KMOD_LSHIFT)) == "\x1b" "b");
+    // Plain keys, Control, and Option with Command are left to everything else.
+    CHECK(editing_sequence(SDLK_LEFT, SDL_KMOD_NONE) == nullptr);
+    CHECK(editing_sequence(SDLK_LEFT, opt | SDL_KMOD_LCTRL) == nullptr);
+    CHECK(editing_sequence(SDLK_LEFT, opt | cmd) == nullptr);
+    CHECK(editing_sequence(SDLK_DELETE, cmd) == nullptr);
+    CHECK(editing_sequence(SDLK_UP, opt) == nullptr);
+
+    CHECK(control_symbol_byte(SDLK_SPACE) == 0x00);
+    CHECK(control_symbol_byte(SDLK_2) == 0x00);
+    CHECK(control_symbol_byte(SDLK_LEFTBRACKET) == 0x1b);
+    CHECK(control_symbol_byte(SDLK_BACKSLASH) == 0x1c);
+    CHECK(control_symbol_byte(SDLK_RIGHTBRACKET) == 0x1d);
+    CHECK(control_symbol_byte(SDLK_6) == 0x1e);
+    CHECK(control_symbol_byte(SDLK_MINUS) == 0x1f);
+    CHECK(control_symbol_byte(SDLK_SLASH) == 0x1f);
+    CHECK(control_symbol_byte(SDLK_A) == -1);
+    CHECK(control_symbol_byte(SDLK_3) == -1);
+
+    CHECK(parse_option_as_meta("both") == OptionAsMeta::Both);
+    CHECK(parse_option_as_meta("left") == OptionAsMeta::Left);
+    CHECK(parse_option_as_meta("none") == OptionAsMeta::None);
+    CHECK(parse_option_as_meta("sideways") == OptionAsMeta::None);
+    CHECK(std::string(option_as_alt_hint(OptionAsMeta::Right)) == "only_right");
+    CHECK(option_is_meta(OptionAsMeta::Left, SDL_KMOD_LALT));
+    CHECK(!option_is_meta(OptionAsMeta::Left, SDL_KMOD_RALT));
+    CHECK(option_is_meta(OptionAsMeta::Both, SDL_KMOD_RALT));
+    CHECK(!option_is_meta(OptionAsMeta::None, SDL_KMOD_ALT));
+
+    std::string seq;
+    CHECK(meta_sequence('f', seq) && seq == "\x1b" "f");
+    CHECK(meta_sequence('F', seq) && seq == "\x1b" "F");
+    CHECK(meta_sequence(0xe9, seq) && seq == "\x1b\xc3\xa9"); // é, on layouts that have it
+    CHECK(!meta_sequence(SDLK_RETURN, seq));
+    CHECK(!meta_sequence(SDLK_LEFT, seq));
+}
+
 // OSC 10/11/12: the terminal's default colours. The query half is what
 // applications use to find out whether they are drawing on something light or
 // something dark, so they can pick a readable palette.
@@ -2584,6 +2635,7 @@ int main() {
     test_sixel_past_size_limit();
     test_kitty_png_only();
     test_kitty_zlib();
+    test_key_bindings();
     test_huge_motion_counts();
     test_demo_commands();
     test_submit_line();

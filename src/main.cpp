@@ -329,6 +329,8 @@ static void save_config(AppState* state) {
 static void load_config(AppState* state) {
     presets::migrate_legacy_config_if_needed();
     PTYBridge::set_shell_integration_enabled(presets::shell_integration_enabled());
+    state->option_as_meta = key_bindings::parse_option_as_meta(presets::option_as_meta());
+    SDL_SetHint(SDL_HINT_MAC_OPTION_AS_ALT, key_bindings::option_as_alt_hint(state->option_as_meta));
 
     std::string requested_preset = presets::get_active_preset_name();
 
@@ -414,7 +416,7 @@ static float window_pixel_density(SDL_Window* window) {
 // The window's font at its current scale, and the cell size that follows.
 static void load_window_font(AppState* state, TerminalWindow* tw) {
     std::string path = state->font_path.empty() ? "/System/Library/Fonts/SFNSMono.ttf" : state->font_path;
-    float font_size_px = state->base_font_size * tw->display_scale;
+    float font_size_px = tw->font_size * tw->display_scale;
     if (!tw->font_manager.load_font(tw->renderer, path, font_size_px, false)) {
         tw->font_manager.load_font(tw->renderer, "/System/Library/Fonts/Supplemental/Courier New.ttf", font_size_px, false);
     }
@@ -446,6 +448,7 @@ static void refresh_display_scale(AppState* state, TerminalWindow* tw) {
 
 static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* parent_tab_window, const Preset* preset_override = nullptr) {
     TerminalWindow* tw = new TerminalWindow();
+    tw->font_size = state->base_font_size;
 
     // Every window starts as a single-pane split tree
     tw->root = std::make_unique<PaneNode>();
@@ -553,7 +556,7 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
         typeface_path = "/System/Library/Fonts/SFNSMono.ttf";
     }
 
-    float font_size_px = state->base_font_size * scale;
+    float font_size_px = tw->font_size * scale;
     if (!tw->font_manager.load_font(tw->renderer, typeface_path, font_size_px, false)) {
         typeface_path = "/System/Library/Fonts/Supplemental/Courier New.ttf";
         tw->font_manager.load_font(tw->renderer, typeface_path, font_size_px, false);
@@ -733,17 +736,26 @@ static void layout_pane_node(AppState* state, TerminalWindow* tw, PaneNode* node
     }
 }
 
+static PaneNode* find_leaf(PaneNode* node, Pane* pane);
+
 static void layout_panes(AppState* state, TerminalWindow* tw, bool apply_grids = true) {
     int w = 0, h = 0;
     SDL_GetWindowSize(tw->window, &w, &h);
     float top = get_top_offset_pts(tw);
-    layout_pane_node(state, tw, tw->root.get(),
-                     { 0.0f, top, static_cast<float>(w), static_cast<float>(h) - top },
-                     apply_grids);
+    SDL_FRect whole = { 0.0f, top, static_cast<float>(w), static_cast<float>(h) - top };
+    PaneNode* zoomed_leaf = tw->zoomed ? find_leaf(tw->root.get(), tw->zoomed) : nullptr;
+    if (tw->zoomed && !zoomed_leaf) tw->zoomed = nullptr; // closed out from under the zoom
+    layout_pane_node(state, tw, zoomed_leaf ? zoomed_leaf : tw->root.get(), whole, apply_grids);
+}
+
+// Whether a pane is on screen: all of them, unless one is zoomed.
+static bool pane_visible(const TerminalWindow* tw, const Pane* pane) {
+    return !tw->zoomed || tw->zoomed == pane;
 }
 
 static Pane* pane_at(TerminalWindow* tw, float x, float y) {
     for (Pane* pane : all_panes(tw)) {
+        if (!pane_visible(tw, pane)) continue;
         if (x >= pane->rect.x && x < pane->rect.x + pane->rect.w &&
             y >= pane->rect.y && y < pane->rect.y + pane->rect.h) {
             return pane;
@@ -769,6 +781,7 @@ static PaneNode* find_parent(PaneNode* node, PaneNode* child) {
 // Splits the focused pane in two; the new pane spawns its own shell and
 // takes focus (matching iTerm2/Ghostty).
 static void split_focused_pane(AppState* state, TerminalWindow* tw, bool vertical) {
+    tw->zoomed = nullptr;
     PaneNode* leaf = find_leaf(tw->root.get(), tw->focused);
     if (!leaf) return;
 
@@ -809,6 +822,7 @@ static void split_focused_pane(AppState* state, TerminalWindow* tw, bool vertica
 // this is the window's last pane (caller should close the window instead).
 static bool close_focused_pane(AppState* state, TerminalWindow* tw) {
     if (tw->root->is_leaf()) return false;
+    tw->zoomed = nullptr;
 
     PaneNode* leaf = find_leaf(tw->root.get(), tw->focused);
     if (!leaf) return false;
@@ -889,6 +903,70 @@ static void focus_pane_directional(TerminalWindow* tw, int dx, int dy) {
         }
     }
     if (best) tw->focused = best;
+}
+
+// Puts a zoomed pane back among the others.
+static void unzoom_pane(AppState* state, TerminalWindow* tw) {
+    if (!tw->zoomed) return;
+    tw->zoomed = nullptr;
+    layout_panes(state, tw);
+}
+
+// ⇧⌘↩: the focused pane fills the window, or goes back to its place. A
+// window with one pane has nothing to zoom.
+static void toggle_zoom_pane(AppState* state, TerminalWindow* tw) {
+    if (tw->zoomed) {
+        unzoom_pane(state, tw);
+    } else if (!tw->root->is_leaf()) {
+        tw->zoomed = tw->focused;
+        layout_panes(state, tw);
+    }
+}
+
+// ⌘] and ⌘[: focus the next or previous pane in reading order (the split
+// tree's order), wrapping at either end.
+static void cycle_pane_focus(AppState* state, TerminalWindow* tw, int step) {
+    unzoom_pane(state, tw);
+    std::vector<Pane*> panes = all_panes(tw);
+    if (panes.size() < 2) return;
+    auto it = std::find(panes.begin(), panes.end(), tw->focused);
+    int at = (it == panes.end()) ? 0 : static_cast<int>(it - panes.begin());
+    int n = static_cast<int>(panes.size());
+    tw->focused = panes[((at + step) % n + n) % n];
+}
+
+// View > Bigger, Smaller, Default Size. Steps a point at a time, within
+// sizes that still make sense, and reflows the window's panes to match.
+static constexpr float kMinFontSize = 6.0f;
+static constexpr float kMaxFontSize = 72.0f;
+static void set_window_font_size(AppState* state, TerminalWindow* tw, float size) {
+    size = std::clamp(size, kMinFontSize, kMaxFontSize);
+    if (size == tw->font_size) return;
+    tw->font_size = size;
+    load_window_font(state, tw);
+    layout_panes(state, tw);
+}
+
+// ⌘K: clear the focused pane's screen and scrollback. At a shell prompt, the
+// shell is then sent ^L, which redraws the prompt -- and whatever had been
+// typed -- at the top; with a command running nothing is sent, since ^L would
+// be input to the command. A full-screen program's screen is its own to
+// clear, so on the alternate screen this does nothing.
+static void clear_screen_and_scrollback(TerminalWindow* tw) {
+    Pane& pane = tw->fpane();
+    bool at_prompt = false;
+    {
+        std::lock_guard<std::mutex> lock(pane.grid_mutex);
+        if (pane.terminal.is_alt_screen_active()) return;
+        int row = 0, col = 0;
+        at_prompt = pane.terminal.input_start(row, col);
+        pane.terminal.clear_screen();
+        pane.terminal.clear_scrollback();
+    }
+    if (at_prompt) {
+        const char form_feed = '\x0c';
+        pane.pty.write_to_pty(&form_feed, 1);
+    }
 }
 
 // Draws divider lines in the gutters between panes (in pixels).
@@ -994,7 +1072,7 @@ static bool recreate_renderer_for_hdr_console(AppState* state, TerminalWindow* t
     tw->hue_shift.init(tw->renderer, want_linear_colorspace);
     tw->crt_shader.init(tw->renderer, want_linear_colorspace);
 
-    float font_size_px = state->base_font_size * tw->display_scale;
+    float font_size_px = tw->font_size * tw->display_scale;
     if (!tw->font_manager.load_font(tw->renderer, state->font_path, font_size_px, false)) {
         tw->font_manager.load_font(tw->renderer, "/System/Library/Fonts/Supplemental/Courier New.ttf", font_size_px, false);
     }
@@ -1050,7 +1128,7 @@ static void apply_preset_to_state_and_windows(AppState* state, const Preset& p) 
             }
         }
 
-        if (tw->font_manager.load_font(tw->renderer, state->font_path, state->base_font_size * tw->display_scale, false)) {
+        if (tw->font_manager.load_font(tw->renderer, state->font_path, tw->font_size * tw->display_scale, false)) {
             tw->cell_w = (tw->font_manager.get_cell_width() / tw->display_scale) + 1.0f;
             tw->cell_h = (tw->font_manager.get_cell_height() / tw->display_scale) - 0.8f;
 
@@ -1275,7 +1353,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         if (event->type == SDL_EVENT_MOUSE_BUTTON_DOWN &&
             event->button.button == SDL_BUTTON_LEFT &&
             event->button.windowID == SDL_GetWindowID(target_tw->window)) {
-            if (PaneNode* node = divider_at(target_tw->root.get(), event->button.x, event->button.y)) {
+            if (PaneNode* node = divider_at(target_tw->zoomed ? nullptr : target_tw->root.get(), event->button.x, event->button.y)) {
                 target_tw->dragging_divider = node;
                 return SDL_APP_CONTINUE;
             }
@@ -1316,7 +1394,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 return SDL_APP_CONTINUE;
             }
 
-            PaneNode* hover = divider_at(target_tw->root.get(), event->motion.x, event->motion.y);
+            PaneNode* hover = divider_at(target_tw->zoomed ? nullptr : target_tw->root.get(), event->motion.x, event->motion.y);
             SDL_SetCursor(hover ? (hover->vertical ? cursor_ew : cursor_ns) : cursor_default);
             if (hover) return SDL_APP_CONTINUE;
         } else if (event->type == SDL_EVENT_MOUSE_BUTTON_UP &&
@@ -1660,8 +1738,13 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         SDL_Keycode sym = event->key.key;
         SDL_Keymod mod = event->key.mod;
 
-        // Cmd+F search bar toggle shortcut
-        if ((mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) && sym == SDLK_F) {
+        // Text input belongs to the key press before it. Suppression armed
+        // for a key that then typed nothing must not swallow the next key's.
+        state->suppress_next_text_input = false;
+
+        // Cmd+F search bar toggle shortcut. Not Ctrl+F: that is forward-char
+        // in zsh, bash and emacs, and has to reach them.
+        if ((mod & SDL_KMOD_GUI) && sym == SDLK_F) {
             target_tw->search_drawer_open = !target_tw->search_drawer_open;
             target_tw->fpane().terminal.set_search_active(target_tw->search_drawer_open);
             if (target_tw->search_drawer_open) {
@@ -1760,6 +1843,14 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             return SDL_APP_CONTINUE;
         }
 
+        // Cmd+1 to Cmd+9: bring that tab forward, Cmd+9 the last one -- as
+        // in Terminal, iTerm2 and Safari.
+        if ((mod & SDL_KMOD_GUI) && !(mod & (SDL_KMOD_SHIFT | SDL_KMOD_ALT | SDL_KMOD_CTRL)) &&
+            sym >= SDLK_1 && sym <= SDLK_9) {
+            select_native_tab(target_tw->window, static_cast<int>(sym - SDLK_1) + 1);
+            return SDL_APP_CONTINUE;
+        }
+
         // Split-pane commands (Cmd+D, Cmd+Shift+D, Cmd+Shift+W, Cmd+Opt+arrows)
         // are handled exclusively via the Shell menu's key equivalents +
         // request-flag polling below -- same pattern as Cut/Copy/Paste/Find/
@@ -1806,7 +1897,9 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 if (submit) submitted_line = prompt_edit::submit_line(tw->fpane().terminal);
                 else        tw->fpane().terminal.note_user_edit();
             }
-            if ((mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) && sym == SDLK_X) {
+            // Cmd+X only. Ctrl+X goes to the shell: it is how nano exits, and
+            // the start of emacs-style chords like zsh and bash's ^X^E.
+            if ((mod & SDL_KMOD_GUI) && sym == SDLK_X) {
                 perform_cut_action(tw);
                 return SDL_APP_CONTINUE;
             }
@@ -1841,6 +1934,34 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                                  tw->fpane().terminal.kbd_flags(), kitty_seq)) {
                 tw->fpane().pty.write_to_pty(kitty_seq.data(), kitty_seq.size());
                 continue;
+            }
+
+            // The macOS editing keys: Option and Command with the arrows and
+            // delete keys (see key_bindings.hpp).
+            if (const char* seq = key_bindings::editing_sequence(sym, mod)) {
+                // A selection in the command line is what a delete key
+                // removes, the same as plain Delete.
+                if ((sym == SDLK_BACKSPACE || sym == SDLK_DELETE) && delete_selection_in_prompt(tw)) continue;
+                // Command keys aren't counted as edits above, since most send
+                // nothing; these do.
+                if (mod & SDL_KMOD_GUI) tw->fpane().terminal.note_user_edit();
+                tw->fpane().pty.write_to_pty(seq, std::strlen(seq));
+                continue;
+            }
+
+            // Option as Meta: ESC, then what the key types without Option.
+            // The text-input event macOS follows it with is dropped, or the
+            // key would arrive twice.
+            if (key_bindings::option_is_meta(state->option_as_meta, mod) &&
+                !(mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL))) {
+                SDL_Keycode typed = SDL_GetKeyFromScancode(event->key.scancode,
+                                                           mod & (SDL_KMOD_SHIFT | SDL_KMOD_CAPS), false);
+                std::string meta_seq;
+                if (key_bindings::meta_sequence(typed, meta_seq)) {
+                    tw->fpane().pty.write_to_pty(meta_seq.data(), meta_seq.size());
+                    state->suppress_next_text_input = true;
+                    continue;
+                }
             }
 
             if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) {
@@ -1895,6 +2016,9 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             } else if (mod & SDL_KMOD_CTRL) {
                 if (sym >= SDLK_A && sym <= SDLK_Z) {
                     char control_char = static_cast<char>(sym - SDLK_A + 1);
+                    tw->fpane().pty.write_to_pty(&control_char, 1);
+                } else if (int byte = key_bindings::control_symbol_byte(sym); byte >= 0) {
+                    const char control_char = static_cast<char>(byte);
                     tw->fpane().pty.write_to_pty(&control_char, 1);
                 }
             }
@@ -1975,7 +2099,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             state->font_path = new_font_path;
 
             for (auto* tw : state->windows) {
-                if (tw->font_manager.load_font(tw->renderer, new_font_path, state->base_font_size * tw->display_scale, false)) {
+                if (tw->font_manager.load_font(tw->renderer, new_font_path, tw->font_size * tw->display_scale, false)) {
                     tw->cell_w = (tw->font_manager.get_cell_width() / tw->display_scale) + 1.0f;
                     tw->cell_h = (tw->font_manager.get_cell_height() / tw->display_scale) - 0.8f;
 
@@ -2360,7 +2484,24 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         if (int dir = get_pane_focus_requested()) {
             int dx = (dir == 1) ? -1 : (dir == 2) ? 1 : 0;
             int dy = (dir == 3) ? -1 : (dir == 4) ? 1 : 0;
+            // Directions are worked out from the panes' places on screen,
+            // which a zoom has taken away
+            unzoom_pane(state, state->active_window);
             focus_pane_directional(state->active_window, dx, dy);
+        }
+        if (int step = get_pane_cycle_requested()) {
+            cycle_pane_focus(state, state->active_window, step);
+        }
+        if (get_zoom_pane_requested()) {
+            toggle_zoom_pane(state, state->active_window);
+        }
+        if (get_clear_screen_requested()) {
+            clear_screen_and_scrollback(state->active_window);
+        }
+        if (int change = get_font_size_requested()) {
+            TerminalWindow* tw = state->active_window;
+            float size = (change == 2) ? state->base_font_size : tw->font_size + change;
+            set_window_font_size(state, tw, size);
         }
     }
 
@@ -2766,6 +2907,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         // video, bracketed around just this text draw so the video
         // background's own luminance is untouched.
         for (Pane* pane_ptr : all_panes(tw)) {
+            if (!pane_visible(tw, pane_ptr)) continue;
             Pane& pane = *pane_ptr;
             std::lock_guard<std::mutex> lock(pane.grid_mutex);
             pane.terminal.set_enable_ligatures(state->ligatures_enabled);
@@ -2791,7 +2933,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             }
 
             // Dim unfocused panes so the active one reads at a glance
-            if (pane_ptr != tw->focused && !tw->root->is_leaf()) {
+            if (pane_ptr != tw->focused && !tw->root->is_leaf() && !tw->zoomed) {
                 SDL_FRect dim = {
                     pane.rect.x * tw->display_scale,
                     pane.rect.y * tw->display_scale,
@@ -2806,7 +2948,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         }
 
         // Divider lines between panes
-        if (!tw->root->is_leaf()) {
+        if (!tw->root->is_leaf() && !tw->zoomed) {
             render_pane_dividers(tw, tw->root.get(), tw->display_scale);
         }
 

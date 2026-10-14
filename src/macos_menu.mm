@@ -110,6 +110,10 @@ static std::atomic<bool> g_split_pane_right_requested{false};
 static std::atomic<bool> g_split_pane_down_requested{false};
 static std::atomic<bool> g_close_pane_requested{false};
 static std::atomic<int> g_pane_focus_requested{0};
+static std::atomic<int> g_pane_cycle_requested{0};
+static std::atomic<bool> g_zoom_pane_requested{false};
+static std::atomic<bool> g_clear_screen_requested{false};
+static std::atomic<int> g_font_size_requested{0};
 
 void set_split_pane_right_requested(bool req) {
     g_split_pane_right_requested = req;
@@ -143,6 +147,38 @@ int get_pane_focus_requested() {
     return g_pane_focus_requested.exchange(0);
 }
 
+void set_pane_cycle_requested(int step) {
+    g_pane_cycle_requested = step;
+}
+
+int get_pane_cycle_requested() {
+    return g_pane_cycle_requested.exchange(0);
+}
+
+void set_zoom_pane_requested(bool req) {
+    g_zoom_pane_requested = req;
+}
+
+bool get_zoom_pane_requested() {
+    return g_zoom_pane_requested.exchange(false);
+}
+
+void set_clear_screen_requested(bool req) {
+    g_clear_screen_requested = req;
+}
+
+bool get_clear_screen_requested() {
+    return g_clear_screen_requested.exchange(false);
+}
+
+void set_font_size_requested(int change) {
+    g_font_size_requested = change;
+}
+
+int get_font_size_requested() {
+    return g_font_size_requested.exchange(0);
+}
+
 // C-linkage trigger to invoke the iteration loop frame update
 extern "C" void trigger_menu_render_tick();
 
@@ -162,6 +198,13 @@ extern "C" void trigger_menu_render_tick();
 - (void)splitPaneDown:(id)sender;
 - (void)closePane:(id)sender;
 - (void)selectPaneInDirection:(id)sender;
+- (void)selectNextPane:(id)sender;
+- (void)selectPreviousPane:(id)sender;
+- (void)zoomPane:(id)sender;
+- (void)clearScreen:(id)sender;
+- (void)biggerFont:(id)sender;
+- (void)smallerFont:(id)sender;
+- (void)defaultFontSize:(id)sender;
 - (void)onMenuTimer:(NSTimer*)timer;
 @end
 
@@ -265,6 +308,34 @@ extern "C" void trigger_menu_render_tick();
 // Direction is carried in the menu item's tag (1=left 2=right 3=up 4=down)
 - (void)selectPaneInDirection:(id)sender {
     set_pane_focus_requested((int)[sender tag]);
+}
+
+- (void)selectNextPane:(id)sender {
+    set_pane_cycle_requested(1);
+}
+
+- (void)selectPreviousPane:(id)sender {
+    set_pane_cycle_requested(-1);
+}
+
+- (void)zoomPane:(id)sender {
+    set_zoom_pane_requested(true);
+}
+
+- (void)clearScreen:(id)sender {
+    set_clear_screen_requested(true);
+}
+
+- (void)biggerFont:(id)sender {
+    set_font_size_requested(1);
+}
+
+- (void)smallerFont:(id)sender {
+    set_font_size_requested(-1);
+}
+
+- (void)defaultFontSize:(id)sender {
+    set_font_size_requested(2);
 }
 
 - (void)print:(id)sender {
@@ -458,6 +529,56 @@ void setup_macos_menu() {
         [editMenu addItem:[NSMenuItem separatorItem]];
         [editMenu addItem:findItem];
 
+        // ⌘K, as in Terminal, iTerm2 and Ghostty
+        NSMenuItem* clearItem = [[NSMenuItem alloc] initWithTitle:@"Clear Screen"
+                                                           action:@selector(clearScreen:)
+                                                    keyEquivalent:@"k"];
+        [clearItem setTarget:g_menu_handler];
+        [clearItem setEnabled:YES];
+        [editMenu addItem:[NSMenuItem separatorItem]];
+        [editMenu addItem:clearItem];
+
+        // View menu: font size, per window, the way Terminal's View menu
+        // has it. Bigger answers to ⌘= and to ⌘+ (Shift-=, on most layouts)
+        // -- the second through a hidden twin, since a menu item carries
+        // one key equivalent.
+        NSMenuItem* viewItem = nil;
+        for (NSMenuItem* item in [mainMenu itemArray]) {
+            if ([[item title] isEqualToString:@"View"]) {
+                viewItem = item;
+                break;
+            }
+        }
+        if (!viewItem) {
+            viewItem = [[NSMenuItem alloc] initWithTitle:@"View" action:nil keyEquivalent:@""];
+            [viewItem setSubmenu:[[NSMenu alloc] initWithTitle:@"View"]];
+            NSInteger at = [mainMenu indexOfItem:editItem];
+            [mainMenu insertItem:viewItem atIndex:(at >= 0 ? at + 1 : [mainMenu numberOfItems])];
+        }
+        NSMenu* viewMenu = [viewItem submenu];
+        [viewMenu removeAllItems];
+        [viewMenu setAutoenablesItems:NO];
+
+        NSMenuItem* biggerItem = [[NSMenuItem alloc] initWithTitle:@"Bigger"
+                                                            action:@selector(biggerFont:)
+                                                     keyEquivalent:@"="];
+        NSMenuItem* biggerPlusItem = [[NSMenuItem alloc] initWithTitle:@"Bigger"
+                                                                action:@selector(biggerFont:)
+                                                         keyEquivalent:@"+"];
+        [biggerPlusItem setHidden:YES];
+        [biggerPlusItem setAllowsKeyEquivalentWhenHidden:YES];
+        NSMenuItem* smallerItem = [[NSMenuItem alloc] initWithTitle:@"Smaller"
+                                                             action:@selector(smallerFont:)
+                                                      keyEquivalent:@"-"];
+        NSMenuItem* defaultSizeItem = [[NSMenuItem alloc] initWithTitle:@"Default Size"
+                                                                 action:@selector(defaultFontSize:)
+                                                          keyEquivalent:@"0"];
+        for (NSMenuItem* item in @[biggerItem, biggerPlusItem, smallerItem, defaultSizeItem]) {
+            [item setTarget:g_menu_handler];
+            [item setEnabled:YES];
+            [viewMenu addItem:item];
+        }
+
         // Split-pane commands live in the Window menu: unlike New Window/New
         // Tab (which create a new session), splitting changes this window's
         // *layout* -- the same category as Window's own Minimize/Zoom, so it
@@ -527,6 +648,23 @@ void setup_macos_menu() {
             [item setTarget:g_menu_handler];
             [item setEnabled:YES];
             [item setTag:dir.tag];
+            [windowMenu insertItem:item atIndex:insertAt++];
+        }
+        // ⌘] and ⌘[ step through the panes in order, and ⇧⌘↩ zooms one to
+        // fill the window -- iTerm2's keys, which Ghostty shares.
+        NSMenuItem* nextPaneItem = [[NSMenuItem alloc] initWithTitle:@"Select Next Pane"
+                                                              action:@selector(selectNextPane:)
+                                                       keyEquivalent:@"]"];
+        NSMenuItem* previousPaneItem = [[NSMenuItem alloc] initWithTitle:@"Select Previous Pane"
+                                                                  action:@selector(selectPreviousPane:)
+                                                           keyEquivalent:@"["];
+        NSMenuItem* zoomPaneItem = [[NSMenuItem alloc] initWithTitle:@"Zoom Pane"
+                                                              action:@selector(zoomPane:)
+                                                       keyEquivalent:@"\r"];
+        [zoomPaneItem setKeyEquivalentModifierMask:(NSEventModifierFlagCommand | NSEventModifierFlagShift)];
+        for (NSMenuItem* item in @[nextPaneItem, previousPaneItem, zoomPaneItem]) {
+            [item setTarget:g_menu_handler];
+            [item setEnabled:YES];
             [windowMenu insertItem:item atIndex:insertAt++];
         }
         [windowMenu insertItem:closePaneItem atIndex:insertAt++];
@@ -704,6 +842,19 @@ void add_window_as_tab(SDL_Window* parent_sdl_win, SDL_Window* child_sdl_win) {
             [parent_nswin addTabbedWindow:child_nswin ordered:NSWindowAbove];
             [child_nswin makeKeyAndOrderFront:nil];
         }
+    }
+}
+
+void select_native_tab(SDL_Window* sdl_win, int index) {
+    @autoreleasepool {
+        if (!sdl_win || index < 1) return;
+        SDL_PropertiesID props = SDL_GetWindowProperties(sdl_win);
+        NSWindow* nswin = (__bridge NSWindow*)SDL_GetPointerProperty(props, "SDL.window.cocoa.window", NULL);
+        NSArray<NSWindow*>* tabs = [nswin tabbedWindows];
+        if ([tabs count] < 2) return;
+        NSUInteger at = (index >= 9) ? [tabs count] - 1 : static_cast<NSUInteger>(index - 1);
+        if (at >= [tabs count]) return;
+        [[tabs objectAtIndex:at] makeKeyAndOrderFront:nil];
     }
 }
 
