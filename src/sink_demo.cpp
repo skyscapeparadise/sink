@@ -1133,7 +1133,7 @@ void run_demo(TerminalWindow* tw, AppState* state) {
     tw->demo_running.store(true);
     tw->demo_skip_requested.store(false);
 
-    std::string prompt = "moon@Thunderstorm ~ % ";
+    std::string prompt = "moon@River ~ % ";
     
     // 1. Initial screen clear
     feed_to_terminal(tw, "\033[2J\033[H");
