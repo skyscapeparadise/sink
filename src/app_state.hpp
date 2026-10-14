@@ -120,6 +120,12 @@ struct TerminalWindow {
     // how the tree is split puts it back first.
     Pane* zoomed = nullptr;
 
+    // The title the focused pane's program asked for (OSC 0/2), and the one
+    // last given to the window -- which differs while broadcasting, when a
+    // warning goes in front of it. See sync_window_title().
+    std::string shell_title = "sink";
+    std::string shown_title;
+
     // Font size in points. Per window, like Terminal's View > Bigger and
     // Smaller; every window starts at AppState::base_font_size.
     float font_size = 15.0f;

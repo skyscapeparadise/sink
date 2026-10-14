@@ -114,6 +114,8 @@ static std::atomic<int> g_pane_cycle_requested{0};
 static std::atomic<bool> g_zoom_pane_requested{false};
 static std::atomic<bool> g_clear_screen_requested{false};
 static std::atomic<int> g_font_size_requested{0};
+static std::atomic<bool> g_toggle_broadcast_requested{false};
+static NSMenuItem* g_broadcast_item = nil;
 
 void set_split_pane_right_requested(bool req) {
     g_split_pane_right_requested = req;
@@ -179,6 +181,24 @@ int get_font_size_requested() {
     return g_font_size_requested.exchange(0);
 }
 
+void set_toggle_broadcast_requested(bool req) {
+    g_toggle_broadcast_requested = req;
+}
+
+bool get_toggle_broadcast_requested() {
+    return g_toggle_broadcast_requested.exchange(false);
+}
+
+void set_broadcast_menu_checked(bool checked) {
+    [g_broadcast_item setState:(checked ? NSControlStateValueOn : NSControlStateValueOff)];
+}
+
+void set_dock_badge(const char* label_utf8) {
+    @autoreleasepool {
+        [[NSApp dockTile] setBadgeLabel:(label_utf8 ? [NSString stringWithUTF8String:label_utf8] : nil)];
+    }
+}
+
 // C-linkage trigger to invoke the iteration loop frame update
 extern "C" void trigger_menu_render_tick();
 
@@ -205,6 +225,7 @@ extern "C" void trigger_menu_render_tick();
 - (void)biggerFont:(id)sender;
 - (void)smallerFont:(id)sender;
 - (void)defaultFontSize:(id)sender;
+- (void)toggleBroadcast:(id)sender;
 - (void)onMenuTimer:(NSTimer*)timer;
 @end
 
@@ -336,6 +357,10 @@ extern "C" void trigger_menu_render_tick();
 
 - (void)defaultFontSize:(id)sender {
     set_font_size_requested(2);
+}
+
+- (void)toggleBroadcast:(id)sender {
+    set_toggle_broadcast_requested(true);
 }
 
 - (void)print:(id)sender {
@@ -668,6 +693,17 @@ void setup_macos_menu() {
             [windowMenu insertItem:item atIndex:insertAt++];
         }
         [windowMenu insertItem:closePaneItem atIndex:insertAt++];
+
+        // Broadcast Input, with a checkmark while it's on, so the menu bar
+        // can always say whether typing is going everywhere. No shortcut:
+        // this is not something to switch on by accident.
+        g_broadcast_item = [[NSMenuItem alloc] initWithTitle:@"Broadcast Input"
+                                                      action:@selector(toggleBroadcast:)
+                                               keyEquivalent:@""];
+        [g_broadcast_item setTarget:g_menu_handler];
+        [g_broadcast_item setEnabled:YES];
+        [windowMenu insertItem:[NSMenuItem separatorItem] atIndex:insertAt++];
+        [windowMenu insertItem:g_broadcast_item atIndex:insertAt++];
         [windowMenu insertItem:[NSMenuItem separatorItem] atIndex:insertAt++];
     }
 }

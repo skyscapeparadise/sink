@@ -1251,6 +1251,8 @@ static bool delete_selection_in_prompt(TerminalWindow* tw) {
     return true;
 }
 
+static void set_input_broadcasting(AppState* state, bool on);
+
 static void perform_cut_action(TerminalWindow* tw) {
     if (!tw || !tw->fpane().terminal.has_selection()) return;
     std::string selected_text = tw->fpane().terminal.get_selected_text();
@@ -2143,7 +2145,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         } else if (event->user.code == 5) { // Input broadcasting toggle
             bool broadcast = (bool)(intptr_t)event->user.data1;
             std::cout << "Settings Event: input broadcasting toggled: " << (broadcast ? "ON" : "OFF") << std::endl;
-            state->input_broadcasting = broadcast;
+            set_input_broadcasting(state, broadcast);
         } else if (event->user.code == 10) { // Switch preset
             char* name = (char*)event->user.data1;
             std::cout << "Settings Event: switched to preset '" << name << "'" << std::endl;
@@ -2248,6 +2250,74 @@ static void render_crt_effects(SDL_Renderer* renderer, int width, int height, fl
     SDL_SetRenderDrawColor(renderer, 255, 240, 210, 8); // Soft warm phosphor glow
     SDL_FRect screen_rect = { 0.0f, 0.0f, static_cast<float>(width), static_cast<float>(height) };
     SDL_RenderFillRect(renderer, &screen_rect);
+}
+
+// Broadcast mode sends typing to the focused pane of every window, so it
+// has to be impossible to forget it's on. Every sign of it is switched here,
+// together, whether from the settings window or Window > Broadcast Input:
+// the settings button, the menu checkmark, the Dock badge, and -- through
+// sync_window_title() and render_broadcast_marker() each frame -- a warning
+// in front of every window title and an outline round every receiving pane.
+static void set_input_broadcasting(AppState* state, bool on) {
+    state->input_broadcasting = on;
+    state->settings_ui.set_broadcasting(on);
+    set_broadcast_menu_checked(on);
+    set_dock_badge(on ? "\u26A0\uFE0E" : nullptr);
+}
+
+// The window's title, with the broadcast warning in front of it while
+// typing goes everywhere. Checked each frame rather than at each change, so
+// windows opened while broadcasting get it too.
+static void sync_window_title(AppState* state, TerminalWindow* tw) {
+    std::string want = state->input_broadcasting ? "\u26A0\uFE0E broadcasting \u00B7 " + tw->shell_title
+                                                 : tw->shell_title;
+    if (want != tw->shown_title) {
+        SDL_SetWindowTitle(tw->window, want.c_str());
+        tw->shown_title = want;
+    }
+}
+
+// The outline and "broadcasting" tag on a pane receiving broadcast input,
+// in coral: warm enough to stand out from the water colours and whatever
+// video is behind the text, without reading as an error. Drawn after the
+// CRT pass so it stays crisp.
+static void render_broadcast_marker(TerminalWindow* tw, const Pane& pane) {
+    SDL_Renderer* r = tw->renderer;
+    const float s = tw->display_scale;
+    const SDL_FRect area = { pane.rect.x * s, pane.rect.y * s, pane.rect.w * s, pane.rect.h * s };
+    const float edge = 2.0f * s;
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(r, 255, 122, 89, 235);
+    const SDL_FRect sides[4] = {
+        { area.x, area.y, area.w, edge },
+        { area.x, area.y + area.h - edge, area.w, edge },
+        { area.x, area.y, edge, area.h },
+        { area.x + area.w - edge, area.y, edge, area.h },
+    };
+    SDL_RenderFillRects(r, sides, 4);
+
+    // The tag, in the top right corner
+    const std::string label = "broadcasting";
+    const float cell_w = tw->font_manager.get_cell_width();
+    const float pad = 6.0f * s;
+    const float tag_w = label.size() * cell_w + 2.0f * pad;
+    const float tag_h = tw->font_manager.get_cell_height() + pad;
+    const SDL_FRect tag = { area.x + area.w - tag_w - edge, area.y + edge, tag_w, tag_h };
+    SDL_RenderFillRect(r, &tag);
+
+    float x = tag.x + pad;
+    const float y = tag.y + pad / 2.0f;
+    for (char ch : label) {
+        const GlyphInfo* g = tw->font_manager.get_glyph(r, static_cast<char32_t>(ch));
+        if (g) {
+            SDL_FRect src = g->src_rect;
+            SDL_FRect dst = { x, y, g->src_rect.w, g->src_rect.h };
+            SDL_SetTextureColorMod(tw->font_manager.get_atlas_texture(), 30, 14, 10);
+            SDL_RenderTexture(r, tw->font_manager.get_atlas_texture(), &src, &dst);
+        }
+        x += cell_w;
+    }
+    SDL_SetTextureColorMod(tw->font_manager.get_atlas_texture(), 255, 255, 255);
 }
 
 static void render_search_drawer(TerminalWindow* tw, int width, int height) {
@@ -2445,6 +2515,10 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             state->settings_ui.set_crt_effect_enabled(crt);
             save_config(state);
         }
+    }
+
+    if (get_toggle_broadcast_requested()) {
+        set_input_broadcasting(state, !state->input_broadcasting);
     }
 
     // Process Window spawning menu actions
@@ -2814,7 +2888,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         // the focused pane owns the window title)
         if (pane_ptr == tw->focused && pane.terminal.has_pending_title()) {
             std::string title = pane.terminal.take_window_title();
-            SDL_SetWindowTitle(tw->window, title.empty() ? "sink" : title.c_str());
+            tw->shell_title = title.empty() ? "sink" : title;
         }
 
         // Send anything the parser owes the shell (DSR cursor reports, DA
@@ -2964,6 +3038,12 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         if (tw->search_drawer_open) {
             render_search_drawer(tw, draw_w, draw_h);
         }
+
+        // Broadcasting: mark the pane this window's typing goes to
+        if (state->input_broadcasting && tw->focused && pane_visible(tw, tw->focused)) {
+            render_broadcast_marker(tw, *tw->focused);
+        }
+        sync_window_title(state, tw);
 
         // E. Draw black dissolve overlay mask
         if (tw->fade_opacity > 0.0f) {

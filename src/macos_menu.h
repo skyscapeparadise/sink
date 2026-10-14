@@ -94,6 +94,13 @@ bool get_clear_screen_requested();
 // 2 = back to the default, 0 = none. The getter consumes the pending request.
 void set_font_size_requested(int change);
 int get_font_size_requested();
+// Window > Broadcast Input: a request to flip broadcasting, and the item's
+// checkmark, which follows the setting however it was changed.
+void set_toggle_broadcast_requested(bool requested);
+bool get_toggle_broadcast_requested();
+void set_broadcast_menu_checked(bool checked);
+// The badge on sink's Dock icon; null clears it.
+void set_dock_badge(const char* label_utf8);
 // Brings the window's index-th native tab (1-based) to the front; 9 or more
 // means the last tab, as in Safari and Terminal. No-op without tabs.
 void select_native_tab(SDL_Window* sdl_win, int index);
