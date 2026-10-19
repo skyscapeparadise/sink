@@ -26,6 +26,9 @@ CXXFLAGS=(
     "-DSINK_VERSION=\"$VERSION\"" "-DSINK_VERSION_NUM=$VERSION_NUM"
     -Isrc -I/opt/homebrew/include
     -isystem vendor/textstack/include -isystem vendor/sdl3_image/include
+    # libc++'s checks, as in the app (see CMakeLists.txt), at the extensive
+    # level: slower, but a fuzzer is where a broken precondition should surface.
+    -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE
 )
 # Homebrew's clang compiles against its own libc++ headers, so it links its
 # own libc++ too; the system one may lack symbols the newer headers expect.

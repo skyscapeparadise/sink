@@ -224,8 +224,16 @@ void ANSIParser::note_trigger_run(TerminalGrid& grid, const char* run, int n) {
 }
 
 void ANSIParser::note_trigger_char(TerminalGrid& grid, char32_t c) {
-    char ch = static_cast<char>(c);
-    note_trigger_run(grid, &ch, 1);
+    // The one-character run points into a constant table, not at a local.
+    // Under -fstack-protector-strong a local whose address is passed on gets a
+    // stack canary, and this is inlined into process_char, so the canary was
+    // paid on every byte of every escape sequence: ~5% on SGR-heavy output.
+    static constexpr std::array<char, 128> kAscii = [] {
+        std::array<char, 128> a{};
+        for (int i = 0; i < 128; ++i) a[i] = static_cast<char>(i);
+        return a;
+    }();
+    note_trigger_run(grid, &kAscii[c & 0x7F], 1);
 }
 
 // Standard base64, defined further down next to the OSC 52 clipboard decode

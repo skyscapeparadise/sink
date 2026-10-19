@@ -48,6 +48,33 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
+# Hardening. sink parses whatever bytes reach the terminal -- a file you cat,
+# an ssh session -- so a memory bug in its own code is reachable by anyone who
+# can put text in front of you. These make such a bug stop the program instead
+# of handing over control. Apple's toolchain already gives PIE (ASLR) and a
+# basic stack protector; this adds what it does not:
+#
+# - libc++ hardening: bounds checks on vector/string/span/string_view indexing,
+#   optional and iterator misuse. A violation traps. This is what stands in for
+#   _FORTIFY_SOURCE in C++: the SDK defines it, but its checked memcpy etc. are
+#   macros that libc++'s headers remove, so C++ code never gets them.
+# - -fstack-protector-strong: canaries on every function with a local array or
+#   address-taken local, not only those with char buffers.
+# - -ftrivial-auto-var-init=zero: an uninitialized local reads as zero rather
+#   than whatever the stack last held.
+# - format-string misuse as an error.
+#
+# Applies to every target, tests included, so the suites run with the same
+# checks the app ships with. Vendored libraries are built by their own scripts
+# and are not affected.
+add_compile_definitions(_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_FAST)
+add_compile_options(
+    -fstack-protector-strong
+    -ftrivial-auto-var-init=zero
+    -Wformat
+    -Werror=format-security
+)
+
 # Find SDL3, SDL3_ttf, and SDL3_image
 # 3.4.0 minimum: the video background hue-shift effect uses the GPU render
 # backend and SDL_GPURenderState custom-shader API, both added in 3.4.0.
