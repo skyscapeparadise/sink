@@ -434,6 +434,13 @@ static void setup_updater(NSMenu* appMenu) {
     [appMenu insertItem:updateItem atIndex:1];
 }
 
+void stop_menu_render_timer() {
+    if (g_menu_handler && g_menu_handler.menuTimer) {
+        [g_menu_handler.menuTimer invalidate];
+        g_menu_handler.menuTimer = nil;
+    }
+}
+
 void setup_macos_menu() {
     @autoreleasepool {
         NSApplication* app = [NSApplication sharedApplication];

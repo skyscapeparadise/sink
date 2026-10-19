@@ -3101,6 +3101,14 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
 
 // SDL3 Application shutdown clean-up entry point
 void SDL_AppQuit(void* appstate, SDL_AppResult result) {
+    // The menu timer runs a frame through g_app_state, and it can still fire
+    // after this returns: SDL_Quit's Cocoa teardown spins the run loop. A
+    // frame on the state deleted below crashed every quit from SDL 3.4.18 on.
+#if defined(__APPLE__)
+    stop_menu_render_timer();
+#endif
+    g_app_state = nullptr;
+
     AppState* state = static_cast<AppState*>(appstate);
     if (state) {
         state->settings_ui.close();

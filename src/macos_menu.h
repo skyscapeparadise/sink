@@ -9,6 +9,10 @@ extern "C" {
 // Add "File", "Edit", and "Settings..." menus to the macOS application menu bar
 void setup_macos_menu();
 
+// Stops the 60Hz timer that drives frames during AppKit's blocking loops.
+// Called at quit, before the app state the timer's frames use is freed.
+void stop_menu_render_timer();
+
 // Groups a newly created child window as a tab inside a parent window
 void add_window_as_tab(SDL_Window* parent_sdl_win, SDL_Window* child_sdl_win);
 
