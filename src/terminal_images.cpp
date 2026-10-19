@@ -468,6 +468,23 @@ bool decode_png(const void* data, size_t size,
         std::memcmp(data, kSignature, sizeof(kSignature)) != 0) {
         return false;
     }
+    // The size limit is enforced from the header, before decoding. The decoder
+    // (stb_image, inside SDL3) accepts up to 2^24 pixels a side and a 1 GiB
+    // raw image, so a few hundred bytes of PNG declaring a huge image would
+    // otherwise make it allocate and inflate all of that before the check
+    // below could refuse it. IHDR is required to be the first chunk: its
+    // width and height are big-endian at bytes 16-23.
+    const unsigned char* bytes = static_cast<const unsigned char*>(data);
+    if (size < 24 || std::memcmp(bytes + 12, "IHDR", 4) != 0) return false;
+    auto be32 = [](const unsigned char* p) {
+        return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
+               (static_cast<uint32_t>(p[2]) << 8) | p[3];
+    };
+    const uint32_t header_w = be32(bytes + 16), header_h = be32(bytes + 20);
+    if (header_w == 0 || header_h == 0 ||
+        static_cast<uint64_t>(header_w) * header_h > TerminalImages::kMaxImagePixels) {
+        return false;
+    }
     SDL_IOStream* io = SDL_IOFromConstMem(data, size);
     if (!io) return false;
     SDL_Surface* surf = IMG_LoadPNG_IO(io);
