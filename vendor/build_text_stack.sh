@@ -9,12 +9,11 @@
 #   * graphite2 only matters for SIL Graphite fonts. Monaspace and every other
 #     font sink ships or is likely to load is OpenType.
 #
-# HarfBuzz itself is KEPT. sink currently renders per-glyph via
-# TTF_RenderGlyph_Blended and never calls a shaping API, so harfbuzz is
-# presently unused -- but dropping it would foreclose ligature/texture-healing
-# support in Monaspace Neon, which is a feature worth leaving the door open on.
-# Building SDL3_ttf with -DSDLTTF_HARFBUZZ=OFF would save a further ~1.2MB if
-# that trade is ever worth making.
+# HarfBuzz itself is KEPT, and is in use: grapheme clusters (combining marks,
+# emoji ZWJ sequences) are shaped through it by TTF_RenderText_Blended (see
+# FontManager::get_cluster_glyph). That text is whatever reaches the terminal,
+# so HarfBuzz is on the untrusted-input path -- keep it current. Single glyphs
+# still render via TTF_RenderGlyph_Blended, FreeType only.
 #
 # freetype comes from Homebrew: it's small, its only dep is libpng (needed for
 # colour bitmap glyphs, i.e. emoji), and it carries no license problem.
@@ -23,8 +22,8 @@
 
 set -euo pipefail
 
-HB_VERSION="14.3.1"
-HB_SHA256="9dae9538aae2ffdf70cec31f2c27bf68e2aaeeae3112688467697d5faf6194f7"
+HB_VERSION="14.6.0"
+HB_SHA256="d07a007327277708a2a73ae437887cdbaf282937f6d03ca5467723e9099af586"
 TTF_VERSION="3.2.2"
 TTF_SHA256="63547d58d0185c833213885b635a2c0548201cc8f301e6587c0be1a67e1e045d"
 

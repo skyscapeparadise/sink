@@ -15,8 +15,8 @@
 
 set -euo pipefail
 
-FFMPEG_VERSION="8.1.2"
-FFMPEG_SHA256="464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c"
+FFMPEG_VERSION="8.1.3"
+FFMPEG_SHA256="7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PREFIX="${SCRIPT_DIR}/ffmpeg"

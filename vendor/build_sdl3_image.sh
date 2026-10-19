@@ -11,8 +11,11 @@
 # lzma, zstd, ...) into the app bundle to render two vector logos.
 #
 # This build enables SVG (vendored nanosvg, no external deps) plus the
-# header-only formats that cost nothing, and uses SDL_image's built-in stb
-# backend for PNG/JPEG so libpng/libjpeg-turbo aren't needed either. Result:
+# header-only formats that cost nothing, and needs neither libpng nor
+# libjpeg-turbo: JPEG uses SDL_image's built-in stb backend, and PNG is handed
+# to SDL3 itself (IMG_LoadPNG_IO falls through to SDL_LoadPNG_IO, SDL3's own
+# copy of stb_image). That makes SDL3, not this library, the decoder kitty
+# images from the terminal reach -- keep SDL3 current. Result:
 # libSDL3_image with zero non-system dependencies beyond SDL3 itself.
 #
 # Output: vendor/sdl3_image/{include,lib}. Picked up by CMakeLists.txt.
@@ -68,8 +71,8 @@ tar -xzf "${TARBALL}" -C "${BUILD_DIR}"
 # The four formats below are the only ones with external dependencies, and
 # each pulls in a subtree: AVIF -> libavif, libaom, libdav1d; JXL -> libjxl,
 # libhwy, brotli, lcms2; TIF -> libtiff, liblzma, libzstd; WEBP -> libwebp,
-# libsharpyuv. All off. BACKEND_STB=ON keeps PNG/JPG working via SDL_image's
-# bundled stb_image rather than linking libpng/libjpeg-turbo.
+# libsharpyuv. All off. BACKEND_STB=ON keeps JPEG working via SDL_image's
+# bundled stb_image, and PNG via SDL3's, rather than linking libpng/libjpeg-turbo.
 echo "configuring (SVG + dependency-free formats only)..."
 cmake -S "${SRC_DIR}" -B "${SRC_DIR}/build" \
     -DCMAKE_BUILD_TYPE=Release \
