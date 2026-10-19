@@ -2,6 +2,20 @@
 #include <iostream>
 #include <algorithm>
 #include <vector>
+#include <climits>
+#include <cstdlib>
+
+std::string FontManager::bundled_fallback_path_;
+
+namespace {
+// Whether two paths name the same file, so the configured font is not also
+// opened as its own fallback.
+bool same_file(const std::string& a, const std::string& b) {
+    char ra[PATH_MAX], rb[PATH_MAX];
+    if (!realpath(a.c_str(), ra) || !realpath(b.c_str(), rb)) return a == b;
+    return std::string(ra) == rb;
+}
+}
 
 FontManager::FontManager() {}
 
@@ -156,6 +170,11 @@ bool FontManager::load_font(SDL_Renderer* renderer, const std::string& font_path
             "/System/Library/Fonts/SFNSMono.ttf",
             "/System/Library/Fonts/Monaco.ttf",
             nullptr } },
+        // Braille (spinners, plots) and the math, arrow and technical
+        // symbols the faces above still miss.
+        { "symbols", {
+            "/System/Library/Fonts/Apple Symbols.ttf",
+            nullptr } },
         // CJK ideographs and kana.
         { "CJK", {
             "/System/Library/Fonts/PingFang.ttc",
@@ -163,6 +182,14 @@ bool FontManager::load_font(SDL_Renderer* renderer, const std::string& font_path
             "/System/Library/Fonts/STHeiti Light.ttc",
             nullptr } },
     };
+    if (!bundled_fallback_path_.empty() && !same_file(bundled_fallback_path_, font_path)) {
+        if (TTF_Font* neon = TTF_OpenFont(bundled_fallback_path_.c_str(), font_size)) {
+            fallback_fonts_.push_back(neon);
+        } else {
+            std::cerr << "Warning: failed to open bundled fallback font "
+                      << bundled_fallback_path_ << std::endl;
+        }
+    }
     for (const FallbackGroup& group : kFallbacks) {
         TTF_Font* opened = nullptr;
         for (int i = 0; i < 4 && group.paths[i] && !opened; ++i) {
@@ -517,26 +544,32 @@ const GlyphInfo* FontManager::get_cluster_glyph(SDL_Renderer* renderer, const st
 
     if (!renderer || !dynamic_atlas_texture_ || utf8.empty()) return nullptr;
 
+    // Decoded up front: if the configured font lacks the base character it
+    // would still shape the cluster, as a missing-glyph box, so that case has
+    // to go straight to the fallback chain rather than waiting for a failure.
+    unsigned char b = static_cast<unsigned char>(utf8[0]);
+    char32_t base = b;
+    if (b >= 0xF0 && utf8.size() >= 4) {
+        base = ((b & 0x07u) << 18) | ((utf8[1] & 0x3Fu) << 12) |
+               ((utf8[2] & 0x3Fu) << 6) | (utf8[3] & 0x3Fu);
+    } else if (b >= 0xE0 && utf8.size() >= 3) {
+        base = ((b & 0x0Fu) << 12) | ((utf8[1] & 0x3Fu) << 6) | (utf8[2] & 0x3Fu);
+    } else if (b >= 0xC0 && utf8.size() >= 2) {
+        base = ((b & 0x1Fu) << 6) | (utf8[1] & 0x3Fu);
+    }
+
     // Shaped by whichever face has the base character, so a cluster whose base
     // came from a fallback is rendered by that same fallback rather than being
     // dropped by the configured font.
     TTF_Font* font = font_for_style(style);
     SDL_Color white = {255, 255, 255, 255};
-    SDL_Surface* surf = TTF_RenderText_Blended(font, utf8.data(), utf8.size(), white);
+    SDL_Surface* surf = TTF_FontHasGlyph(font, base)
+        ? TTF_RenderText_Blended(font, utf8.data(), utf8.size(), white)
+        : nullptr;
     if (!surf || surf->w <= 0 || surf->h <= 0) {
         if (surf) SDL_DestroySurface(surf);
         // Try the fallback chain on the cluster's base character. Emoji ZWJ
         // sequences in particular will not come from the text face.
-        unsigned char b = static_cast<unsigned char>(utf8[0]);
-        char32_t base = b;
-        if (b >= 0xF0 && utf8.size() >= 4) {
-            base = ((b & 0x07u) << 18) | ((utf8[1] & 0x3Fu) << 12) |
-                   ((utf8[2] & 0x3Fu) << 6) | (utf8[3] & 0x3Fu);
-        } else if (b >= 0xE0 && utf8.size() >= 3) {
-            base = ((b & 0x0Fu) << 12) | ((utf8[1] & 0x3Fu) << 6) | (utf8[2] & 0x3Fu);
-        } else if (b >= 0xC0 && utf8.size() >= 2) {
-            base = ((b & 0x1Fu) << 6) | (utf8[1] & 0x3Fu);
-        }
         TTF_Font* alt = nullptr;
         if (is_emoji_codepoint(base) && emoji_font_ && TTF_FontHasGlyph(emoji_font_, base)) {
             alt = emoji_font_;
@@ -604,6 +637,10 @@ bool FontManager::reset_dynamic_atlas() const {
     std::vector<uint32_t> empty_pixels(static_cast<size_t>(kDynamicAtlasSize) * kDynamicAtlasSize, 0);
     SDL_UpdateTexture(dynamic_atlas_texture_, nullptr, empty_pixels.data(), kDynamicAtlasSize * sizeof(uint32_t));
     return true;
+}
+
+bool FontManager::has_ligature_glyph(char32_t codepoint) const {
+    return font_ && TTF_FontHasGlyph(font_, codepoint);
 }
 
 const GlyphInfo* FontManager::get_ligature_glyph(SDL_Renderer* renderer, char32_t codepoint) const {

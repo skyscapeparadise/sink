@@ -22,6 +22,12 @@ public:
 
     bool load_font(SDL_Renderer* renderer, const std::string& font_path, float font_size, bool bold = false);
 
+    // The bundled Monaspace Neon, consulted first when the configured font
+    // has no glyph for a codepoint, so a user's own typeface borrows sink's
+    // before any system face. Set once at startup, before any load_font();
+    // an empty path (nothing bundled) just leaves it out of the chain.
+    static void set_bundled_fallback_path(const std::string& path) { bundled_fallback_path_ = path; }
+
     SDL_Texture* get_atlas_texture() const { return atlas_texture_; }
     SDL_Texture* get_dynamic_atlas_texture() const { return dynamic_atlas_texture_; }
 
@@ -54,6 +60,13 @@ public:
     // ligatures look soft/blurry compared to normal glyphs.
     const GlyphInfo* get_ligature_glyph(SDL_Renderer* renderer, char32_t codepoint) const;
 
+    // Whether the configured font itself draws this ligature substitute.
+    // Without it the pair is left as its two characters: a substitute from a
+    // fallback face would not match, and the regular face has nothing but a
+    // missing-glyph box (Monaspace Neon has no U+226B, so Python's ">>>"
+    // showed one).
+    bool has_ligature_glyph(char32_t codepoint) const;
+
     // Opens a frame for the glyph atlas. Only the reset budget is per-frame;
     // cached glyphs are untouched and survive across frames as before.
     void begin_frame() const { dynamic_resets_this_frame_ = 0; }
@@ -73,20 +86,23 @@ private:
     TTF_Font* font_bold_italic_ = nullptr;
     TTF_Font* emoji_font_ = nullptr;
 
-    // System faces consulted, in order, when the configured font has no glyph
-    // for a codepoint. Before this existed the chain was just the configured
+    // Faces consulted, in order, when the configured font has no glyph for a
+    // codepoint. Before this existed the chain was just the configured
     // font then Apple Color Emoji, and anything neither covered fell back to a
     // space -- so with the bundled Monaspace Neon (779 glyphs, no box-drawing
     // block) every ncurses frame, every DEC Special Graphics line and all CJK
     // rendered as blank cells.
     //
-    // Menlo comes first: it is monospaced, metrically close, and carries the
-    // box-drawing, block-element and symbol ranges terminals lean on. The CJK
-    // face follows, then emoji, which stays last because it is the only
+    // The bundled Monaspace Neon comes first (unless it is the configured
+    // font): it is what sink is designed around and covers box drawing,
+    // powerline and most symbols. Menlo follows: monospaced, metrically
+    // close, with the arrows Neon lacks. Apple Symbols fills in braille and
+    // the remaining math and technical symbols. The CJK face follows, then emoji, which stays last because it is the only
     // colour font and the only one whose glyphs are square rather than
     // cell-shaped.
     std::vector<TTF_Font*> fallback_fonts_;
     TTF_Font* first_fallback_with(char32_t codepoint) const;
+    static std::string bundled_fallback_path_;
     TTF_Font* ligature_font_ = nullptr; // same face as font_, ~2x point size
     SDL_Texture* atlas_texture_ = nullptr;
     SDL_Texture* dynamic_atlas_texture_ = nullptr;

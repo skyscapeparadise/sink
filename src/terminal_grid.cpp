@@ -1987,31 +1987,26 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
             char32_t render_cp = base_cp;
             bool skip_text = false;
 
+            // A pair is only substituted when the font draws the substitute;
+            // otherwise both characters render as themselves.
+            auto ligature_for = [&](char32_t c1, char32_t c2) -> char32_t {
+                char32_t sub = 0;
+                if (c1 == '-' && c2 == '>') sub = 0x2192; // →
+                else if (c1 == '=' && c2 == '>') sub = 0x21D2; // ⇒
+                else if (c1 == '!' && c2 == '=') sub = 0x2260; // ≠
+                else if (c1 == '<' && c2 == '=') sub = 0x2264; // ≤
+                else if (c1 == '>' && c2 == '=') sub = 0x2265; // ≥
+                else if (c1 == '=' && c2 == '=') sub = 0x2261; // ≡
+                else if (c1 == ':' && c2 == ':') sub = 0x2237; // ∷
+                else if (c1 == '<' && c2 == '<') sub = 0x226A; // ≪
+                else if (c1 == '>' && c2 == '>') sub = 0x226B; // ≫
+                return (sub && font_manager.has_ligature_glyph(sub)) ? sub : 0;
+            };
             if (enable_ligatures_ && !is_cluster_cell && c < cols_ - 1) {
-                const Cell& next_cell = cell_of(c + 1);
-                char32_t c1 = base_cp;
-                char32_t c2 = cell_base(next_cell);
-                if (c1 == '-' && c2 == '>') render_cp = 0x2192; // →
-                else if (c1 == '=' && c2 == '>') render_cp = 0x21D2; // ⇒
-                else if (c1 == '!' && c2 == '=') render_cp = 0x2260; // ≠
-                else if (c1 == '<' && c2 == '=') render_cp = 0x2264; // ≤
-                else if (c1 == '>' && c2 == '=') render_cp = 0x2265; // ≥
-                else if (c1 == '=' && c2 == '=') render_cp = 0x2261; // ≡
-                else if (c1 == ':' && c2 == ':') render_cp = 0x2237; // ∷
-                else if (c1 == '<' && c2 == '<') render_cp = 0x226A; // ≪
-                else if (c1 == '>' && c2 == '>') render_cp = 0x226B; // ≫
+                if (char32_t sub = ligature_for(base_cp, cell_base(cell_of(c + 1)))) render_cp = sub;
             }
             if (enable_ligatures_ && !is_cluster_cell && c > 0) {
-                const Cell& prev_cell = cell_of(c - 1);
-                char32_t p1 = cell_base(prev_cell);
-                char32_t p2 = base_cp;
-                if ((p1 == '-' && p2 == '>') || (p1 == '=' && p2 == '>') ||
-                    (p1 == '!' && p2 == '=') || (p1 == '<' && p2 == '=') ||
-                    (p1 == '>' && p2 == '=') || (p1 == '=' && p2 == '=') ||
-                    (p1 == ':' && p2 == ':') || (p1 == '<' && p2 == '<') ||
-                    (p1 == '>' && p2 == '>')) {
-                    skip_text = true;
-                }
+                if (ligature_for(cell_base(cell_of(c - 1)), base_cp)) skip_text = true;
             }
 
             // Populate Text Geometry

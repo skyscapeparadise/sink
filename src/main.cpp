@@ -271,16 +271,28 @@ static std::string resolve_default_video_path() {
     return default_video;
 }
 
-static std::string resolve_default_font_path() {
-    std::string resolved_font = get_bundle_resource_path("MonaspaceNeon-Regular.otf");
-    FILE* f_font = fopen(resolved_font.c_str(), "r");
-    if (f_font) {
-        fclose(f_font);
-        return resolved_font;
-    }
-    const char* fallbacks[] = {
+// The bundled Monaspace Neon: the app bundle's copy, else the source tree's
+// when run from a build directory. Empty if neither is there.
+static std::string resolve_bundled_font_path() {
+    const std::string candidates[] = {
+        get_bundle_resource_path("MonaspaceNeon-Regular.otf"),
         "fonts/MonaspaceNeon-Regular.otf",
         "../fonts/MonaspaceNeon-Regular.otf",
+    };
+    for (const std::string& path : candidates) {
+        FILE* f = fopen(path.c_str(), "r");
+        if (f) {
+            fclose(f);
+            return path;
+        }
+    }
+    return "";
+}
+
+static std::string resolve_default_font_path() {
+    std::string bundled = resolve_bundled_font_path();
+    if (!bundled.empty()) return bundled;
+    const char* fallbacks[] = {
         "/System/Library/Fonts/SFNSMono.ttf",
         "/System/Library/Fonts/Supplemental/Courier New.ttf"
     };
@@ -1197,6 +1209,7 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
 
     state->video_path = resolve_default_video_path();
     state->font_path = resolve_default_font_path();
+    FontManager::set_bundled_fallback_path(resolve_bundled_font_path());
 
     // Load config if present (may override the defaults above with the
     // active preset's saved background/font/etc)
