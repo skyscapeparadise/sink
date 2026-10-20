@@ -168,6 +168,29 @@ std::optional<std::string> migrate_v0(const std::string& text);
 std::string migrate_legacy(const std::string& config_txt,
                            const std::map<std::string, std::string>& preset_files);
 
+// ---- Reference -----------------------------------------------------------------
+//
+// All generated from keys(), so none of them can disagree with what sink
+// actually reads.
+
+// Where the JSON schema is published. Files sink creates name it on their
+// first line (`#:schema ...`), which editors with Taplo-based TOML support
+// (VS Code, Zed, Neovim) use for completion and checking.
+constexpr const char* kSchemaUrl =
+    "https://raw.githubusercontent.com/skyscapeparadise/sink/main/sink.schema.json";
+
+// Every setting at its default, each with its documentation, as a valid
+// sink.toml (`sink --show-config --default`).
+std::string reference_toml();
+
+// Every setting as sink reads `c`, defaults filled in, every preset in full
+// (`sink --show-config`).
+std::string effective_toml(const Config& c);
+
+// A JSON Schema (draft-07) for sink.toml. The copy at kSchemaUrl is checked
+// against this by the tests.
+std::string json_schema();
+
 // ---- Paths -----------------------------------------------------------------
 
 // A value is a path if it contains '/' or starts with '~'; otherwise it names

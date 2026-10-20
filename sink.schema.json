@@ -1,0 +1,117 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/skyscapeparadise/sink/main/sink.schema.json",
+  "title": "sink.toml",
+  "description": "Configuration for sink, the terminal.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "description": "Which version of this format the file is written in.",
+      "type": "integer",
+      "minimum": 1,
+      "default": 1
+    },
+    "presets": {
+      "description": "Your presets, by name. Each lists only what it changes from the defaults.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "background": {
+            "description": "The video behind the terminal: a built-in background's name, or a path to a video file.",
+            "type": "string",
+            "minLength": 1,
+            "default": "pool"
+          },
+          "font": {
+            "description": "The typeface: \"Monaspace Neon\" (bundled), or a path to a font file. Characters the font lacks come from Monaspace Neon, then the system's fonts.",
+            "type": "string",
+            "minLength": 1,
+            "default": "Monaspace Neon"
+          },
+          "exposure": {
+            "description": "Brightness of the background video. 0 to 2.",
+            "type": "number",
+            "minimum": 0,
+            "maximum": 2,
+            "default": 0.7
+          },
+          "hue_shift": {
+            "description": "Rotates the background video's colors, in degrees. 0 to 360.",
+            "type": "number",
+            "minimum": 0,
+            "maximum": 360,
+            "default": 0
+          },
+          "crt": {
+            "description": "The CRT effect: scanlines, curvature and glow.",
+            "type": "boolean",
+            "default": false
+          },
+          "hdr_text": {
+            "description": "Draw text brighter than SDR white on HDR displays.",
+            "type": "boolean",
+            "default": false
+          },
+          "ligatures": {
+            "description": "Draw pairs like -> and != as single symbols.",
+            "type": "boolean",
+            "default": true
+          },
+          "title_bar": {
+            "description": "Show the translucent title bar.",
+            "type": "boolean",
+            "default": true
+          },
+          "typing_animation": {
+            "description": "Animate output as it is typed onto the screen.",
+            "type": "boolean",
+            "default": true
+          }
+        }
+      }
+    },
+    "preset": {
+      "description": "The preset in use: a built-in such as \"pool\", or the name of one of your [presets.<name>] tables.",
+      "type": "string",
+      "default": "pool"
+    },
+    "terminal": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "scrollback_lines": {
+          "description": "Lines of output kept above the screen, per pane. 100 to 1000000.",
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 1000000,
+          "default": 10000
+        }
+      }
+    },
+    "shell": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "integration": {
+          "description": "Load sink's shell integration into zsh and bash: prompt marks (OSC 133) and the working directory (OSC 7), which make Cmd+Up/Down prompt jumping and new tabs in the current directory work.",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "keyboard": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "option_as_meta": {
+          "description": "Make Option act as Meta, sending ESC before the key (for emacs and readline shortcuts) instead of typing special characters. true for both Option keys, or \"left\" or \"right\" for just one.",
+          "anyOf": [{ "type": "boolean" }, { "enum": ["left", "right"] }],
+          "default": false
+        }
+      }
+    }
+  }
+}

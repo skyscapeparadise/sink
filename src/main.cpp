@@ -11,6 +11,7 @@
 #include <queue>
 #include <fstream>
 #include <sstream>
+#include <optional>
 #include <sys/stat.h>
 #include "terminal_grid.hpp"
 #include "pty_bridge.hpp"
@@ -1273,8 +1274,114 @@ static void reload_config_if_changed(AppState* state) {
     update_config_notice(state);
 }
 
+// ---- Command line -------------------------------------------------------------
+//
+// Options for working with sink.toml, answered on stdout without opening a
+// window. They read the file but never write it: a file in the old format is
+// converted in memory only.
+
+static void print_usage(std::ostream& out) {
+    out << "usage: sink [options] [video]\n"
+           "\n"
+           "  video                   play this file behind the terminal\n"
+           "\n"
+           "  --show-config           print every setting as sink reads your sink.toml\n"
+           "  --show-config --default print every setting at its default, documented\n"
+           "  --check-config          report problems in sink.toml; exits 1 if there are any\n"
+           "  --print-schema          print the JSON schema for sink.toml\n"
+           "  --version               print sink's version\n"
+           "  --help                  print this\n"
+           "\n"
+           "sink.toml is " << ConfigStore::default_path() << " (set SINK_CONFIG to use another file).\n";
+}
+
+// The config file as sink would read it, or nullopt (after reporting why) on
+// a syntax error.
+static std::optional<config::Config> read_config_for_command_line(const std::string& path) {
+    std::ifstream f(path, std::ios::binary);
+    std::string text;
+    if (f.is_open()) {
+        std::stringstream ss;
+        ss << f.rdbuf();
+        text = ss.str();
+    } else {
+        std::cerr << "no file at " << path << "; showing the defaults" << std::endl;
+    }
+    if (config::is_v0(text)) {
+        std::cerr << path << " is in the format sink 0.11 and earlier used; it's converted when sink next starts"
+                  << std::endl;
+        if (auto converted = config::migrate_v0(text)) text = *converted;
+    }
+    config::Diagnostic err;
+    std::optional<config::Config> c = config::read_text(text, err);
+    if (!c) std::cerr << path << ":" << err.line << ": " << err.message << std::endl;
+    return c;
+}
+
+// Handles command-line options. Returns the exit code when sink should exit
+// instead of starting, nullopt to start normally.
+static std::optional<int> run_command_line(int argc, char* argv[]) {
+    std::vector<std::string> args(argv + 1, argv + argc);
+    auto has = [&](const char* flag) { return std::find(args.begin(), args.end(), flag) != args.end(); };
+    for (const std::string& a : args) {
+        static const char* known[] = { "--show-config", "--default", "--check-config", "--print-schema",
+                                       "--version", "--help", "-h" };
+        if (a.size() > 1 && a[0] == '-' &&
+            std::find_if(std::begin(known), std::end(known), [&](const char* k) { return a == k; }) ==
+                std::end(known)) {
+            std::cerr << "sink: unknown option " << a << "\n\n";
+            print_usage(std::cerr);
+            return 2;
+        }
+    }
+
+    if (has("--help") || has("-h")) {
+        print_usage(std::cout);
+        return 0;
+    }
+    if (has("--version")) {
+        std::cout << "sink " << SINK_VERSION << std::endl;
+        return 0;
+    }
+    if (has("--print-schema")) {
+        std::cout << config::json_schema();
+        return 0;
+    }
+    if (has("--show-config") && has("--default")) {
+        std::cout << config::reference_toml();
+        return 0;
+    }
+    const std::string path = ConfigStore::default_path();
+    if (has("--show-config")) {
+        std::optional<config::Config> c = read_config_for_command_line(path);
+        if (!c) return 1;
+        std::cout << config::effective_toml(*c);
+        return 0;
+    }
+    if (has("--check-config")) {
+        std::optional<config::Config> c = read_config_for_command_line(path);
+        if (!c) return 1;
+        for (const config::Diagnostic& w : c->warnings) {
+            std::cout << path << ":" << w.line << ": " << w.message << "\n";
+        }
+        if (c->warnings.empty()) std::cout << path << ": OK" << std::endl;
+        return c->warnings.empty() ? 0 : 1;
+    }
+
+    // Anything else is the video to play behind the terminal, handled once
+    // the app has started.
+    return std::nullopt;
+}
+
 // SDL3 Application initialization entry point
 SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
+    // Before SDL starts, so `sink --show-config` opens no window and never
+    // touches sink.toml.
+    if (std::optional<int> code = run_command_line(argc, argv)) {
+        std::cout.flush();
+        std::exit(*code);
+    }
+
     SDL_SetAppMetadata("sink", SINK_VERSION, "com.rainmultimedia.sink");
     SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_CREATOR_STRING, "rain multimedia");
     SDL_SetAppMetadataProperty(SDL_PROP_APP_METADATA_COPYRIGHT_STRING, "copyright © 2026 rain multimedia. all rights reserved.");

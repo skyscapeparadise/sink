@@ -309,6 +309,7 @@ add_executable(config_tests
     src/config.cpp
 )
 target_include_directories(config_tests PRIVATE src vendor/tomlplusplus)
+target_compile_definitions(config_tests PRIVATE SINK_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 add_test(NAME config COMMAND config_tests)
 
 # In-place edits to TOML text (what Settings uses to change sink.toml).

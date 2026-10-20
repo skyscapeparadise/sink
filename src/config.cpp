@@ -115,6 +115,12 @@ std::string format_number(double v) {
     return buf;
 }
 
+// For people to read: whole numbers in full (1000000, not 1e+06).
+std::string pretty_number(double v) {
+    if (v == std::floor(v) && std::fabs(v) < 1e15) return std::to_string(static_cast<long long>(v));
+    return format_number(v);
+}
+
 // Converts and validates one node against its registry entry. Returns nullopt
 // (with a warning) when the value can't be used, so the default applies.
 std::optional<Value> convert(const KeyInfo& k, const std::string& where, const toml::node& n,
@@ -127,9 +133,9 @@ std::optional<Value> convert(const KeyInfo& k, const std::string& where, const t
     auto clamp = [&](double v) {
         if (v < k.min || v > k.max) {
             double c = std::clamp(v, k.min, k.max);
-            warnings.push_back({ line, where + " = " + format_number(v) + " is outside " +
-                                       format_number(k.min) + " to " + format_number(k.max) +
-                                       "; using " + format_number(c) });
+            warnings.push_back({ line, where + " = " + pretty_number(v) + " is outside " +
+                                       pretty_number(k.min) + " to " + pretty_number(k.max) +
+                                       "; using " + pretty_number(c) });
             return c;
         }
         return v;
@@ -313,7 +319,10 @@ std::string active_preset(const Config& c) {
     return preset_exists(c, name) ? name : std::string(builtin_presets().front().name);
 }
 
-PresetValues resolve_preset(const Config& c, const std::string& name) {
+namespace {
+
+// Every preset-scope key's value for `name`, as written (paths not expanded).
+std::map<std::string, Value> preset_value_map(const Config& c, const std::string& name) {
     std::map<std::string, Value> v;
     for (const KeyInfo& k : keys()) {
         if (k.scope == Scope::Preset) v[k.path] = k.default_value;
@@ -326,6 +335,13 @@ PresetValues resolve_preset(const Config& c, const std::string& name) {
     if (auto it = c.presets.find(name); it != c.presets.end()) {
         for (const auto& [path, setting] : it->second) v[path] = setting.value;
     }
+    return v;
+}
+
+} // namespace
+
+PresetValues resolve_preset(const Config& c, const std::string& name) {
+    std::map<std::string, Value> v = preset_value_map(c, name);
 
     auto str = [&](const char* p) { return std::get<std::string>(v[p]); };
     auto num = [&](const char* p) { return std::get<double>(v[p]); };
@@ -531,7 +547,7 @@ std::pair<std::string, toml::table> parse_legacy_preset(const std::string& conte
 
 std::string generate(const Config& c) {
     std::ostringstream o;
-    o << kHeader;
+    o << "#:schema " << kSchemaUrl << "\n" << kHeader;
     o << "version = " << kCurrentVersion << "\n";
     o << "preset = " << to_toml(Value(global_string(c, "preset"))) << "\n";
 
@@ -630,6 +646,225 @@ std::string migrate_legacy(const std::string& config_txt,
     doc.insert("active_preset", active);
     doc.insert("presets", std::move(presets));
     return generate(convert_v0(doc));
+}
+
+// ---- Reference ---------------------------------------------------------------------
+
+namespace {
+
+// `text` as "# " comment lines of at most `width` columns.
+std::string comment_block(const std::string& text, size_t width = 78) {
+    std::string out, line;
+    std::istringstream words(text);
+    std::string word;
+    while (words >> word) {
+        if (!line.empty() && line.size() + 1 + word.size() > width - 2) {
+            out += "# " + line + "\n";
+            line.clear();
+        }
+        line += (line.empty() ? "" : " ") + word;
+    }
+    if (!line.empty()) out += "# " + line + "\n";
+    return out;
+}
+
+std::string doc_with_range(const KeyInfo& k) {
+    std::string doc = k.doc;
+    if (k.type == KeyType::Int || k.type == KeyType::Float) {
+        doc += " " + pretty_number(k.min) + " to " + pretty_number(k.max) + ".";
+    }
+    return doc;
+}
+
+// Splits a key path into the table it's written under and the key itself.
+std::pair<std::string, std::string> table_and_key(const std::string& path) {
+    const size_t dot = path.rfind('.');
+    if (dot == std::string::npos) return { "", path };
+    return { path.substr(0, dot), path.substr(dot + 1) };
+}
+
+// Writes one scope's keys, grouped under their table headers, keys outside
+// any table first. `value_of` gives each key's value; `documented` adds the
+// key's documentation above it.
+template <typename ValueOf>
+void emit_reference_scope(std::ostringstream& o, Scope scope, const std::string& header_prefix,
+                          const std::string& header_comment, bool documented, ValueOf value_of) {
+    std::vector<std::string> tables;
+    for (const KeyInfo& k : keys()) {
+        if (k.scope != scope) continue;
+        std::string table = table_and_key(k.path).first;
+        if (std::find(tables.begin(), tables.end(), table) == tables.end()) tables.push_back(table);
+    }
+    std::stable_partition(tables.begin(), tables.end(), [](const std::string& t) { return t.empty(); });
+    for (const std::string& table : tables) {
+        std::string header = header_prefix + table;
+        if (!header.empty() && header.back() == '.') header.pop_back();
+        if (!header.empty()) {
+            o << "\n[" << header << "]" << (table.empty() ? header_comment : "") << "\n";
+        }
+        for (const KeyInfo& k : keys()) {
+            if (k.scope != scope || table_and_key(k.path).first != table) continue;
+            if (documented) o << comment_block(doc_with_range(k));
+            o << toml_key(table_and_key(k.path).second) << " = " << to_toml(value_of(k)) << "\n";
+            if (documented) o << "\n";
+        }
+    }
+}
+
+std::string json_string(const std::string& s) {
+    std::string out = "\"";
+    for (unsigned char ch : s) {
+        switch (ch) {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                if (ch < 0x20) {
+                    char buf[8];
+                    std::snprintf(buf, sizeof(buf), "\\u%04x", ch);
+                    out += buf;
+                } else {
+                    out += static_cast<char>(ch);
+                }
+        }
+    }
+    return out + "\"";
+}
+
+std::string json_value(const Value& v) {
+    if (std::holds_alternative<bool>(v)) return std::get<bool>(v) ? "true" : "false";
+    if (std::holds_alternative<int64_t>(v)) return std::to_string(std::get<int64_t>(v));
+    if (std::holds_alternative<double>(v)) return format_number(std::get<double>(v));
+    if (std::holds_alternative<std::string>(v)) return json_string(std::get<std::string>(v));
+    std::string out = "[";
+    const StringList& list = std::get<StringList>(v);
+    for (size_t i = 0; i < list.size(); ++i) out += (i ? ", " : "") + json_string(list[i]);
+    return out + "]";
+}
+
+// One key's schema, as the members of a JSON object (no braces).
+std::string key_schema(const KeyInfo& k, const std::string& pad) {
+    std::string out = pad + "\"description\": " + json_string(doc_with_range(k)) + ",\n";
+    switch (k.type) {
+        case KeyType::Bool: out += pad + "\"type\": \"boolean\",\n"; break;
+        case KeyType::Int:
+        case KeyType::Float:
+            out += pad + "\"type\": \"" + std::string(k.type == KeyType::Int ? "integer" : "number") + "\",\n";
+            out += pad + "\"minimum\": " + pretty_number(k.min) + ",\n";
+            out += pad + "\"maximum\": " + pretty_number(k.max) + ",\n";
+            break;
+        case KeyType::String: out += pad + "\"type\": \"string\",\n"; break;
+        case KeyType::Path:
+            out += pad + "\"type\": \"string\",\n" + pad + "\"minLength\": 1,\n";
+            break;
+        case KeyType::BoolOrChoice: {
+            out += pad + "\"anyOf\": [{ \"type\": \"boolean\" }, { \"enum\": [";
+            for (size_t i = 0; i < k.choices.size(); ++i) out += (i ? ", " : "") + json_string(k.choices[i]);
+            out += "] }],\n";
+            break;
+        }
+    }
+    out += pad + "\"default\": " + json_value(k.default_value) + "\n";
+    return out;
+}
+
+// A JSON object schema for every key of `scope` whose path starts with
+// `prefix`, nesting tables as objects. Unknown keys are flagged, as sink
+// itself reports them.
+std::string object_schema(Scope scope, const std::string& prefix, const std::string& pad,
+                          const std::string& extra_members = "") {
+    std::vector<std::string> names;      // direct children, in registry order
+    for (const KeyInfo& k : keys()) {
+        const std::string path = k.path;
+        if (k.scope != scope || path.compare(0, prefix.size(), prefix) != 0) continue;
+        std::string rest = path.substr(prefix.size());
+        std::string child = rest.substr(0, rest.find('.'));
+        if (std::find(names.begin(), names.end(), child) == names.end()) names.push_back(child);
+    }
+    std::string out = pad + "\"type\": \"object\",\n" + pad + "\"additionalProperties\": false,\n" +
+                      pad + "\"properties\": {\n" + extra_members;
+    for (size_t i = 0; i < names.size(); ++i) {
+        const std::string path = prefix + names[i];
+        out += pad + "  " + json_string(names[i]) + ": {\n";
+        if (const KeyInfo* k = find_key(scope, path)) {
+            out += key_schema(*k, pad + "    ");
+        } else {
+            out += object_schema(scope, path + ".", pad + "    ");
+        }
+        out += pad + "  }" + (i + 1 < names.size() ? "," : "") + "\n";
+    }
+    return out + pad + "}\n";
+}
+
+} // namespace
+
+std::string reference_toml() {
+    std::ostringstream o;
+    o << "#:schema " << kSchemaUrl << "\n"
+      << "# sink.toml reference: every setting sink reads, at its default.\n"
+      << "#\n"
+      << "# Copy what you want to change into your own sink.toml. A preset lists\n"
+      << "# only what it changes; [presets.example] below shows every setting a\n"
+      << "# preset can have.\n"
+      << "\n"
+      << comment_block("Which version of this format the file is written in. sink converts "
+                       "older files when it starts.")
+      << "version = " << kCurrentVersion << "\n\n";
+    emit_reference_scope(o, Scope::Global, "", "", true, [](const KeyInfo& k) { return k.default_value; });
+    emit_reference_scope(o, Scope::Preset, "presets.example.", "", true,
+                         [](const KeyInfo& k) { return k.default_value; });
+    std::string text = o.str();
+    for (size_t at; (at = text.find("\n\n\n")) != std::string::npos;) text.erase(at, 1);
+    while (text.size() > 1 && text[text.size() - 1] == '\n' && text[text.size() - 2] == '\n') text.pop_back();
+    return text;
+}
+
+std::string effective_toml(const Config& c) {
+    std::ostringstream o;
+    o << "# sink.toml as sink reads it: every setting's value, defaults filled in.\n";
+    for (const Diagnostic& w : c.warnings) {
+        o << "# warning, line " << w.line << ": " << w.message << "\n";
+    }
+    o << "\nversion = " << kCurrentVersion << "\n";
+    emit_reference_scope(o, Scope::Global, "", "", false, [&](const KeyInfo& k) -> Value {
+        if (std::string(k.path) == "preset") return Value(active_preset(c));
+        auto it = c.global.find(k.path);
+        return it == c.global.end() ? k.default_value : it->second.value;
+    });
+    for (const std::string& name : preset_names(c)) {
+        const std::map<std::string, Value> values = preset_value_map(c, name);
+        emit_reference_scope(o, Scope::Preset, "presets." + toml_key(name) + ".",
+                             is_builtin(name) ? "  # built-in" : "", false,
+                             [&](const KeyInfo& k) { return values.at(k.path); });
+    }
+    return o.str();
+}
+
+std::string json_schema() {
+    const std::string version_member =
+        "    \"version\": {\n"
+        "      \"description\": \"Which version of this format the file is written in.\",\n"
+        "      \"type\": \"integer\",\n"
+        "      \"minimum\": 1,\n"
+        "      \"default\": " + std::to_string(kCurrentVersion) + "\n"
+        "    },\n";
+    std::string presets_member =
+        "    \"presets\": {\n"
+        "      \"description\": \"Your presets, by name. Each lists only what it changes from the defaults.\",\n"
+        "      \"type\": \"object\",\n"
+        "      \"additionalProperties\": {\n" +
+        object_schema(Scope::Preset, "", "        ") +
+        "      }\n"
+        "    },\n";
+    std::string out = "{\n"
+                      "  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n"
+                      "  \"$id\": " + json_string(kSchemaUrl) + ",\n"
+                      "  \"title\": \"sink.toml\",\n"
+                      "  \"description\": \"Configuration for sink, the terminal.\",\n" +
+                      object_schema(Scope::Global, "", "  ", version_member + presets_member) +
+                      "}\n";
+    return out;
 }
 
 // ---- Paths -------------------------------------------------------------------

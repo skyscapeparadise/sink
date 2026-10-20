@@ -105,7 +105,7 @@ static void test_bad_values_are_reported_not_trusted() {
         "exposre = 1.0\n"                    // line 8: typo
         "hue_shift = 400\n");                // line 9: clamped
     CHECK(config::global_int(c, "terminal.scrollback_lines") == 100);
-    CHECK(has_warning(c, "terminal.scrollback_lines = -1 is outside 100 to 1e+06", 3));
+    CHECK(has_warning(c, "terminal.scrollback_lines = -1 is outside 100 to 1000000", 3));
     CHECK(config::option_as_meta(c) == "none");
     CHECK(has_warning(c, "sideways", 5));
     CHECK(has_warning(c, "presets.x.exposure should be a number", 7));
@@ -278,6 +278,43 @@ static void test_paths() {
     CHECK(config::contract_home("/Users/tester/a") == "/Users/tester/a");
 }
 
+static std::string read_source_file(const std::string& relative) {
+    std::string path = std::string(SINK_SOURCE_DIR) + "/" + relative;
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return std::string();
+    std::string text;
+    char buf[4096];
+    for (size_t n; (n = std::fread(buf, 1, sizeof(buf), f)) > 0;) text.append(buf, n);
+    std::fclose(f);
+    return text;
+}
+
+static void test_reference_is_a_valid_config() {
+    // Every key in the reference is one sink knows, at a value it accepts.
+    config::Config c = read_ok(config::reference_toml());
+    CHECK(c.warnings.size() == 0);
+    CHECK(config::active_preset(c) == "pool");
+    CHECK(config::reference_toml().find("#:schema ") == 0);
+    // And the effective view of a real config parses too.
+    config::Config mine = read_ok("[presets.clouds]\ncrt = true\n");
+    config::Diagnostic err;
+    CHECK(config::read_text(config::effective_toml(mine), err).has_value());
+    CHECK(config::effective_toml(mine).find("[presets.pool]  # built-in") != std::string::npos);
+}
+
+static void test_published_schema_and_readme_are_current() {
+    // sink.schema.json is what editors download; regenerate it with
+    // `sink --print-schema > sink.schema.json` when the keys change.
+    CHECK(read_source_file("sink.schema.json") == config::json_schema());
+    const std::string readme = read_source_file("README.md");
+    for (const config::KeyInfo& k : config::keys()) {
+        std::string path = k.path;
+        std::string leaf = path.substr(path.rfind('.') == std::string::npos ? 0 : path.rfind('.') + 1);
+        if (readme.find(leaf) == std::string::npos) std::printf("README doesn't mention %s\n", k.path);
+        CHECK(readme.find(leaf) != std::string::npos);
+    }
+}
+
 int main() {
     setenv("HOME", "/Users/test", 1);
     test_empty_file_is_all_defaults();
@@ -293,6 +330,8 @@ int main() {
     test_legacy_migration();
     test_value_and_key_text();
     test_paths();
+    test_reference_is_a_valid_config();
+    test_published_schema_and_readme_are_current();
     std::printf("%d/%d checks passed\n", checks_run - checks_failed, checks_run);
     return checks_failed == 0 ? 0 : 1;
 }

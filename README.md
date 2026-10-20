@@ -128,6 +128,21 @@ if the file has a mistake, sink tells you which line in the settings window and 
 
 coming from 0.11 or earlier? the first launch converts your file to this format and keeps the original as `sink.toml.v0.bak`.
 
+sink can also tell you about your config from the command line, without opening a window:
+
+```sh
+alias sink=/Applications/sink.app/Contents/MacOS/sink
+sink --show-config --default   # every setting at its default, with what it does
+sink --show-config             # your config as sink reads it, defaults filled in
+sink --check-config            # any problems, by line (exits 1 if there are some)
+```
+
+editors with TOML support (VS Code, Zed, Neovim, anything using taplo) autocomplete and check `sink.toml` against [sink.schema.json](sink.schema.json). files sink creates already point at it on their first line; for one of your own, add:
+
+```toml
+#:schema https://raw.githubusercontent.com/skyscapeparadise/sink/main/sink.schema.json
+```
+
 ## security
 
 anything you `cat`, any command's output, and any server you `ssh` into can talk to your terminal, so sink is careful about what it lets them do:
