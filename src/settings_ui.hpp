@@ -92,6 +92,12 @@ public:
     // `names` should already be sorted the way it should display ("pool" first).
     void set_preset_names(const std::vector<std::string>& names);
     void set_active_preset(const std::string& name);
+    // Presets that ship with sink: marked in the list, and not renamable or
+    // deletable (changing one's settings makes a copy instead; see main.cpp).
+    void set_builtin_presets(const std::vector<std::string>& names);
+    // One line at the bottom of the window about sink.toml, such as a syntax
+    // error that is stopping changes from being saved. Empty hides it.
+    void set_config_notice(const std::string& text);
 
 private:
     SDL_Window* window_ = nullptr;
@@ -124,6 +130,9 @@ private:
     // Preset row state
     std::vector<std::string> preset_names_ = {"pool"};
     std::string active_preset_ = "pool";
+    std::vector<std::string> builtin_presets_ = {"pool"};
+    std::string config_notice_;
+    bool is_builtin(const std::string& name) const;
     bool preset_dropdown_open_ = false;
     int dropdown_hover_index_ = -1;
     static constexpr int kMaxDropdownRows = 8;

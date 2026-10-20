@@ -20,7 +20,7 @@
 #include "settings_ui.hpp"
 #include "sink_demo.hpp"
 #include "app_state.hpp"
-#include "preset_manager.hpp"
+#include "config_store.hpp"
 #include "hue_shift.hpp"
 #include "crt_shader.hpp"
 
@@ -306,84 +306,113 @@ static std::string resolve_default_font_path() {
     return "Courier New.ttf";
 }
 
-// Persists the live settings into the active preset's [presets.<name>]
-// table in sink.toml, and updates the top-level active_preset pointer to
-// match. Called after every settings tweak, same as before the config
-// format changed.
-static void save_config(AppState* state) {
-    Preset p;
-    p.name = state->active_preset_name;
-    p.video_path = state->video_path;
-    if (p.video_path.find("sinkpool.mp4") != std::string::npos) {
-        p.video_path = "default";
-    }
-    p.font_path = state->font_path;
-    if (p.font_path.find("MonaspaceNeon-Regular.otf") != std::string::npos) {
-        p.font_path = "default";
-    }
-    p.exposure = state->exposure;
-    p.hue_shift = state->hue_shift;
-    p.animated_typing = state->animated_typing;
-    p.vibrancy_enabled = state->vibrancy_enabled;
-    p.crt_mode_enabled = state->crt_mode_enabled;
-    p.ligatures_enabled = state->ligatures_enabled;
-    p.hdr_console_enabled = state->hdr_console_enabled;
-    p.scrollback_lines = state->scrollback_lines;
-    presets::save(p);
-    presets::set_active_preset_name(state->active_preset_name);
+// The bundled background and font are "pool" and "Monaspace Neon" in
+// sink.toml; anything else is a path. A name sink doesn't know (from a newer
+// config, or a typo) falls back to the bundled file rather than nothing.
+static std::string resolve_background(const std::string& value) {
+    return config::is_path(value) ? value : resolve_default_video_path();
 }
 
-// Loads the active preset (following sink.toml's active_preset pointer)
-// into `state`. Migrates a pre-TOML install once, on first run after
-// upgrading, so nothing a user had saved is lost -- see
-// presets::migrate_legacy_config_if_needed(). "pool" always ends up present
-// either way, so there's always a known-good fallback.
-static void load_config(AppState* state) {
-    presets::migrate_legacy_config_if_needed();
-    PTYBridge::set_shell_integration_enabled(presets::shell_integration_enabled());
-    state->option_as_meta = key_bindings::parse_option_as_meta(presets::option_as_meta());
-    SDL_SetHint(SDL_HINT_MAC_OPTION_AS_ALT, key_bindings::option_as_alt_hint(state->option_as_meta));
+static std::string resolve_font(const std::string& value) {
+    return config::is_path(value) ? value : resolve_default_font_path();
+}
 
-    std::string requested_preset = presets::get_active_preset_name();
+static std::string background_setting(const std::string& resolved_path) {
+    return resolved_path.find("sinkpool.mp4") != std::string::npos ? std::string("pool") : resolved_path;
+}
 
-    Preset active;
-    if (presets::exists(requested_preset)) {
-        active = presets::load(requested_preset);
-    } else if (presets::exists("pool")) {
-        active = presets::load("pool");
-    } else {
-        active = Preset{}; // hardcoded baseline: name="pool" with default look
-        presets::save(active);
-    }
+static std::string font_setting(const std::string& resolved_path) {
+    return resolved_path.find("MonaspaceNeon-Regular.otf") != std::string::npos ? std::string("Monaspace Neon")
+                                                                                : resolved_path;
+}
 
-    presets::set_active_preset_name(active.name);
-    state->active_preset_name = active.name;
-    state->video_path = (active.video_path.empty() || active.video_path == "default")
-        ? resolve_default_video_path() : active.video_path;
-    state->font_path = (active.font_path.empty() || active.font_path == "default")
-        ? resolve_default_font_path() : active.font_path;
-    state->exposure = active.exposure;
-    state->hue_shift = active.hue_shift;
-    state->animated_typing = active.animated_typing;
-    state->vibrancy_enabled = active.vibrancy_enabled;
-    state->crt_mode_enabled = active.crt_mode_enabled;
-    state->ligatures_enabled = active.ligatures_enabled;
-    state->hdr_console_enabled = active.hdr_console_enabled;
-    state->scrollback_lines = active.scrollback_lines;
+static void refresh_settings_ui_presets(AppState* state);
 
-    // Apply loaded settings to any active windows
-    for (auto* tw : state->windows) {
-        tw->exposure = state->exposure;
-        tw->hue_shift_degrees = state->hue_shift;
-        tw->animated_typing = state->animated_typing;
-        tw->vibrancy_enabled = state->vibrancy_enabled;
-        tw->crt_mode_enabled = state->crt_mode_enabled;
-        for (Pane* pane : all_panes(tw)) {
-            pane->terminal.set_enable_ligatures(state->ligatures_enabled);
-            pane->terminal.set_max_scrollback(static_cast<size_t>(state->scrollback_lines));
+// For the File menu's "New Window/Tab with Preset" submenus (macos_menu.mm).
+std::vector<std::string> current_preset_names() {
+    if (!g_app_state) return {};
+    return config::preset_names(static_cast<AppState*>(g_app_state)->config.config());
+}
+
+// Saves what the Settings window changed: each setting of the active preset
+// that differs from what sink.toml says becomes an edit to that one key. A
+// built-in can't be edited, so changing one first makes "<name> copy" and
+// switches to it. Written to disk once the changes stop (ConfigStore).
+static void save_config(AppState* state) {
+    ConfigStore& store = state->config;
+    std::string name = state->active_preset_name;
+    const config::PresetValues saved = config::resolve_preset(store.config(), name);
+
+    std::vector<std::pair<std::string, config::Value>> changes;
+    auto changed_str = [&](const char* key, const std::string& now, const std::string& before) {
+        if (now != before) changes.push_back({ key, config::Value(now) });
+    };
+    auto changed_num = [&](const char* key, double now, double before) {
+        if (std::fabs(now - before) > 1e-6) changes.push_back({ key, config::Value(now) });
+    };
+    auto changed_bool = [&](const char* key, bool now, bool before) {
+        if (now != before) changes.push_back({ key, config::Value(now) });
+    };
+    changed_str("background", background_setting(state->video_path),
+                config::is_path(saved.background) ? saved.background : background_setting(resolve_background(saved.background)));
+    changed_str("font", font_setting(state->font_path),
+                config::is_path(saved.font) ? saved.font : font_setting(resolve_font(saved.font)));
+    changed_num("exposure", state->exposure, saved.exposure);
+    changed_num("hue_shift", state->hue_shift, saved.hue_shift);
+    changed_bool("typing_animation", state->animated_typing, saved.typing_animation);
+    changed_bool("title_bar", state->vibrancy_enabled, saved.title_bar);
+    changed_bool("crt", state->crt_mode_enabled, saved.crt);
+    changed_bool("ligatures", state->ligatures_enabled, saved.ligatures);
+    changed_bool("hdr_text", state->hdr_console_enabled, saved.hdr_text);
+    if (changes.empty()) return;
+
+    if (config::is_builtin(name)) {
+        const std::string builtin = name;
+        name = store.duplicate_preset(name);
+        store.set_global("preset", config::Value(name));
+        state->active_preset_name = name;
+        for (auto* tw : state->windows) {
+            if (tw->preset_name == builtin) tw->preset_name = name;
         }
-        tw->hdr_console_enabled = state->hdr_console_enabled;
+        refresh_settings_ui_presets(state);
     }
+    for (const auto& [key, value] : changes) store.set_preset(name, key, value);
+}
+
+// Copies a resolved preset into AppState's live settings (windows are
+// updated separately, by apply_preset_to_state_and_windows).
+static void set_state_from_preset(AppState* state, const config::PresetValues& p) {
+    state->active_preset_name = p.name;
+    state->video_path = resolve_background(p.background);
+    state->font_path = resolve_font(p.font);
+    state->exposure = static_cast<float>(p.exposure);
+    state->hue_shift = static_cast<float>(p.hue_shift);
+    state->animated_typing = p.typing_animation;
+    state->vibrancy_enabled = p.title_bar;
+    state->crt_mode_enabled = p.crt;
+    state->ligatures_enabled = p.ligatures;
+    state->hdr_console_enabled = p.hdr_text;
+}
+
+// The settings that aren't part of a preset.
+static void apply_global_settings(AppState* state) {
+    const config::Config& c = state->config.config();
+    PTYBridge::set_shell_integration_enabled(config::global_bool(c, "shell.integration"));
+    state->option_as_meta = key_bindings::parse_option_as_meta(config::option_as_meta(c));
+    SDL_SetHint(SDL_HINT_MAC_OPTION_AS_ALT, key_bindings::option_as_alt_hint(state->option_as_meta));
+    state->scrollback_lines = static_cast<int>(config::global_int(c, "terminal.scrollback_lines"));
+}
+
+// Reads sink.toml (creating or migrating it as needed) into AppState, before
+// any window exists.
+static void load_config(AppState* state) {
+    state->config.load();
+    for (const config::Diagnostic& w : state->config.config().warnings) {
+        std::cerr << "sink.toml: line " << w.line << ": " << w.message << std::endl;
+    }
+    apply_global_settings(state);
+    const config::Config& c = state->config.config();
+    set_state_from_preset(state, config::resolve_preset(c, config::active_preset(c)));
 }
 
 // Spawn a new terminal window container
@@ -427,7 +456,8 @@ static float window_pixel_density(SDL_Window* window) {
 
 // The window's font at its current scale, and the cell size that follows.
 static void load_window_font(AppState* state, TerminalWindow* tw) {
-    std::string path = state->font_path.empty() ? "/System/Library/Fonts/SFNSMono.ttf" : state->font_path;
+    const std::string& font = tw->font_path.empty() ? state->font_path : tw->font_path;
+    std::string path = font.empty() ? "/System/Library/Fonts/SFNSMono.ttf" : font;
     float font_size_px = tw->font_size * tw->display_scale;
     if (!tw->font_manager.load_font(tw->renderer, path, font_size_px, false)) {
         tw->font_manager.load_font(tw->renderer, "/System/Library/Fonts/Supplemental/Courier New.ttf", font_size_px, false);
@@ -458,7 +488,7 @@ static void refresh_display_scale(AppState* state, TerminalWindow* tw) {
     layout_panes(state, tw, true);
 }
 
-static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* parent_tab_window, const Preset* preset_override = nullptr) {
+static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* parent_tab_window, const config::PresetValues* preset_override = nullptr) {
     TerminalWindow* tw = new TerminalWindow();
     tw->font_size = state->base_font_size;
 
@@ -478,19 +508,17 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     bool hdr_console_enabled = state->hdr_console_enabled;
     int scrollback_lines = state->scrollback_lines;
 
+    tw->preset_name = preset_override ? preset_override->name : state->active_preset_name;
     if (preset_override) {
-        video_path = (preset_override->video_path.empty() || preset_override->video_path == "default")
-            ? resolve_default_video_path() : preset_override->video_path;
-        typeface_path = (preset_override->font_path.empty() || preset_override->font_path == "default")
-            ? resolve_default_font_path() : preset_override->font_path;
-        exposure = preset_override->exposure;
-        hue_shift_degrees = preset_override->hue_shift;
-        animated_typing = preset_override->animated_typing;
-        vibrancy_enabled = preset_override->vibrancy_enabled;
-        crt_mode_enabled = preset_override->crt_mode_enabled;
-        ligatures_enabled = preset_override->ligatures_enabled;
-        hdr_console_enabled = preset_override->hdr_console_enabled;
-        scrollback_lines = preset_override->scrollback_lines;
+        video_path = resolve_background(preset_override->background);
+        typeface_path = resolve_font(preset_override->font);
+        exposure = static_cast<float>(preset_override->exposure);
+        hue_shift_degrees = static_cast<float>(preset_override->hue_shift);
+        animated_typing = preset_override->typing_animation;
+        vibrancy_enabled = preset_override->title_bar;
+        crt_mode_enabled = preset_override->crt;
+        ligatures_enabled = preset_override->ligatures;
+        hdr_console_enabled = preset_override->hdr_text;
     }
 
     // Create Window
@@ -570,9 +598,9 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
 
     float font_size_px = tw->font_size * scale;
     if (!tw->font_manager.load_font(tw->renderer, typeface_path, font_size_px, false)) {
-        typeface_path = "/System/Library/Fonts/Supplemental/Courier New.ttf";
-        tw->font_manager.load_font(tw->renderer, typeface_path, font_size_px, false);
+        tw->font_manager.load_font(tw->renderer, "/System/Library/Fonts/Supplemental/Courier New.ttf", font_size_px, false);
     }
+    tw->font_path = typeface_path;
 
     tw->cell_w = (tw->font_manager.get_cell_width() / scale) + 1.0f;
     tw->cell_h = (tw->font_manager.get_cell_height() / scale) - 0.8f;
@@ -604,6 +632,7 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     SDL_StartTextInput(tw->window);
 
     // Setup Video Background Engine
+    tw->video_path = video_path;
     if (!video_path.empty() && video_path != "None") {
         if (tw->video_engine.open_video(tw->renderer, video_path)) {
             tw->video_engine.start();
@@ -1025,7 +1054,7 @@ static void render_pane_dividers(TerminalWindow* tw, PaneNode* node, float scale
 static bool recreate_renderer_for_hdr_console(AppState* state, TerminalWindow* tw, bool want_linear_colorspace) {
     bool degraded = false; // set if the requested colorspace had to be dropped
     bool had_video = tw->has_video;
-    std::string video_path_to_reopen = state->video_path;
+    std::string video_path_to_reopen = tw->video_path.empty() ? state->video_path : tw->video_path;
 
     // Order matters: everything that owns a texture/shader-state against
     // the current renderer must be torn down *before* that renderer is
@@ -1085,7 +1114,8 @@ static bool recreate_renderer_for_hdr_console(AppState* state, TerminalWindow* t
     tw->crt_shader.init(tw->renderer, want_linear_colorspace);
 
     float font_size_px = tw->font_size * tw->display_scale;
-    if (!tw->font_manager.load_font(tw->renderer, state->font_path, font_size_px, false)) {
+    const std::string& font = tw->font_path.empty() ? state->font_path : tw->font_path;
+    if (!tw->font_manager.load_font(tw->renderer, font, font_size_px, false)) {
         tw->font_manager.load_font(tw->renderer, "/System/Library/Fonts/Supplemental/Courier New.ttf", font_size_px, false);
     }
     tw->cell_w = (tw->font_manager.get_cell_width() / tw->display_scale) + 1.0f;
@@ -1109,71 +1139,72 @@ static bool recreate_renderer_for_hdr_console(AppState* state, TerminalWindow* t
     return !degraded;
 }
 
-// Applies a preset's background/font/exposure/toggles to `state` and every
-// live TerminalWindow, mirroring what the individual background/font/toggle
-// settings-UI handlers do, but bundled together for a one-shot preset switch.
-static void apply_preset_to_state_and_windows(AppState* state, const Preset& p) {
-    state->active_preset_name = p.name;
-    state->video_path = (p.video_path.empty() || p.video_path == "default")
-        ? resolve_default_video_path() : p.video_path;
-    state->font_path = (p.font_path.empty() || p.font_path == "default")
-        ? resolve_default_font_path() : p.font_path;
-    state->exposure = p.exposure;
-    state->hue_shift = p.hue_shift;
-    state->animated_typing = p.animated_typing;
-    state->vibrancy_enabled = p.vibrancy_enabled;
-    state->crt_mode_enabled = p.crt_mode_enabled;
-    state->ligatures_enabled = p.ligatures_enabled;
-    state->hdr_console_enabled = p.hdr_console_enabled;
-    state->scrollback_lines = p.scrollback_lines;
+// Gives one window a preset's look. The video and font are reopened only
+// when they change: a live reload that touched exposure shouldn't restart
+// the video or relayout the panes.
+static void apply_preset_to_window(AppState* state, TerminalWindow* tw, const config::PresetValues& p) {
+    tw->preset_name = p.name;
+    const std::string video = resolve_background(p.background);
+    const std::string font = resolve_font(p.font);
 
-    for (auto* tw : state->windows) {
+    if (tw->video_path != video) {
         tw->video_engine.stop();
         tw->video_engine.close_video();
         tw->has_video = false;
-        if (!state->video_path.empty() && state->video_path != "None") {
-            if (tw->video_engine.open_video(tw->renderer, state->video_path)) {
+        tw->video_path = video;
+        if (!video.empty() && video != "None") {
+            if (tw->video_engine.open_video(tw->renderer, video)) {
                 tw->video_engine.start();
                 tw->has_video = true;
                 tw->fade_state = TerminalWindow::FADE_HOLD_BLACK;
                 tw->fade_opacity = 1.0f;
             }
         }
+    }
 
-        if (tw->font_manager.load_font(tw->renderer, state->font_path, tw->font_size * tw->display_scale, false)) {
+    if (tw->font_path != font) {
+        tw->font_path = font;
+        if (tw->font_manager.load_font(tw->renderer, font, tw->font_size * tw->display_scale, false)) {
             tw->cell_w = (tw->font_manager.get_cell_width() / tw->display_scale) + 1.0f;
             tw->cell_h = (tw->font_manager.get_cell_height() / tw->display_scale) - 0.8f;
-
             layout_panes(state, tw);
         }
-
-        tw->exposure = state->exposure;
-        tw->hue_shift_degrees = state->hue_shift;
-        tw->animated_typing = state->animated_typing;
-        tw->vibrancy_enabled = state->vibrancy_enabled;
-        tw->crt_mode_enabled = state->crt_mode_enabled;
-        for (Pane* pane : all_panes(tw)) {
-            pane->terminal.set_enable_ligatures(state->ligatures_enabled);
-            pane->terminal.set_max_scrollback(static_cast<size_t>(state->scrollback_lines));
-        }
-        if (tw->hdr_console_enabled != state->hdr_console_enabled) {
-            tw->hdr_console_enabled = state->hdr_console_enabled;
-            // This window's renderer colorspace no longer matches the
-            // incoming preset's hdr_console setting -- rebuild it (which
-            // also re-opens the video/font this loop just set, but against
-            // the correct renderer this time).
-            recreate_renderer_for_hdr_console(state, tw, tw->hdr_console_enabled);
-        }
-#if defined(__APPLE__)
-        enable_macos_window_vibrancy(tw->window, state->vibrancy_enabled);
-#endif
     }
+
+    tw->exposure = static_cast<float>(p.exposure);
+    tw->hue_shift_degrees = static_cast<float>(p.hue_shift);
+    tw->animated_typing = p.typing_animation;
+    tw->vibrancy_enabled = p.title_bar;
+    tw->crt_mode_enabled = p.crt;
+    for (Pane* pane : all_panes(tw)) {
+        pane->terminal.set_enable_ligatures(p.ligatures);
+        pane->terminal.set_max_scrollback(static_cast<size_t>(state->scrollback_lines));
+    }
+    if (tw->hdr_console_enabled != p.hdr_text) {
+        tw->hdr_console_enabled = p.hdr_text;
+        // This window's renderer colorspace no longer matches -- rebuild it
+        // (which also reopens its video and font, against the new renderer).
+        recreate_renderer_for_hdr_console(state, tw, tw->hdr_console_enabled);
+    }
+#if defined(__APPLE__)
+    enable_macos_window_vibrancy(tw->window, p.title_bar);
+#endif
+}
+
+// Switching presets in Settings: the preset becomes the active one and every
+// window takes it on, as before.
+static void apply_preset_to_state_and_windows(AppState* state, const config::PresetValues& p) {
+    set_state_from_preset(state, p);
+    for (auto* tw : state->windows) apply_preset_to_window(state, tw, p);
 }
 
 // Pushes the current preset list/selection into the (already-open) settings
 // window so its preset row and dropdown reflect what's on disk.
 static void refresh_settings_ui_presets(AppState* state) {
-    state->settings_ui.set_preset_names(presets::list_names());
+    state->settings_ui.set_preset_names(config::preset_names(state->config.config()));
+    std::vector<std::string> builtins;
+    for (const config::BuiltinPreset& b : config::builtin_presets()) builtins.push_back(b.name);
+    state->settings_ui.set_builtin_presets(builtins);
     state->settings_ui.set_active_preset(state->active_preset_name);
 }
 
@@ -1189,6 +1220,57 @@ static void sync_settings_ui_from_state(AppState* state) {
     state->settings_ui.set_ligatures_enabled(state->ligatures_enabled);
     state->settings_ui.set_hdr_console_enabled(state->hdr_console_enabled);
     refresh_settings_ui_presets(state);
+}
+
+// One line in Settings about sink.toml: a syntax error (which also stops
+// saving), else the first warning, else a note that it had to be rewritten.
+static void update_config_notice(AppState* state) {
+    const ConfigStore& store = state->config;
+    auto clean = [](std::string text) {
+        for (char& ch : text) {
+            if (static_cast<unsigned char>(ch) < 0x20) ch = ' ';
+        }
+        return text;
+    };
+    std::string notice;
+    if (const auto& err = store.error()) {
+        notice = "sink.toml line " + std::to_string(err->line) + ": " + clean(err->message) +
+                 " -- changes won't be saved until it's fixed";
+    } else if (const auto& warnings = store.config().warnings; !warnings.empty()) {
+        notice = "sink.toml line " + std::to_string(warnings.front().line) + ": " + clean(warnings.front().message);
+        if (warnings.size() > 1) notice += " (+" + std::to_string(warnings.size() - 1) + " more)";
+    } else if (store.regenerated()) {
+        notice = "sink.toml was rewritten in full; your previous version is in sink.toml.bak";
+    }
+    state->settings_ui.set_config_notice(notice);
+}
+
+// Live reload: about once a second, picks up edits made to sink.toml outside
+// sink. Each window follows its own preset; windows that were on the active
+// one follow the file's `preset` if that changed.
+static void reload_config_if_changed(AppState* state) {
+    static Uint64 last_check = 0;
+    const Uint64 now = SDL_GetTicks();
+    if (now - last_check < 1000) return;
+    last_check = now;
+
+    if (state->config.reload_if_changed()) {
+        const config::Config& c = state->config.config();
+        for (const config::Diagnostic& w : c.warnings) {
+            std::cerr << "sink.toml: line " << w.line << ": " << w.message << std::endl;
+        }
+        const std::string previous_active = state->active_preset_name;
+        const std::string active = config::active_preset(c);
+        apply_global_settings(state);
+        set_state_from_preset(state, config::resolve_preset(c, active));
+        for (auto* tw : state->windows) {
+            std::string name = tw->preset_name;
+            if (name == previous_active || !config::preset_exists(c, name)) name = active;
+            apply_preset_to_window(state, tw, config::resolve_preset(c, name));
+        }
+        sync_settings_ui_from_state(state);
+    }
+    update_config_notice(state);
 }
 
 // SDL3 Application initialization entry point
@@ -2093,6 +2175,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 tw->video_engine.stop();
                 tw->video_engine.close_video();
                 tw->has_video = false;
+                tw->video_path = state->video_path;
                 if (!state->video_path.empty() && state->video_path != "None") {
                     if (tw->video_engine.open_video(tw->renderer, state->video_path)) {
                         tw->video_engine.start();
@@ -2114,6 +2197,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             state->font_path = new_font_path;
 
             for (auto* tw : state->windows) {
+                tw->font_path = new_font_path;
                 if (tw->font_manager.load_font(tw->renderer, new_font_path, tw->font_size * tw->display_scale, false)) {
                     tw->cell_w = (tw->font_manager.get_cell_width() / tw->display_scale) + 1.0f;
                     tw->cell_h = (tw->font_manager.get_cell_height() / tw->display_scale) - 0.8f;
@@ -2132,6 +2216,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 tw->video_engine.stop();
                 tw->video_engine.close_video();
                 tw->has_video = false;
+                tw->video_path = state->video_path;
                 if (tw->video_engine.open_video(tw->renderer, state->video_path)) {
                     tw->video_engine.start();
                     tw->has_video = true;
@@ -2162,47 +2247,46 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         } else if (event->user.code == 10) { // Switch preset
             char* name = (char*)event->user.data1;
             std::cout << "Settings Event: switched to preset '" << name << "'" << std::endl;
-            apply_preset_to_state_and_windows(state, presets::load(name));
-            save_config(state);
+            state->config.set_global("preset", config::Value(std::string(name)));
+            apply_preset_to_state_and_windows(state, config::resolve_preset(state->config.config(), name));
             sync_settings_ui_from_state(state);
             free(name);
         } else if (event->user.code == 11) { // New preset, seeded with baseline defaults
             char* name = (char*)event->user.data1;
             std::cout << "Settings Event: new preset '" << name << "'" << std::endl;
-            Preset p; // Preset{} defaults = the same baseline "pool" ships with
-            p.name = presets::unique_name(name);
-            presets::save(p);
-            apply_preset_to_state_and_windows(state, p);
-            save_config(state);
+            const std::string created = state->config.create_preset(name);  // every setting at its default
+            state->config.set_global("preset", config::Value(created));
+            apply_preset_to_state_and_windows(state, config::resolve_preset(state->config.config(), created));
             sync_settings_ui_from_state(state);
             free(name);
         } else if (event->user.code == 12) { // Duplicate active preset
             std::cout << "Settings Event: duplicating preset '" << state->active_preset_name << "'" << std::endl;
-            Preset dup = presets::load(state->active_preset_name);
-            dup.name = presets::unique_name(state->active_preset_name + " copy");
-            presets::save(dup);
-            apply_preset_to_state_and_windows(state, dup);
-            save_config(state);
+            const std::string copy = state->config.duplicate_preset(state->active_preset_name);
+            state->config.set_global("preset", config::Value(copy));
+            apply_preset_to_state_and_windows(state, config::resolve_preset(state->config.config(), copy));
             sync_settings_ui_from_state(state);
         } else if (event->user.code == 13) { // Rename active preset
             char* name = (char*)event->user.data1;
             std::cout << "Settings Event: renaming preset '" << state->active_preset_name << "' to '" << name << "'" << std::endl;
-            if (presets::rename(state->active_preset_name, name)) {
-                state->active_preset_name = name;
-                save_config(state); // rewrites the active_preset pointer only; look/feel is unchanged
+            if (state->config.rename_preset(state->active_preset_name, name)) {
+                for (auto* tw : state->windows) {
+                    if (tw->preset_name == state->active_preset_name) tw->preset_name = name;
+                }
+                state->active_preset_name = name;  // look and feel are unchanged
             }
             sync_settings_ui_from_state(state);
             free(name);
         } else if (event->user.code == 14) { // Delete active preset
             std::cout << "Settings Event: deleting preset '" << state->active_preset_name << "'" << std::endl;
-            presets::remove(state->active_preset_name); // no-op if it's "pool"
-            apply_preset_to_state_and_windows(state, presets::load("pool"));
-            save_config(state);
+            if (state->config.remove_preset(state->active_preset_name)) {  // built-ins refuse
+                const config::Config& c = state->config.config();
+                apply_preset_to_state_and_windows(state, config::resolve_preset(c, config::active_preset(c)));
+            }
             sync_settings_ui_from_state(state);
         } else if (event->user.code == 15) { // File menu: New Window with Preset
             char* name = (char*)event->user.data1;
             std::cout << "Menu Event: new window with preset '" << name << "'" << std::endl;
-            Preset p = presets::load(name);
+            config::PresetValues p = config::resolve_preset(state->config.config(), name);
             TerminalWindow* tw = create_terminal_window(state, nullptr, &p);
             if (tw) {
                 state->windows.push_back(tw);
@@ -2212,7 +2296,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         } else if (event->user.code == 16) { // File menu: New Tab with Preset
             char* name = (char*)event->user.data1;
             std::cout << "Menu Event: new tab with preset '" << name << "'" << std::endl;
-            Preset p = presets::load(name);
+            config::PresetValues p = config::resolve_preset(state->config.config(), name);
             SDL_Window* parent_win = state->active_window ? state->active_window->window : nullptr;
             TerminalWindow* tw = create_terminal_window(state, parent_win, &p);
             if (tw) {
@@ -2458,6 +2542,11 @@ static constexpr Uint64 kPtyRedrawGraceMs = 60;
 SDL_AppResult SDL_AppIterate(void* appstate) {
     AppState* state = static_cast<AppState*>(appstate);
     if (!state) return SDL_APP_FAILURE;
+
+    // Settings changes reach sink.toml once they stop coming; changes made
+    // to it by hand are picked up.
+    state->config.flush_if_due();
+    reload_config_if_changed(state);
 
     // Process native macOS menu clipboard actions
     if (state->active_window) {
@@ -3111,6 +3200,7 @@ void SDL_AppQuit(void* appstate, SDL_AppResult result) {
 
     AppState* state = static_cast<AppState*>(appstate);
     if (state) {
+        state->config.flush();
         state->settings_ui.close();
         for (auto* tw : state->windows) {
             destroy_terminal_window(tw);

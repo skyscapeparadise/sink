@@ -1,10 +1,13 @@
 #import <Cocoa/Cocoa.h>
 #include "macos_menu.h"
-#include "preset_manager.hpp"
 #include <atomic>
 #include <cstring>
 #include <vector>
 #include <string>
+
+// The preset names, built-ins first, from the running app's sink.toml
+// (defined in main.cpp).
+std::vector<std::string> current_preset_names();
 
 static std::atomic<bool> g_settings_requested{false};
 static std::atomic<bool> g_cut_requested{false};
@@ -293,7 +296,7 @@ extern "C" void trigger_menu_render_tick();
     }
 
     [menu removeAllItems];
-    std::vector<std::string> names = presets::list_names();
+    std::vector<std::string> names = current_preset_names();
     if (names.empty()) {
         NSMenuItem* empty = [[NSMenuItem alloc] initWithTitle:@"No Presets" action:nil keyEquivalent:@""];
         [empty setEnabled:NO];

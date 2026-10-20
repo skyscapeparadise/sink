@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "ansi_parser.hpp"
+#include "config_store.hpp"
 #include "crt_shader.hpp"
 #include "font_manager.hpp"
 #include "hue_shift.hpp"
@@ -136,6 +137,13 @@ struct TerminalWindow {
     std::thread demo_thread;
 
     bool has_video = false;
+    // The preset this window shows, and its background and font. Usually
+    // the active preset, but a window opened with File > New Window with
+    // Preset has its own -- kept when its font is reloaded for a new
+    // display, and the one it follows when sink.toml changes.
+    std::string preset_name;
+    std::string video_path;
+    std::string font_path;
     float exposure = 0.7f;
     float hue_shift_degrees = 0.0f;
     HueShiftEffect hue_shift;
@@ -230,6 +238,10 @@ struct AppState {
     std::vector<TerminalWindow*> windows;
     TerminalWindow* active_window = nullptr;
     SettingsUI settings_ui;
+
+    // sink.toml. Read at startup, edited by the Settings window, and saved
+    // a moment after the last change (see ConfigStore).
+    ConfigStore config;
 
     std::string video_path;
     std::string font_path;

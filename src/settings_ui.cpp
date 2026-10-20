@@ -257,6 +257,18 @@ void SettingsUI::set_preset_names(const std::vector<std::string>& names) {
     preset_names_ = names.empty() ? std::vector<std::string>{"pool"} : names;
 }
 
+void SettingsUI::set_builtin_presets(const std::vector<std::string>& names) {
+    builtin_presets_ = names;
+}
+
+void SettingsUI::set_config_notice(const std::string& text) {
+    config_notice_ = text;
+}
+
+bool SettingsUI::is_builtin(const std::string& name) const {
+    return std::find(builtin_presets_.begin(), builtin_presets_.end(), name) != builtin_presets_.end();
+}
+
 void SettingsUI::set_active_preset(const std::string& name) {
     active_preset_ = name.empty() ? "pool" : name;
     for (auto& btn : buttons_) {
@@ -595,11 +607,11 @@ void SettingsUI::process_event(const SDL_Event& event) {
                         ev.user.code = 12; // Duplicate active preset
                         SDL_PushEvent(&ev);
                     } else if (btn.id == PRESET_BTN_RENAME) {
-                        if (active_preset_ != "pool") {
+                        if (!is_builtin(active_preset_)) {
                             begin_edit(PresetEditMode::kRename, active_preset_);
                         }
                     } else if (btn.id == PRESET_BTN_DELETE) {
-                        if (active_preset_ != "pool") {
+                        if (!is_builtin(active_preset_)) {
                             SDL_Event ev;
                             std::memset(&ev, 0, sizeof(ev));
                             ev.type = SDL_EVENT_USER;
@@ -739,7 +751,7 @@ void SettingsUI::render() {
     draw_text(font_disp, font_value_x, 320.0f * scale, colors_.text_primary);
 
     // 4. Draw Buttons (ghost buttons with thin outline borders)
-    bool preset_locked = (active_preset_ == "pool");
+    bool preset_locked = is_builtin(active_preset_);
     for (const auto& btn : buttons_) {
         // The name field turns into an editable text box (drawn separately,
         // below) while editing; the action buttons next to it don't apply
@@ -841,10 +853,30 @@ void SettingsUI::render() {
                 SDL_FColor highlight_color = is_hovered ? SDL_FColor{1.0f, 1.0f, 1.0f, 0.10f} : SDL_FColor{0.0f, 0.8f, 0.8f, 0.15f};
                 draw_rect_filled(highlight, highlight_color, 4.0f * scale);
             }
-            draw_text(preset_names_[i], phys_row.x + 10.0f * scale,
-                       phys_row.y + (phys_row.h / 2.0f) - (font_manager_.get_cell_height() / 2.0f),
+            const float row_text_y = phys_row.y + (phys_row.h / 2.0f) - (font_manager_.get_cell_height() / 2.0f);
+            draw_text(preset_names_[i], phys_row.x + 10.0f * scale, row_text_y,
                        (is_active || is_hovered) ? colors_.text_primary : colors_.text_secondary);
+            if (is_builtin(preset_names_[i])) {
+                const std::string tag = "built-in";
+                draw_text(tag, phys_row.x + phys_row.w - measure_text_width(tag) - 10.0f * scale, row_text_y,
+                          colors_.text_secondary);
+            }
         }
+    }
+
+    // sink.toml notice, e.g. a syntax error holding back saves.
+    // The start says what's wrong, so a long one loses its end, not its start.
+    if (!config_notice_.empty()) {
+        std::string shown = config_notice_;
+        const float max_w = (500.0f - 48.0f) * scale;
+        if (measure_text_width(shown) > max_w) {
+            while (!shown.empty() && measure_text_width(shown + "...") > max_w) {
+                do { shown.pop_back(); } while (!shown.empty() && (static_cast<unsigned char>(shown.back()) & 0xC0) == 0x80);
+                if (!shown.empty() && (static_cast<unsigned char>(shown.back()) & 0xC0) == 0xC0) shown.pop_back();
+            }
+            shown += "...";
+        }
+        draw_text(shown, 24.0f * scale, 443.0f * scale, SDL_FColor{1.0f, 0.55f, 0.45f, 1.0f});
     }
 
     // 5. Draw Sliders

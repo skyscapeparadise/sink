@@ -184,7 +184,9 @@ set(SOURCES
     src/video_engine.cpp
     src/settings_ui.cpp
     src/sink_demo.cpp
-    src/preset_manager.cpp
+    src/config.cpp
+    src/toml_edit.cpp
+    src/config_store.cpp
     src/hue_shift.cpp
     src/crt_shader.cpp
 )
@@ -300,16 +302,6 @@ if(TMUX_EXECUTABLE)
 else()
     message(STATUS "tmux not found; skipping the tmux compatibility test")
 endif()
-
-# Config store tests: no window/PTY/renderer needed, just the TOML-backed
-# preset store, so it's a separate lightweight binary rather than piling
-# onto sink_tests (which already owns its own main()).
-add_executable(preset_manager_tests
-    tests/test_preset_manager.cpp
-    src/preset_manager.cpp
-)
-target_include_directories(preset_manager_tests PRIVATE src vendor/tomlplusplus)
-add_test(NAME preset_manager COMMAND preset_manager_tests)
 
 # sink.toml version 1: reading, validation, generation and migration.
 add_executable(config_tests
