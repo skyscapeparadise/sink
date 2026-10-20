@@ -342,8 +342,19 @@ void SettingsUI::click_list(DropList& list, float mx, float my) {
     list.hover = -1;
 }
 
+// "Built in" for the purposes of locking: sink's own presets, and ones that
+// come only from an included file, which sink can't rename or delete.
 bool SettingsUI::is_builtin(const std::string& name) const {
-    return std::find(builtin_presets_.begin(), builtin_presets_.end(), name) != builtin_presets_.end();
+    return std::find(builtin_presets_.begin(), builtin_presets_.end(), name) != builtin_presets_.end() ||
+           is_included(name);
+}
+
+bool SettingsUI::is_included(const std::string& name) const {
+    return std::find(included_presets_.begin(), included_presets_.end(), name) != included_presets_.end();
+}
+
+void SettingsUI::set_included_presets(const std::vector<std::string>& names) {
+    included_presets_ = names;
 }
 
 void SettingsUI::set_active_preset(const std::string& name) {
@@ -974,7 +985,7 @@ void SettingsUI::render() {
             draw_text(preset_names_[i], phys_row.x + 10.0f * scale, row_text_y,
                        (is_active || is_hovered) ? colors_.text_primary : colors_.text_secondary);
             if (is_builtin(preset_names_[i])) {
-                const std::string tag = "built-in";
+                const std::string tag = is_included(preset_names_[i]) ? "included" : "built-in";
                 draw_text(tag, phys_row.x + phys_row.w - measure_text_width(tag) - 10.0f * scale, row_text_y,
                           colors_.text_secondary);
             }

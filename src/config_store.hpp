@@ -45,6 +45,12 @@ public:
     // whole, losing comments. The previous text is in sink.toml.bak.
     bool regenerated() const { return regenerated_; }
 
+    // Whether Settings can rename or delete this preset: only presets with a
+    // table in sink.toml itself, since sink never writes included files.
+    bool can_rename_or_delete(const std::string& preset) const {
+        return !config::is_builtin(preset) && config::is_own_preset(config_, preset);
+    }
+
     // ---- Changes --------------------------------------------------------------
     //
     // Values equal to the default are removed rather than written, so a preset
@@ -95,7 +101,11 @@ private:
     void rebuild();                      // (last good) text + pending_ -> working_text_, config_
     void read_from_disk();
     bool write(const std::string& text); // atomic, through symlinks
-    FileStamp stamp() const;
+    FileStamp stamp() const { return stamp_of(path_); }
+    static FileStamp stamp_of(const std::string& path);
+    // Reads the working text with its includes into config_, noting each
+    // included file's stamp so live reload sees them change too.
+    void read_config();
 
     std::string path_;
     std::string base_text_;              // the file as last read or written
@@ -109,4 +119,5 @@ private:
     bool dirty_ = false;
     uint64_t last_edit_ms_ = 0;          // steady clock
     FileStamp known_;                    // the file as this store last saw or left it
+    std::vector<std::pair<std::string, FileStamp>> included_;  // ...and the files it includes
 };

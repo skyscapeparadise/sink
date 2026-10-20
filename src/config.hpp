@@ -15,6 +15,7 @@
 // preset into the fully-populated PresetValues the rest of sink uses.
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
@@ -79,6 +80,7 @@ using SettingMap = std::map<std::string, Setting>;  // key path -> setting
 struct Diagnostic {
     int line = 0;          // 1-based; 0 when there is no meaningful line
     std::string message;
+    std::string file;      // an included file it's about; empty for sink.toml itself
 };
 
 struct Config {
@@ -87,6 +89,11 @@ struct Config {
     std::map<std::string, SettingMap> presets;  // user presets: name -> overrides
     std::vector<std::string> preset_order;      // names as they appear in the file
     std::vector<Diagnostic> warnings;           // unknown keys, out-of-range values
+    // Presets sink.toml itself has a table for. The rest come only from
+    // included files, which sink never writes, so they can't be renamed or
+    // deleted from Settings (changes to them still go into sink.toml).
+    std::vector<std::string> own_presets;
+    std::vector<std::string> included_files;    // every file read for this config, in order
 };
 
 // The values a preset resolves to: its overrides on top of the built-in it
@@ -135,6 +142,19 @@ bool is_builtin(const std::string& preset_name);
 // reported, and unknown keys are reported but otherwise ignored -- they stay
 // in the file untouched.
 std::optional<Config> read_text(const std::string& text, Diagnostic& error);
+
+// Reads `text` (sink.toml, at `path`) along with the files its `include`
+// names, and the files those include, up to 8 deep. Each included file is a
+// base the next one, and finally sink.toml, override key by key -- so a
+// setting in sink.toml always wins, and Settings (which writes only sink.toml)
+// always takes effect. Relative include paths are relative to the file that
+// names them. A missing, unreadable or broken include is a warning, naming
+// the file, and is skipped; only a syntax error in sink.toml itself fails.
+// `load` returns a file's contents, or nullopt if it can't be read.
+std::optional<Config> read_with_includes(const std::string& text, const std::string& path, Diagnostic& error,
+                                         const std::function<std::optional<std::string>(const std::string&)>& load);
+
+bool is_own_preset(const Config& c, const std::string& name);
 
 // Typed access to a global key, falling back to its registry default.
 bool global_bool(const Config& c, const std::string& path);

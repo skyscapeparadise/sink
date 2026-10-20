@@ -220,6 +220,63 @@ static void test_regenerating_keeps_a_backup() {
     CHECK(c && config::resolve_preset(*c, "x").crt && config::resolve_preset(*c, "x").exposure == 1.5);
 }
 
+static bool warned(const config::Config& c, const std::string& fragment, const std::string& file_fragment) {
+    for (const auto& w : c.warnings) {
+        if (w.message.find(fragment) != std::string::npos && w.file.find(file_fragment) != std::string::npos) return true;
+    }
+    return false;
+}
+
+static void test_includes() {
+    std::string dir = scratch();
+    mkdir((dir + "/parts").c_str(), 0755);
+    write(dir + "/parts/shared.toml",
+          "include = [\"themes.toml\"]\n"            // relative to parts/
+          "[terminal]\nscrollback_lines = 3000\n"
+          "[presets.work]\nexposure = 1.5\ncrt = true\n");
+    write(dir + "/parts/themes.toml", "[presets.work]\ntheme = \"nord\"\nhue_shift = 10\n");
+    write(dir + "/broken.toml", "[presets.x]\ncrt = tru\n");
+    write(dir + "/loop.toml", "include = [\"loop.toml\"]\n");
+    write(dir + "/sink.toml",
+          "version = 1\n"
+          "include = [\"parts/shared.toml\", \"missing.toml\", \"broken.toml\", \"loop.toml\"]\n"
+          "preset = \"work\"\n"
+          "[presets.work]\nexposure = 0.9\n"
+          "[presets.mine]\ncrt = true\n");
+    ConfigStore store(dir + "/sink.toml");
+    store.load();
+    const config::Config& c = store.config();
+
+    // Includes are bases, deepest first; sink.toml wins.
+    config::PresetValues work = config::resolve_preset(c, "work");
+    CHECK(work.exposure == 0.9);           // sink.toml over shared.toml
+    CHECK(work.crt);                       // from shared.toml
+    CHECK(work.theme == "nord");           // from themes.toml, included by shared.toml
+    CHECK(config::global_int(c, "terminal.scrollback_lines") == 3000);
+
+    // Problems with includes are warnings about that file, not failures.
+    CHECK(!store.error());
+    CHECK(warned(c, "can't read include \"missing.toml\"", ""));
+    CHECK(warned(c, "skipping this file", "broken.toml"));
+    CHECK(warned(c, "includes itself", "loop.toml"));
+
+    // Presets only in an include can't be renamed or deleted; ones in
+    // sink.toml can, and changes land in sink.toml.
+    write(dir + "/parts/shared.toml", read(dir + "/parts/shared.toml") + "[presets.team]\ncrt = true\n");
+    CHECK(store.reload_if_changed());      // an include changed
+    CHECK(config::preset_exists(store.config(), "team"));
+    CHECK(!store.can_rename_or_delete("team"));
+    CHECK(!store.remove_preset("team"));
+    CHECK(store.can_rename_or_delete("mine"));
+    store.set_preset("team", "hue_shift", config::Value(200.0));
+    store.flush();
+    CHECK(contains(read(dir + "/sink.toml"), "[presets.team]\nhue_shift = 200\n"));
+    CHECK(!contains(read(dir + "/parts/shared.toml"), "hue_shift = 200"));
+    CHECK(config::resolve_preset(store.config(), "team").crt);
+    CHECK(config::resolve_preset(store.config(), "team").hue_shift == 200.0);
+    CHECK(!store.reload_if_changed());
+}
+
 int main() {
     test_fresh_install_creates_file();
     test_v0_file_is_migrated_with_backup();
@@ -230,6 +287,7 @@ int main() {
     test_symlink_and_mode_survive();
     test_preset_management();
     test_regenerating_keeps_a_backup();
+    test_includes();
     std::printf("%d/%d checks passed\n", checks_run - checks_failed, checks_run);
     return checks_failed == 0 ? 0 : 1;
 }

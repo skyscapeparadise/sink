@@ -84,10 +84,10 @@ std::string ConfigStore::default_path() {
 
 ConfigStore::ConfigStore(std::string path) : path_(std::move(path)) {}
 
-ConfigStore::FileStamp ConfigStore::stamp() const {
+ConfigStore::FileStamp ConfigStore::stamp_of(const std::string& path) {
     FileStamp s;
     struct stat st;
-    if (stat(path_.c_str(), &st) != 0) return s;
+    if (stat(path.c_str(), &st) != 0) return s;
     s.exists = true;
     s.mtime_ns = static_cast<int64_t>(st.st_mtimespec.tv_sec) * 1000000000 + st.st_mtimespec.tv_nsec;
     s.size = static_cast<int64_t>(st.st_size);
@@ -147,7 +147,16 @@ void ConfigStore::read_from_disk() {
 
 bool ConfigStore::reload_if_changed() {
     FileStamp now = stamp();
-    if (now == known_) return false;
+    if (now == known_) {
+        // sink.toml is as it was; an included file may not be.
+        for (const auto& [file, seen] : included_) {
+            if (!(stamp_of(file) == seen)) {
+                read_config();
+                return true;
+            }
+        }
+        return false;
+    }
     known_ = now;
     read_from_disk();
     rebuild();
@@ -164,9 +173,19 @@ void ConfigStore::rebuild() {
             if (regen) backup_due_ = regenerated_ = true;
         }
     }
-    config::Diagnostic err;
-    if (auto c = config::read_text(working_text_, err)) config_ = std::move(*c);
+    read_config();
     dirty_ = !pending_.empty();
+}
+
+void ConfigStore::read_config() {
+    config::Diagnostic err;
+    auto c = config::read_with_includes(working_text_, path_, err, [](const std::string& file) {
+        return read_file(file);
+    });
+    if (!c) return;
+    config_ = std::move(*c);
+    included_.clear();
+    for (const std::string& file : config_.included_files) included_.push_back({ file, stamp_of(file) });
 }
 
 void ConfigStore::edit(const toml_edit::Edit& e) {
@@ -310,7 +329,7 @@ std::string ConfigStore::duplicate_preset(const std::string& name) {
 }
 
 bool ConfigStore::rename_preset(const std::string& from, const std::string& to) {
-    if (config::is_builtin(from) || !config_.presets.count(from)) return false;
+    if (!can_rename_or_delete(from)) return false;
     if (to.empty() || config::preset_exists(config_, to)) return false;
     const bool active = config::active_preset(config_) == from;
     toml_edit::Edit e;
@@ -323,7 +342,7 @@ bool ConfigStore::rename_preset(const std::string& from, const std::string& to) 
 }
 
 bool ConfigStore::remove_preset(const std::string& name) {
-    if (config::is_builtin(name) || !config_.presets.count(name)) return false;
+    if (!can_rename_or_delete(name)) return false;
     const bool active = config::active_preset(config_) == name;
     toml_edit::Edit e;
     e.kind = toml_edit::Edit::Kind::RemoveTable;

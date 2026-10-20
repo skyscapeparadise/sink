@@ -28,6 +28,11 @@ namespace config {
 const std::vector<KeyInfo>& keys() {
     static const std::vector<KeyInfo> k = {
         // Global
+        { "include", Scope::Global, KeyType::Strings, StringList{}, 0, 0, {},
+          "Other files to read first, such as shared themes or settings for "
+          "one machine. Each is a base: the next file, and finally this one, "
+          "override what it sets. Paths are relative to the file naming them; "
+          "Settings only ever changes this file." },
         { "preset", Scope::Global, KeyType::String, std::string("pool"), 0, 0, {},
           "The preset in use: a built-in such as \"pool\", or the name of one of "
           "your [presets.<name>] tables." },
@@ -363,6 +368,13 @@ Value global_value(const Config& c, const std::string& path) {
 
 // ---- Reading -----------------------------------------------------------------
 
+namespace {
+
+// A parsed document into a Config. `file` is stamped on its warnings.
+Config read_doc(const toml::table& doc, const std::string& file);
+
+} // namespace
+
 std::optional<Config> read_text(const std::string& text, Diagnostic& error) {
     toml::table doc;
     try {
@@ -372,7 +384,14 @@ std::optional<Config> read_text(const std::string& text, Diagnostic& error) {
         error.message = std::string(e.description());
         return std::nullopt;
     }
+    Config c = read_doc(doc, "");
+    c.own_presets = c.preset_order;
+    return c;
+}
 
+namespace {
+
+Config read_doc(const toml::table& doc, const std::string& file) {
     Config c;
     c.version = static_cast<int>(doc["version"].value_or(int64_t{kCurrentVersion}));
 
@@ -414,7 +433,106 @@ std::optional<Config> read_text(const std::string& text, Diagnostic& error) {
                                    "unknown setting " + name + " (left as is)" });
         }
     }
+    for (Diagnostic& w : c.warnings) w.file = file;
     return c;
+}
+
+std::string dir_of(const std::string& path) {
+    const size_t slash = path.rfind('/');
+    return slash == std::string::npos ? std::string(".") : path.substr(0, slash);
+}
+
+// `over` on top of `base`, key by key; presets merge per key too.
+void merge_into(Config& base, const Config& over) {
+    for (const auto& [path, setting] : over.global) base.global[path] = setting;
+    for (const std::string& name : over.preset_order) {
+        auto it = over.presets.find(name);
+        if (it == over.presets.end()) continue;
+        if (!base.presets.count(name)) base.preset_order.push_back(name);
+        for (const auto& [path, setting] : it->second) base.presets[name][path] = setting;
+        base.presets[name];  // a preset with no settings still exists
+    }
+    base.warnings.insert(base.warnings.end(), over.warnings.begin(), over.warnings.end());
+    base.included_files.insert(base.included_files.end(), over.included_files.begin(), over.included_files.end());
+}
+
+using Loader = std::function<std::optional<std::string>(const std::string&)>;
+
+// The includes named by `doc` (read from `file`), each merged with its own
+// includes first, into `out` in order.
+void read_includes(const toml::table& doc, const std::string& file, int depth, std::vector<std::string>& stack,
+                   const Loader& load, Config& out) {
+    const toml::array* list = doc["include"].as_array();
+    if (!list) return;
+    for (auto&& el : *list) {
+        const auto* s = el.as_string();
+        if (!s) continue;  // the registry reports the wrong type
+        std::string target = expand_home(s->get());
+        if (!target.empty() && target[0] != '/') target = dir_of(file) + "/" + target;
+        Diagnostic where{ static_cast<int>(el.source().begin.line), "", file };
+        if (depth >= 8) {
+            where.message = "include \"" + s->get() + "\" is more than 8 includes deep; skipping it";
+            out.warnings.push_back(where);
+            continue;
+        }
+        if (std::find(stack.begin(), stack.end(), target) != stack.end()) {
+            where.message = "include \"" + s->get() + "\" includes itself, by way of others; skipping it";
+            out.warnings.push_back(where);
+            continue;
+        }
+        std::optional<std::string> text = load(target);
+        if (!text) {
+            where.message = "can't read include \"" + s->get() + "\" (" + target + "); skipping it";
+            out.warnings.push_back(where);
+            continue;
+        }
+        toml::table inc;
+        try {
+            inc = toml::parse(*text);
+        } catch (const toml::parse_error& e) {
+            out.warnings.push_back({ static_cast<int>(e.source().begin.line),
+                                     std::string(e.description()) + "; skipping this file", target });
+            continue;
+        }
+        stack.push_back(target);
+        Config part;
+        part.included_files.push_back(target);
+        read_includes(inc, target, depth + 1, stack, load, part);
+        merge_into(part, read_doc(inc, target));
+        stack.pop_back();
+        merge_into(out, part);
+    }
+}
+
+} // namespace
+
+std::optional<Config> read_with_includes(const std::string& text, const std::string& path, Diagnostic& error,
+                                         const Loader& load) {
+    toml::table doc;
+    try {
+        doc = toml::parse(text);
+    } catch (const toml::parse_error& e) {
+        error.line = static_cast<int>(e.source().begin.line);
+        error.message = std::string(e.description());
+        return std::nullopt;
+    }
+    Config merged;
+    std::vector<std::string> stack{ path };
+    read_includes(doc, path, 0, stack, load, merged);
+    Config own = read_doc(doc, "");
+    merged.version = own.version;
+    merged.own_presets = own.preset_order;
+    merge_into(merged, own);
+    // Warnings about sink.toml's own lines (its include list) say so the same
+    // way the rest do: with no file.
+    for (Diagnostic& w : merged.warnings) {
+        if (w.file == path) w.file.clear();
+    }
+    return merged;
+}
+
+bool is_own_preset(const Config& c, const std::string& name) {
+    return std::find(c.own_presets.begin(), c.own_presets.end(), name) != c.own_presets.end();
 }
 
 bool global_bool(const Config& c, const std::string& path) {

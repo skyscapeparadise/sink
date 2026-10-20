@@ -562,7 +562,7 @@ static void apply_global_settings(AppState* state) {
 static void load_config(AppState* state) {
     state->config.load();
     for (const config::Diagnostic& w : state->config.config().warnings) {
-        std::cerr << "sink.toml: line " << w.line << ": " << w.message << std::endl;
+        std::cerr << (w.file.empty() ? std::string("sink.toml") : w.file) << ": line " << w.line << ": " << w.message << std::endl;
     }
     apply_global_settings(state);
     const config::Config& c = state->config.config();
@@ -1363,6 +1363,13 @@ static void refresh_settings_ui_presets(AppState* state) {
     std::vector<std::string> builtins;
     for (const config::BuiltinPreset& b : config::builtin_presets()) builtins.push_back(b.name);
     state->settings_ui.set_builtin_presets(builtins);
+    // Presets only an included file has: Settings can change them (into
+    // sink.toml) but not rename or delete them.
+    std::vector<std::string> included;
+    for (const std::string& name : config::preset_names(state->config.config())) {
+        if (!config::is_builtin(name) && !state->config.can_rename_or_delete(name)) included.push_back(name);
+    }
+    state->settings_ui.set_included_presets(included);
     state->settings_ui.set_active_preset(state->active_preset_name);
 }
 
@@ -1400,7 +1407,9 @@ static void update_config_notice(AppState* state) {
                !config::is_path(font) && !is_bundled_font_name(font) && !FontManager::can_open(font)) {
         notice = "font \"" + font + "\" isn't installed; using Monaspace Neon";
     } else if (const auto& warnings = store.config().warnings; !warnings.empty()) {
-        notice = "sink.toml line " + std::to_string(warnings.front().line) + ": " + clean(warnings.front().message);
+        const config::Diagnostic& w = warnings.front();
+        const std::string file = w.file.empty() ? std::string("sink.toml") : w.file.substr(w.file.rfind('/') + 1);
+        notice = file + " line " + std::to_string(w.line) + ": " + clean(w.message);
         if (warnings.size() > 1) notice += " (+" + std::to_string(warnings.size() - 1) + " more)";
     } else if (store.regenerated()) {
         notice = "sink.toml was rewritten in full; your previous version is in sink.toml.bak";
@@ -1420,7 +1429,7 @@ static void reload_config_if_changed(AppState* state) {
     if (state->config.reload_if_changed()) {
         const config::Config& c = state->config.config();
         for (const config::Diagnostic& w : c.warnings) {
-            std::cerr << "sink.toml: line " << w.line << ": " << w.message << std::endl;
+            std::cerr << (w.file.empty() ? std::string("sink.toml") : w.file) << ": line " << w.line << ": " << w.message << std::endl;
         }
         const std::string previous_active = state->active_preset_name;
         const std::string active = config::active_preset(c);
@@ -1475,7 +1484,13 @@ static std::optional<config::Config> read_config_for_command_line(const std::str
         if (auto converted = config::migrate_v0(text)) text = *converted;
     }
     config::Diagnostic err;
-    std::optional<config::Config> c = config::read_text(text, err);
+    std::optional<config::Config> c = config::read_with_includes(text, path, err, [](const std::string& file) {
+        std::ifstream in(file, std::ios::binary);
+        if (!in.is_open()) return std::optional<std::string>();
+        std::stringstream contents;
+        contents << in.rdbuf();
+        return std::optional<std::string>(contents.str());
+    });
     if (!c) std::cerr << path << ":" << err.line << ": " << err.message << std::endl;
     return c;
 }
@@ -1524,7 +1539,7 @@ static std::optional<int> run_command_line(int argc, char* argv[]) {
         std::optional<config::Config> c = read_config_for_command_line(path);
         if (!c) return 1;
         for (const config::Diagnostic& w : c->warnings) {
-            std::cout << path << ":" << w.line << ": " << w.message << "\n";
+            std::cout << (w.file.empty() ? path : w.file) << ":" << w.line << ": " << w.message << "\n";
         }
         if (c->warnings.empty()) std::cout << path << ": OK" << std::endl;
         return c->warnings.empty() ? 0 : 1;

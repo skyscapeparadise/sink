@@ -179,6 +179,14 @@ exposure and hue shift work on all of them, not just videos.
 
 `pool` is built in, so you can't rename or delete it. change something while it's active and sink saves your changes as `pool copy`.
 
+you can split your config across files. `include` reads other files first, as a base that the next one, and finally `sink.toml`, override setting by setting. handy for themes you share between machines, or keeping one machine's tweaks out of a dotfiles repo:
+
+```toml
+include = ["~/dotfiles/sink-shared.toml", "this-mac.toml"]   # relative paths start beside the file naming them
+```
+
+presets that only an included file has show up tagged "included". you can change them in settings (the changes go into `sink.toml`), but not rename or delete them, since sink never writes your included files.
+
 if the file has a mistake, sink tells you which line in the settings window and keeps using your last good settings, and it won't save over the file until you fix it. setting `SINK_CONFIG` to another path makes sink use that file instead.
 
 coming from 0.11 or earlier? the first launch converts your file to this format and keeps the original as `sink.toml.v0.bak`.

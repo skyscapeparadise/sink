@@ -174,6 +174,12 @@
         }
       }
     },
+    "include": {
+      "description": "Other files to read first, such as shared themes or settings for one machine. Each is a base: the next file, and finally this one, override what it sets. Paths are relative to the file naming them; Settings only ever changes this file.",
+      "type": "array",
+      "items": { "type": "string" },
+      "default": []
+    },
     "preset": {
       "description": "The preset in use: a built-in such as \"pool\", or the name of one of your [presets.<name>] tables.",
       "type": "string",

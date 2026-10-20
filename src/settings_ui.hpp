@@ -101,6 +101,8 @@ public:
     // Presets that ship with sink: marked in the list, and not renamable or
     // deletable (changing one's settings makes a copy instead; see main.cpp).
     void set_builtin_presets(const std::vector<std::string>& names);
+    // Presets that come only from an included file: tagged and locked the same way.
+    void set_included_presets(const std::vector<std::string>& names);
     // One line at the bottom of the window about sink.toml, such as a syntax
     // error that is stopping changes from being saved. Empty hides it.
     void set_config_notice(const std::string& text);
@@ -140,6 +142,8 @@ private:
     std::vector<std::string> preset_names_ = {"pool"};
     std::string active_preset_ = "pool";
     std::vector<std::string> builtin_presets_ = {"pool"};
+    std::vector<std::string> included_presets_;
+    bool is_included(const std::string& name) const;
     std::string config_notice_;
     // A list that drops open from a button; picking a row sends `user_code`
     // with the row's text (strdup'd) as data1.
