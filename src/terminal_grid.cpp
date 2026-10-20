@@ -457,9 +457,8 @@ void TerminalGrid::soft_reset() {
     // The *default* colours are not reset here. DECSTR restores the SGR state
     // to the defaults; it does not undo an OSC 10/11/12 that changed what the
     // defaults are. RIS does both.
-    current_fg_ = default_fg_;
+    set_current_fg_default();
     current_bg_ = default_bg_;
-    current_fg_packed_ = pack_color(current_fg_);
     current_bg_packed_ = pack_color(current_bg_);
     current_attrs_ = 0;
     current_hyperlink_id_ = 0;
@@ -1139,9 +1138,8 @@ void TerminalGrid::full_reset() {
     reset_default_bg();
     reset_default_cursor_color();
     reset_palette();
-    current_fg_ = default_fg_;
+    set_current_fg_default();
     current_bg_ = default_bg_;
-    current_fg_packed_ = pack_color(current_fg_);
     current_bg_packed_ = pack_color(current_bg_);
     current_attrs_ = 0;
     current_hyperlink_id_ = 0;
@@ -1630,19 +1628,40 @@ void TerminalGrid::place_image_at_cursor(uint64_t image_id, int pixel_w, int pix
 // is the xterm arrangement, which every application's colour arithmetic
 // assumes: a 6x6x6 cube on the levels 0, 95, 135, 175, 215, 255, then a
 // 24-step greyscale ramp.
-SDL_FColor TerminalGrid::default_palette_color(int index) {
-    static const SDL_FColor named[16] = {
-        {0.05f, 0.05f, 0.05f, 1.0f},  {0.85f, 0.15f, 0.15f, 1.0f},
-        {0.15f, 0.85f, 0.15f, 1.0f},  {0.85f, 0.75f, 0.15f, 1.0f},
-        {0.15f, 0.15f, 0.85f, 1.0f},  {0.85f, 0.15f, 0.85f, 1.0f},
-        {0.15f, 0.85f, 0.85f, 1.0f},  {0.85f, 0.85f, 0.85f, 1.0f},
-        {0.30f, 0.30f, 0.30f, 1.0f},  {1.00f, 0.30f, 0.30f, 1.0f},
-        {0.30f, 1.00f, 0.30f, 1.0f},  {1.00f, 1.00f, 0.30f, 1.0f},
-        {0.30f, 0.30f, 1.00f, 1.0f},  {1.00f, 0.30f, 1.00f, 1.0f},
-        {0.30f, 1.00f, 1.00f, 1.0f},  {1.00f, 1.00f, 1.00f, 1.0f},
+// sink's own colours, which the grid starts with until a theme is applied
+// (themes.cpp has the same values as the "sink" theme).
+ColorScheme TerminalGrid::default_scheme() {
+    return ColorScheme{
+        kDefaultFg, kDefaultReportedBg, kDefaultCursor, {1.00f, 0.60f, 0.00f, 0.35f},
+        {
+            {0.05f, 0.05f, 0.05f, 1.0f},  {0.85f, 0.15f, 0.15f, 1.0f},
+            {0.15f, 0.85f, 0.15f, 1.0f},  {0.85f, 0.75f, 0.15f, 1.0f},
+            {0.15f, 0.15f, 0.85f, 1.0f},  {0.85f, 0.15f, 0.85f, 1.0f},
+            {0.15f, 0.85f, 0.85f, 1.0f},  {0.85f, 0.85f, 0.85f, 1.0f},
+            {0.30f, 0.30f, 0.30f, 1.0f},  {1.00f, 0.30f, 0.30f, 1.0f},
+            {0.30f, 1.00f, 0.30f, 1.0f},  {1.00f, 1.00f, 0.30f, 1.0f},
+            {0.30f, 0.30f, 1.00f, 1.0f},  {1.00f, 0.30f, 1.00f, 1.0f},
+            {0.30f, 1.00f, 1.00f, 1.0f},  {1.00f, 1.00f, 1.00f, 1.0f},
+        },
     };
+}
+
+void TerminalGrid::set_color_scheme(const ColorScheme& scheme) {
+    scheme_ = scheme;
+    for (int i = 0; i < 16; ++i) palette_[i] = scheme_.palette[i];
+    default_fg_ = scheme_.foreground;
+    default_cursor_ = scheme_.cursor;
+    reported_bg_ = default_bg_.a > 0.0f ? default_bg_ : scheme_.background;
+    // Cells, and the pen, refer to the palette and default foreground rather
+    // than copying them, so they follow without being touched. Only the
+    // unpacked copy of the pen needs refreshing.
+    current_fg_ = color_of(current_fg_packed_);
+    current_bg_ = color_of(current_bg_packed_);
+}
+
+SDL_FColor TerminalGrid::default_palette_color(int index) const {
     index = std::clamp(index, 0, 255);
-    if (index < 16) return named[index];
+    if (index < 16) return scheme_.palette[index];
     if (index < 232) {
         int n = index - 16;
         int levels[3] = { n / 36, (n / 6) % 6, n % 6 };
@@ -1672,15 +1691,15 @@ void TerminalGrid::reset_palette() {
     for (int i = 0; i < 256; ++i) palette_[i] = default_palette_color(i);
 }
 
-void TerminalGrid::reset_default_fg() { default_fg_ = kDefaultFg; }
+void TerminalGrid::reset_default_fg() { default_fg_ = scheme_.foreground; }
 
 void TerminalGrid::reset_default_bg() {
     default_bg_ = kDefaultBg;
-    reported_bg_ = kDefaultReportedBg;
+    reported_bg_ = scheme_.background;
     blank_row_valid_ = false;
 }
 
-void TerminalGrid::reset_default_cursor_color() { default_cursor_ = kDefaultCursor; }
+void TerminalGrid::reset_default_cursor_color() { default_cursor_ = scheme_.cursor; }
 
 void TerminalGrid::queue_reply(const std::string& bytes) {
     if (pending_reply_.size() + bytes.size() > kMaxPendingReplyBytes) return;
@@ -1930,8 +1949,8 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
             // Resolve SGR attributes into effective colors. Reverse swaps
             // the pair (a transparent bg reverses against near-black so the
             // glyph doesn't vanish); dim darkens the foreground.
-            SDL_FColor cell_fg = unpack_color(cell.fg);
-            SDL_FColor cell_bg = unpack_color(cell.bg);
+            SDL_FColor cell_fg = color_of(cell.fg);
+            SDL_FColor cell_bg = color_of(cell.bg);
             if (cell.attrs & ATTR_REVERSE) {
                 SDL_FColor new_bg = cell_fg;
                 cell_fg = (cell_bg.a > 0.0f) ? cell_bg
@@ -1954,7 +1973,7 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
             }
 
             if (selected) {
-                bg_color = { 1.00f, 0.60f, 0.00f, 0.35f }; // Premium Translucent Amber Gold Selection
+                bg_color = scheme_.selection;  // the theme's; sink's own is a translucent amber
             } else if (search_matched) {
                 bg_color = { 0.00f, 0.90f, 1.00f, 0.45f }; // Translucent Electric Cyan Search Highlight
             }
@@ -2179,7 +2198,7 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
         auto corner_bg = [&](int col, int row) {
             RowView v = row_view(row, view_offset);
             const Cell& cell = (col >= 0 && col < v.len) ? v.cells[col] : blank_cell;
-            return unpack_color(cell.bg);
+            return color_of(cell.bg);
         };
         SDL_FColor tl_color = corner_bg(0, 0);
         SDL_FColor tr_color = corner_bg(cols_ - 1, 0);

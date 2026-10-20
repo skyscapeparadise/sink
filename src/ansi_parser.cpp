@@ -55,12 +55,6 @@ ANSIParser::ANSIParser() {}
 
 ANSIParser::~ANSIParser() {}
 
-// The palette lives on the grid now, so that OSC 4 can change it. This is the
-// same lookup it always was, just reading state instead of a static table.
-static SDL_FColor xterm_256_color(const TerminalGrid& grid, int idx) {
-    return grid.palette_color(idx);
-}
-
 void ANSIParser::reset_csi() {
     csi_params_.clear();
     csi_acc_ = 0;
@@ -1298,11 +1292,11 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
             auto apply_base_fg = [&]() {
                 if (fg_base_index_ >= 0) {
                     int idx = fg_base_index_ + ((attrs & ATTR_BOLD) ? 8 : 0);
-                    grid.set_current_fg(grid.palette_color(idx));
+                    grid.set_current_fg_index(idx);
                 }
             };
             auto reset_all = [&]() {
-                grid.set_current_fg(grid.get_default_fg());
+                grid.set_current_fg_default();
                 grid.set_current_bg(grid.get_default_bg());
                 attrs = 0;
                 fg_base_index_ = -1;
@@ -1346,13 +1340,13 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
                     fg_base_index_ = param - 30;
                     apply_base_fg();
                 } else if (param >= 40 && param <= 47) {
-                    grid.set_current_bg(grid.palette_color(param - 40));
+                    grid.set_current_bg_index(param - 40);
                 } else if (param >= 90 && param <= 97) {
                     // Explicit bright: not subject to bold re-brightening
                     fg_base_index_ = -1;
-                    grid.set_current_fg(grid.palette_color(param - 90 + 8));
+                    grid.set_current_fg_index(param - 90 + 8);
                 } else if (param >= 100 && param <= 107) {
-                    grid.set_current_bg(grid.palette_color(param - 100 + 8));
+                    grid.set_current_bg_index(param - 100 + 8);
                 } else if (param == 38 || param == 48) {
                     if (param == 38) fg_base_index_ = -1;
                     // Extended color: 38/48;2;R;G;B (24-bit truecolor) or
@@ -1366,15 +1360,15 @@ void ANSIParser::process_csi_sequence(TerminalGrid& grid, char command) {
                         else       grid.set_current_bg({r, g, b, 1.0f});
                         i += 4;
                     } else if (i + 2 < csi_params_.size() && csi_params_[i + 1] == 5) {
-                        SDL_FColor color = xterm_256_color(grid, csi_params_[i + 2]);
-                        if (is_fg) grid.set_current_fg(color);
-                        else       grid.set_current_bg(color);
+                        const int index = std::clamp(csi_params_[i + 2], 0, 255);
+                        if (is_fg) grid.set_current_fg_index(index);
+                        else       grid.set_current_bg_index(index);
                         i += 2;
                     }
                 } else if (param == 39) {
                     // Default foreground color
                     fg_base_index_ = -1;
-                    grid.set_current_fg(grid.get_default_fg());
+                    grid.set_current_fg_default();
                 } else if (param == 49) {
                     // Default background color
                     grid.set_current_bg(grid.get_default_bg());

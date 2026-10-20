@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <SDL3/SDL.h>
 #include <vector>
 #include <deque>
@@ -49,6 +50,30 @@ inline SDL_FColor unpack_color(const PackedColor& c) {
     constexpr float k = 1.0f / 255.0f;
     return { c.r * k, c.g * k, c.b * k, c.a * k };
 }
+
+// A cell colour can also be a *reference* -- "palette entry 4", "the default
+// foreground" -- resolved when the cell is drawn (TerminalGrid::color_of), so
+// changing the theme or the palette recolours text already on screen. Real
+// colours are fully opaque (SGR, OSC) or fully transparent (the default
+// background), so alpha 1 is free to mark one; r says what it refers to and g
+// which palette entry. Cell stays the same size.
+inline constexpr uint8_t kColorRefAlpha = 1;
+inline constexpr uint8_t kRefPalette = 0;
+inline constexpr uint8_t kRefDefaultFg = 1;
+inline PackedColor palette_ref(int index) {
+    return { kRefPalette, static_cast<uint8_t>(index), 0, kColorRefAlpha };
+}
+inline PackedColor default_fg_ref() { return { kRefDefaultFg, 0, 0, kColorRefAlpha }; }
+
+// The colours a theme sets: what the grid's defaults are, and what a reset
+// (RIS, OSC 104 and 110-112) returns to.
+struct ColorScheme {
+    SDL_FColor foreground;
+    SDL_FColor background;  // what OSC 11 reports; the grid itself stays clear
+    SDL_FColor cursor;
+    SDL_FColor selection;   // drawn over whatever is behind it, so not opaque
+    SDL_FColor palette[16];
+};
 
 // Field order is unchanged from when fg/bg were SDL_FColor: with 4-byte
 // alignment, moving hyperlink_id ahead of attrs would not shrink this any
@@ -231,6 +256,19 @@ public:
     void reset_palette_color(int index);
     void reset_palette();
 
+    // The theme. Applies it now -- recolouring text already on screen, since
+    // cells refer to the palette and default foreground rather than copying
+    // them -- and makes it what resets return to.
+    void set_color_scheme(const ColorScheme& scheme);
+    const ColorScheme& color_scheme() const { return scheme_; }
+
+    // A cell colour as drawn: references resolved against the current palette
+    // and defaults.
+    SDL_FColor color_of(const PackedColor& c) const {
+        if (c.a != kColorRefAlpha) return unpack_color(c);
+        return c.r == kRefPalette ? palette_[c.g] : default_fg_;
+    }
+
     // Restores the built-in defaults, for RIS and for OSC 110/111/112.
     void reset_default_fg();
     void reset_default_bg();
@@ -238,6 +276,16 @@ public:
 
     void set_current_fg(const SDL_FColor& fg) { current_fg_ = fg; current_fg_packed_ = pack_color(fg); }
     void set_current_bg(const SDL_FColor& bg) { current_bg_ = bg; current_bg_packed_ = pack_color(bg); }
+    // By reference, so the theme can recolour them later (see color_of).
+    void set_current_fg_index(int index) {
+        current_fg_ = palette_color(index);
+        current_fg_packed_ = palette_ref(std::clamp(index, 0, 255));
+    }
+    void set_current_bg_index(int index) {
+        current_bg_ = palette_color(index);
+        current_bg_packed_ = palette_ref(std::clamp(index, 0, 255));
+    }
+    void set_current_fg_default() { current_fg_ = default_fg_; current_fg_packed_ = default_fg_ref(); }
     const SDL_FColor& get_current_fg() const { return current_fg_; }
     const SDL_FColor& get_current_bg() const { return current_bg_; }
     void set_current_attrs(uint8_t attrs) { current_attrs_ = attrs; }
@@ -765,7 +813,9 @@ private:
     static constexpr SDL_FColor kDefaultReportedBg{0.05f, 0.05f, 0.06f, 1.0f};
     static constexpr SDL_FColor kDefaultCursor{1.0f, 1.0f, 1.0f, 1.0f};
     SDL_FColor palette_[256];
-    static SDL_FColor default_palette_color(int index);
+    SDL_FColor default_palette_color(int index) const;
+    ColorScheme scheme_ = default_scheme();
+    static ColorScheme default_scheme();
 
     SDL_FColor default_fg_ = kDefaultFg;
     SDL_FColor default_bg_ = kDefaultBg;

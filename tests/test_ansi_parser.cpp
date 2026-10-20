@@ -43,6 +43,12 @@ static bool color_near(const PackedColor& pc, float r, float g, float b) {
            std::fabs(c.b - b) < 0.005f;
 }
 
+// A cell colour as it is drawn: palette and default-foreground references
+// resolved against the grid's current colours.
+static bool color_near(const TerminalGrid& grid, const PackedColor& pc, float r, float g, float b) {
+    return color_near(pack_color(grid.color_of(pc)), r, g, b);
+}
+
 static std::string row_text(const TerminalGrid& g, int row) {
     std::string s;
     for (int c = 0; c < g.get_cols(); ++c) {
@@ -273,7 +279,7 @@ static void test_ris_full_reset() {
     // And the terminal is usable afterwards, with default colours.
     feed(p, g, "\x1b[2;1Hafter");
     CHECK(row_text(g, 1) == "after");
-    CHECK(color_near(g.get_cell_at(0, 1).fg, 0.9f, 0.9f, 0.9f));
+    CHECK(color_near(g, g.get_cell_at(0, 1).fg, 0.9f, 0.9f, 0.9f));
 }
 
 static void test_combining_marks() {
@@ -480,9 +486,9 @@ static void test_sgr_16_color() {
     TerminalGrid g; g.resize(20, 5);
     ANSIParser p;
     feed(p, g, "\x1b[31mx");
-    CHECK(color_near(g.get_cell_at(0, 0).fg, 0.85f, 0.15f, 0.15f));
+    CHECK(color_near(g, g.get_cell_at(0, 0).fg, 0.85f, 0.15f, 0.15f));
     feed(p, g, "\x1b[0m\x1b[92my");
-    CHECK(color_near(g.get_cell_at(1, 0).fg, 0.30f, 1.00f, 0.30f));
+    CHECK(color_near(g, g.get_cell_at(1, 0).fg, 0.30f, 1.00f, 0.30f));
 }
 
 static void test_sgr_256_color() {
@@ -490,37 +496,37 @@ static void test_sgr_256_color() {
     ANSIParser p;
     // Index 196 = cube(5,0,0) = rgb(255,0,0)
     feed(p, g, "\x1b[38;5;196ma");
-    CHECK(color_near(g.get_cell_at(0, 0).fg, 1.0f, 0.0f, 0.0f));
+    CHECK(color_near(g, g.get_cell_at(0, 0).fg, 1.0f, 0.0f, 0.0f));
     // Index 16 = cube(0,0,0) = black
     feed(p, g, "\x1b[38;5;16mb");
-    CHECK(color_near(g.get_cell_at(1, 0).fg, 0.0f, 0.0f, 0.0f));
+    CHECK(color_near(g, g.get_cell_at(1, 0).fg, 0.0f, 0.0f, 0.0f));
     // Index 231 = cube(5,5,5) = white
     feed(p, g, "\x1b[48;5;231mc");
-    CHECK(color_near(g.get_cell_at(2, 0).bg, 1.0f, 1.0f, 1.0f));
+    CHECK(color_near(g, g.get_cell_at(2, 0).bg, 1.0f, 1.0f, 1.0f));
     // Grayscale ramp: 232 = rgb(8,8,8), 255 = rgb(238,238,238)
     feed(p, g, "\x1b[38;5;232md");
-    CHECK(color_near(g.get_cell_at(3, 0).fg, 8/255.0f, 8/255.0f, 8/255.0f));
+    CHECK(color_near(g, g.get_cell_at(3, 0).fg, 8/255.0f, 8/255.0f, 8/255.0f));
     feed(p, g, "\x1b[38;5;255me");
-    CHECK(color_near(g.get_cell_at(4, 0).fg, 238/255.0f, 238/255.0f, 238/255.0f));
+    CHECK(color_near(g, g.get_cell_at(4, 0).fg, 238/255.0f, 238/255.0f, 238/255.0f));
     // Index 4 falls through to the stylized ANSI palette
     feed(p, g, "\x1b[38;5;4mf");
-    CHECK(color_near(g.get_cell_at(5, 0).fg, 0.15f, 0.15f, 0.85f));
+    CHECK(color_near(g, g.get_cell_at(5, 0).fg, 0.15f, 0.15f, 0.85f));
 }
 
 static void test_sgr_256_colon_form() {
     TerminalGrid g; g.resize(20, 5);
     ANSIParser p;
     feed(p, g, "\x1b[38:5:196ma");
-    CHECK(color_near(g.get_cell_at(0, 0).fg, 1.0f, 0.0f, 0.0f));
+    CHECK(color_near(g, g.get_cell_at(0, 0).fg, 1.0f, 0.0f, 0.0f));
     feed(p, g, "\x1b[0m\x1b[38:2:0:255:0mb");
-    CHECK(color_near(g.get_cell_at(1, 0).fg, 0.0f, 1.0f, 0.0f));
+    CHECK(color_near(g, g.get_cell_at(1, 0).fg, 0.0f, 1.0f, 0.0f));
 }
 
 static void test_sgr_truecolor() {
     TerminalGrid g; g.resize(20, 5);
     ANSIParser p;
     feed(p, g, "\x1b[38;2;10;20;30mx");
-    CHECK(color_near(g.get_cell_at(0, 0).fg, 10/255.0f, 20/255.0f, 30/255.0f));
+    CHECK(color_near(g, g.get_cell_at(0, 0).fg, 10/255.0f, 20/255.0f, 30/255.0f));
 }
 
 static void test_decom_origin_mode() {
@@ -676,17 +682,17 @@ static void test_bold_as_bright() {
     ANSIParser p;
     // Color then bold: red brightens
     feed(p, g, "\x1b[31m\x1b[1ma");
-    CHECK(color_near(g.get_cell_at(0, 0).fg, 1.00f, 0.30f, 0.30f));
+    CHECK(color_near(g, g.get_cell_at(0, 0).fg, 1.00f, 0.30f, 0.30f));
     CHECK(g.get_cell_at(0, 0).attrs & ATTR_BOLD);
     // Bold then color, same result
     feed(p, g, "\x1b[0m\x1b[1;32mb");
-    CHECK(color_near(g.get_cell_at(1, 0).fg, 0.30f, 1.00f, 0.30f));
+    CHECK(color_near(g, g.get_cell_at(1, 0).fg, 0.30f, 1.00f, 0.30f));
     // SGR 22 drops back to the base color
     feed(p, g, "\x1b[22mc");
-    CHECK(color_near(g.get_cell_at(2, 0).fg, 0.15f, 0.85f, 0.15f));
+    CHECK(color_near(g, g.get_cell_at(2, 0).fg, 0.15f, 0.85f, 0.15f));
     // Bold must not brighten truecolor
     feed(p, g, "\x1b[0m\x1b[38;2;100;100;100m\x1b[1md");
-    CHECK(color_near(g.get_cell_at(3, 0).fg, 100/255.0f, 100/255.0f, 100/255.0f));
+    CHECK(color_near(g, g.get_cell_at(3, 0).fg, 100/255.0f, 100/255.0f, 100/255.0f));
 }
 
 static void test_alt_screen_buffer() {
@@ -2149,8 +2155,8 @@ static void test_osc_palette() {
     CHECK(g.palette_color(1).g == 1.0f);
     CHECK(g.palette_color(1).r == 0.0f);
     feed(p, g, "\x1b[31mX");
-    CHECK(g.get_cell_at(0, 0).fg.g > 250);
-    CHECK(g.get_cell_at(0, 0).fg.r < 5);
+    CHECK(pack_color(g.color_of(g.get_cell_at(0, 0).fg)).g > 250);
+    CHECK(pack_color(g.color_of(g.get_cell_at(0, 0).fg)).r < 5);
 
     // Several pairs in one sequence.
     feed(p, g, "\x1b]4;2;#0000ff;3;#ff00ff\x1b\\");
@@ -2162,7 +2168,7 @@ static void test_osc_palette() {
     feed(p, g, "\x1b]4;200;#123456\x1b\\");
     CHECK(g.palette_color(200).r > 0.06f && g.palette_color(200).r < 0.08f);
     feed(p, g, "\x1b[38;5;200mY");
-    CHECK(g.get_cell_at(1, 0).fg.b > 0x50);
+    CHECK(pack_color(g.color_of(g.get_cell_at(1, 0).fg)).b > 0x50);
 
     // Reset one entry, then all of them.
     feed(p, g, "\x1b]104;1\x1b\\");
@@ -2567,6 +2573,39 @@ static void test_app_keypad() {
     CHECK(!g.is_app_keypad());
 }
 
+// A theme recolours text already on screen: cells refer to the palette and
+// the default foreground instead of copying them. Truecolor stays put.
+static void test_color_scheme() {
+    TerminalGrid g; g.resize(20, 4);
+    ANSIParser p;
+    feed(p, g, "\x1b[31mR\x1b[39mD\x1b[38;5;4mB\x1b[38;2;10;20;30mT\x1b[41m \x1b[0m");
+
+    ColorScheme scheme = g.color_scheme();
+    scheme.foreground = {0.5f, 0.5f, 0.5f, 1.0f};
+    scheme.palette[1] = {0.0f, 1.0f, 0.0f, 1.0f};
+    scheme.palette[4] = {1.0f, 1.0f, 0.0f, 1.0f};
+    scheme.background = {1.0f, 1.0f, 1.0f, 1.0f};
+    g.set_color_scheme(scheme);
+
+    CHECK(color_near(g, g.get_cell_at(0, 0).fg, 0.0f, 1.0f, 0.0f));   // SGR 31 follows palette[1]
+    CHECK(color_near(g, g.get_cell_at(1, 0).fg, 0.5f, 0.5f, 0.5f));   // default fg follows
+    CHECK(color_near(g, g.get_cell_at(2, 0).fg, 1.0f, 1.0f, 0.0f));   // 256-colour index too
+    CHECK(color_near(g, g.get_cell_at(3, 0).fg, 10 / 255.0f, 20 / 255.0f, 30 / 255.0f));  // truecolor doesn't
+    CHECK(color_near(g, g.get_cell_at(4, 0).bg, 0.0f, 1.0f, 0.0f));   // backgrounds as well
+
+    // OSC 4 recolours what's on screen now too.
+    feed(p, g, "\x1b]4;1;#0000ff\x1b\\");
+    CHECK(color_near(g, g.get_cell_at(0, 0).fg, 0.0f, 0.0f, 1.0f));
+
+    // Resets go back to the theme, not sink's built-in colours.
+    feed(p, g, "\x1b]104\x1b\\\x1b]110\x1b\\");
+    CHECK(color_near(g, g.get_cell_at(0, 0).fg, 0.0f, 1.0f, 0.0f));
+    CHECK(color_near(pack_color(g.get_default_fg()), 0.5f, 0.5f, 0.5f));
+    feed(p, g, "\x1b" "c");  // RIS
+    CHECK(color_near(pack_color(g.palette_color(1)), 0.0f, 1.0f, 0.0f));
+    CHECK(color_near(pack_color(g.get_reported_bg()), 1.0f, 1.0f, 1.0f));
+}
+
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
@@ -2627,6 +2666,7 @@ int main() {
     test_kitty_graphics();
     test_osc_colors();
     test_osc_palette();
+    test_color_scheme();
     test_osc_cwd();
     test_app_keypad();
     test_csi_param_flood();
