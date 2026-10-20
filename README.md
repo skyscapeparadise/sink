@@ -84,19 +84,49 @@ and the editing keys your fingers already know from other Mac terminals:
 
 most things live in the settings window (⌘,): your background, font, exposure, hue shift, the CRT shader, HDR text, ligatures, the typing animation, and presets.
 
-under the hood everything is saved to `~/.config/sink/sink.toml`, which you can edit by hand too. each preset gets its own `[presets.<name>]` section, and `active_preset` picks which one you're using. a couple of things only live in the file:
+under the hood it's all in `~/.config/sink/sink.toml`, and you can edit it by hand too. sink only ever rewrites the lines for settings you change in the settings window, so your comments and layout stay put. save the file and open windows pick up the change within a second.
 
 ```toml
-# put these at the top
-# keep sink's shell integration out of your shell
-shell_integration = false
-# make option act as meta (handy for emacs and readline). true for both
-# option keys, or "left" or "right" for just one
-option_as_meta = true
+version = 1
+preset = "clouds"          # a built-in like "pool", or one of yours below
 
-[presets.pool]
+[terminal]
 scrollback_lines = 10000
+
+[shell]
+integration = true         # false keeps sink's shell integration out of your shell
+
+[keyboard]
+option_as_meta = false     # true makes option act as meta (for emacs and readline),
+                           # or "left" / "right" for just one option key
+
+# your presets. each one only lists what it changes.
+[presets.clouds]
+background = "~/Videos/dry ice.mp4"
+exposure = 0.83
+hue_shift = 70
+crt = true
 ```
+
+a preset can set:
+
+| key | default | |
+|---|---|---|
+| `background` | `"pool"` | a built-in background, or a path to a video |
+| `font` | `"Monaspace Neon"` | the bundled font, or a path to a font file |
+| `exposure` | `0.7` | brightness of the background, 0 to 2 |
+| `hue_shift` | `0` | rotates the background's colors, in degrees |
+| `crt` | `false` | scanlines, curvature and glow |
+| `hdr_text` | `false` | text brighter than SDR white on HDR displays |
+| `ligatures` | `true` | draws `->`, `!=` and friends as single symbols |
+| `title_bar` | `true` | the translucent title bar |
+| `typing_animation` | `true` | output types itself onto the screen |
+
+`pool` is built in, so you can't rename or delete it. change something while it's active and sink saves your changes as `pool copy`.
+
+if the file has a mistake, sink tells you which line in the settings window and keeps using your last good settings, and it won't save over the file until you fix it. setting `SINK_CONFIG` to another path makes sink use that file instead.
+
+coming from 0.11 or earlier? the first launch converts your file to this format and keeps the original as `sink.toml.v0.bak`.
 
 ## security
 
