@@ -191,6 +191,7 @@ set(SOURCES
     src/system_fonts.cpp
     src/hue_shift.cpp
     src/crt_shader.cpp
+    src/background_shader.cpp
 )
 
 # macOS Cocoa Menu Integration

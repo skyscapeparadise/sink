@@ -54,7 +54,7 @@ struct KeyInfo {
     Value default_value;
     double min = 0;      // Int and Float only
     double max = 0;
-    StringList choices;  // BoolOrChoice and Choice only
+    StringList choices;  // BoolOrChoice, Choice; for Path, the names it accepts besides paths
     const char* doc;
 };
 
@@ -104,6 +104,11 @@ struct PresetValues {
     // Overrides of the theme's colors: "#rrggbb", or "" to keep the theme's.
     std::string foreground, background_color, cursor, selection;
     StringList palette;        // replaces the theme's first palette.size() colors
+    StringList gradient_colors;
+    double gradient_angle = 45;
+    StringList gel_colors;
+    double gel_speed = 1;
+    double glass_tint = 0.3;
 };
 
 struct BuiltinPreset {

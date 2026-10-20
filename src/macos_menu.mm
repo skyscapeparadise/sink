@@ -906,6 +906,34 @@ void enable_macos_window_vibrancy(SDL_Window* sdl_win, bool enable) {
     }
 }
 
+void set_macos_window_backdrop(SDL_Window* sdl_win, int backdrop) {
+    @autoreleasepool {
+        if (!sdl_win) return;
+        SDL_PropertiesID props = SDL_GetWindowProperties(sdl_win);
+        NSWindow* nswin = (__bridge NSWindow*)SDL_GetPointerProperty(props, "SDL.window.cocoa.window", NULL);
+        NSView* contentView = nswin ? [nswin contentView] : nil;
+        if (!contentView) return;
+
+        NSGlassEffectView* glass = nil;
+        for (NSView* subview in [contentView subviews]) {
+            // The full-window frosted view; the title bar has its own, short one.
+            if ([subview isKindOfClass:[NSVisualEffectView class]] && subview.frame.size.height > 60.0) {
+                [subview setHidden:(backdrop != 1)];
+            } else if ([subview isKindOfClass:[NSGlassEffectView class]]) {
+                glass = (NSGlassEffectView*)subview;
+            }
+        }
+        if (backdrop == 2 && !glass) {
+            glass = [[NSGlassEffectView alloc] initWithFrame:[contentView bounds]];
+            [glass setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+            [glass setStyle:NSGlassEffectViewStyleRegular];
+            [glass setCornerRadius:0];
+            [contentView addSubview:glass positioned:NSWindowBelow relativeTo:nil];
+        }
+        if (glass) [glass setHidden:(backdrop != 2)];
+    }
+}
+
 void zoom_macos_window(SDL_Window* sdl_win) {
     @autoreleasepool {
         if (!sdl_win) return;

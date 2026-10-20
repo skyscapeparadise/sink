@@ -25,6 +25,7 @@
 #include "config_store.hpp"
 #include "system_fonts.hpp"
 #include "themes.hpp"
+#include "background_shader.hpp"
 #include "hue_shift.hpp"
 #include "crt_shader.hpp"
 
@@ -331,10 +332,6 @@ static std::string resolve_font(const std::string& value) {
     return value;
 }
 
-static std::string background_setting(const std::string& resolved_path) {
-    return resolved_path.find("sinkpool.mp4") != std::string::npos ? std::string("pool") : resolved_path;
-}
-
 static std::string font_setting(const std::string& resolved_path) {
     return resolved_path.find("MonaspaceNeon-Regular.otf") != std::string::npos ? std::string("Monaspace Neon")
                                                                                 : resolved_path;
@@ -366,6 +363,114 @@ static ColorScheme scheme_for(const config::PresetValues& p) {
     return s;
 }
 
+using Backdrop = TerminalWindow::Backdrop;
+
+// `background` as a kind. Anything not named here is a video: a path, or a
+// built-in one such as "pool".
+static Backdrop backdrop_of(const std::string& background) {
+    static const std::pair<const char*, Backdrop> kinds[] = {
+        { "color", Backdrop::Color },           { "gradient", Backdrop::Gradient },
+        { "gel", Backdrop::Gel },               { "clear", Backdrop::Clear },
+        { "frosted glass", Backdrop::Frosted }, { "liquid glass", Backdrop::LiquidGlass },
+    };
+    if (config::is_path(background)) return Backdrop::Video;
+    for (const auto& [name, kind] : kinds) {
+        if (strcasecmp(name, background.c_str()) == 0) return kind;
+    }
+    return Backdrop::Video;
+}
+
+// What Settings shows for the background: the kind's name, or the video.
+static std::string background_display(const AppState* state) {
+    return backdrop_of(state->background) == Backdrop::Video ? state->video_path : state->background;
+}
+
+static SDL_FColor mix_color(const SDL_FColor& a, const SDL_FColor& b, float t) {
+    return { a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t, 1.0f };
+}
+
+static SDL_FColor hex_color(const std::string& hex) {
+    themes::Rgb rgb;
+    themes::parse_hex(hex, rgb);
+    return { rgb.r / 255.0f, rgb.g / 255.0f, rgb.b / 255.0f, 1.0f };
+}
+
+// Gives a window its preset's background: opens or closes the video (only
+// when it changes), works out the gradient's and gel's colors -- the
+// preset's own, else built from the theme -- and shows the right macOS view
+// behind the window. tw->color_scheme must already be the preset's.
+static void apply_background(AppState* state, TerminalWindow* tw, const config::PresetValues& p) {
+    (void)state;
+    tw->background = p.background;
+    tw->backdrop = backdrop_of(p.background);
+
+    const std::string video = tw->backdrop == Backdrop::Video ? resolve_background(p.background) : std::string();
+    if (tw->video_path != video) {
+        tw->video_engine.stop();
+        tw->video_engine.close_video();
+        tw->has_video = false;
+        tw->video_path = video;
+        if (!video.empty() && tw->video_engine.open_video(tw->renderer, video)) {
+            tw->video_engine.start();
+            tw->has_video = true;
+            tw->fade_state = TerminalWindow::FADE_HOLD_BLACK;
+            tw->fade_opacity = 1.0f;
+        }
+    }
+
+    const ColorScheme& scheme = tw->color_scheme;
+    tw->backdrop_color = scheme.background;
+    tw->glass_tint = static_cast<float>(p.glass_tint);
+    tw->gel_speed = static_cast<float>(p.gel_speed);
+
+    BackgroundShader::Params& bp = tw->backdrop_params;
+    if (tw->backdrop == Backdrop::Gradient) {
+        bp.mode = BackgroundShader::Mode::Gradient;
+        bp.angle_degrees = static_cast<float>(p.gradient_angle);
+        if (p.gradient_colors.size() >= 2) {
+            bp.count = static_cast<int>(std::min<size_t>(p.gradient_colors.size(), 8));
+            for (int i = 0; i < bp.count; ++i) bp.colors[i] = hex_color(p.gradient_colors[i]);
+        } else {
+            // The theme's background, deepening toward its blue.
+            bp.count = 2;
+            bp.colors[0] = scheme.background;
+            bp.colors[1] = mix_color(scheme.background, scheme.palette[4], 0.5f);
+        }
+    } else if (tw->backdrop == Backdrop::Gel) {
+        bp.mode = BackgroundShader::Mode::Gel;
+        if (p.gel_colors.size() == 5) {
+            for (int i = 0; i < 5; ++i) bp.colors[i] = hex_color(p.gel_colors[i]);
+        } else if (strcasecmp(p.theme.c_str(), "sink") == 0) {
+            // sink's own theme: the original nebula, purple falling to black.
+            const SDL_FColor original[5] = {
+                {0.012f, 0.006f, 0.020f, 1}, {0.110f, 0.035f, 0.170f, 1}, {0.300f, 0.075f, 0.380f, 1},
+                {0.560f, 0.200f, 0.640f, 1}, {0.820f, 0.560f, 0.900f, 1},
+            };
+            for (int i = 0; i < 5; ++i) bp.colors[i] = original[i];
+        } else {
+            // The same shape in the theme's colors: its background, darkened,
+            // for the depths, its magenta for the cloud, its text for the
+            // wisps. The steps between keep the original's proportions -- the
+            // deep layer about a fifth of the way to the cloud's color, the
+            // next about half -- or the nebula loses its depth.
+            const SDL_FColor& accent = scheme.palette[5];
+            const SDL_FColor depths = mix_color(scheme.background, SDL_FColor{0, 0, 0, 1}, 0.75f);
+            bp.colors[0] = depths;
+            bp.colors[1] = mix_color(depths, accent, 0.2f);
+            bp.colors[2] = mix_color(depths, accent, 0.5f);
+            bp.colors[3] = accent;
+            bp.colors[4] = mix_color(accent, scheme.foreground, 0.5f);
+        }
+    }
+
+#if defined(__APPLE__)
+    int behind = 0;
+    if (tw->backdrop == Backdrop::Frosted) behind = 1;
+    if (tw->backdrop == Backdrop::LiquidGlass) behind = 2;
+    set_macos_window_backdrop(tw->window, behind);
+#endif
+}
+
 // For the File menu's "New Window/Tab with Preset" submenus (macos_menu.mm).
 std::vector<std::string> current_preset_names() {
     if (!g_app_state) return {};
@@ -391,8 +496,7 @@ static void save_config(AppState* state) {
     auto changed_bool = [&](const char* key, bool now, bool before) {
         if (now != before) changes.push_back({ key, config::Value(now) });
     };
-    changed_str("background", background_setting(state->video_path),
-                config::is_path(saved.background) ? saved.background : background_setting(resolve_background(saved.background)));
+    changed_str("background", state->background, saved.background);
     changed_str("font", font_setting(state->font_path),
                 config::is_path(saved.font) ? saved.font : font_setting(resolve_font(saved.font)));
     changed_num("exposure", state->exposure, saved.exposure);
@@ -422,7 +526,8 @@ static void save_config(AppState* state) {
 // updated separately, by apply_preset_to_state_and_windows).
 static void set_state_from_preset(AppState* state, const config::PresetValues& p) {
     state->active_preset_name = p.name;
-    state->video_path = resolve_background(p.background);
+    state->background = p.background;
+    state->video_path = backdrop_of(p.background) == Backdrop::Video ? resolve_background(p.background) : std::string();
     state->font_path = resolve_font(p.font);
     state->base_font_size = static_cast<float>(p.font_size);
     state->color_scheme = scheme_for(p);
@@ -628,6 +733,7 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     // back to the plain rectangle overlay) if this fails, no need to fail
     // window creation over it.
     tw->hue_shift.init(tw->renderer, hdr_console_enabled);
+    tw->background_shader.init(tw->renderer, hdr_console_enabled);
     tw->hue_shift_degrees = hue_shift_degrees;
     tw->crt_shader.init(tw->renderer, hdr_console_enabled);
 
@@ -678,13 +784,17 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
 
     SDL_StartTextInput(tw->window);
 
-    // Setup Video Background Engine
-    tw->video_path = video_path;
-    if (!video_path.empty() && video_path != "None") {
-        if (tw->video_engine.open_video(tw->renderer, video_path)) {
-            tw->video_engine.start();
-            tw->has_video = true;
+    // The background: a video, or one of the other kinds.
+    {
+        config::PresetValues p = preset_override
+            ? *preset_override
+            : config::resolve_preset(state->config.config(), state->active_preset_name);
+        if (!preset_override) {
+            // A video given on the command line overrides the preset's.
+            p.background = state->video_path.empty() || backdrop_of(state->background) != Backdrop::Video
+                ? state->background : state->video_path;
         }
+        apply_background(state, tw, p);
     }
 
     tw->animated_typing = animated_typing;
@@ -1159,6 +1269,7 @@ static bool recreate_renderer_for_hdr_console(AppState* state, TerminalWindow* t
 
     SDL_SetRenderVSync(tw->renderer, 1);
     tw->hue_shift.init(tw->renderer, want_linear_colorspace);
+    tw->background_shader.init(tw->renderer, want_linear_colorspace);
     tw->crt_shader.init(tw->renderer, want_linear_colorspace);
 
     float font_size_px = tw->font_size * tw->display_scale;
@@ -1192,23 +1303,10 @@ static bool recreate_renderer_for_hdr_console(AppState* state, TerminalWindow* t
 // the video or relayout the panes.
 static void apply_preset_to_window(AppState* state, TerminalWindow* tw, const config::PresetValues& p) {
     tw->preset_name = p.name;
-    const std::string video = resolve_background(p.background);
     const std::string font = resolve_font(p.font);
 
-    if (tw->video_path != video) {
-        tw->video_engine.stop();
-        tw->video_engine.close_video();
-        tw->has_video = false;
-        tw->video_path = video;
-        if (!video.empty() && video != "None") {
-            if (tw->video_engine.open_video(tw->renderer, video)) {
-                tw->video_engine.start();
-                tw->has_video = true;
-                tw->fade_state = TerminalWindow::FADE_HOLD_BLACK;
-                tw->fade_opacity = 1.0f;
-            }
-        }
-    }
+    tw->color_scheme = scheme_for(p);
+    apply_background(state, tw, p);
 
     // A changed font_size is the new base for this window, replacing any
     // View > Bigger/Smaller.
@@ -1228,7 +1326,6 @@ static void apply_preset_to_window(AppState* state, TerminalWindow* tw, const co
     tw->animated_typing = p.typing_animation;
     tw->vibrancy_enabled = p.title_bar;
     tw->crt_mode_enabled = p.crt;
-    tw->color_scheme = scheme_for(p);
     for (Pane* pane : all_panes(tw)) {
         pane->terminal.set_enable_ligatures(p.ligatures);
         pane->terminal.set_max_scrollback(static_cast<size_t>(state->scrollback_lines));
@@ -1265,7 +1362,7 @@ static void refresh_settings_ui_presets(AppState* state) {
 // Re-syncs every settings-window control from AppState, used after a preset
 // switch/create/duplicate/delete replaces the live settings wholesale.
 static void sync_settings_ui_from_state(AppState* state) {
-    state->settings_ui.set_paths(state->video_path, state->font_path);
+    state->settings_ui.set_paths(background_display(state), state->font_path);
     state->settings_ui.set_animated_typing(state->animated_typing);
     state->settings_ui.set_exposure(state->exposure);
     state->settings_ui.set_hue_shift(state->hue_shift);
@@ -1538,7 +1635,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
     if (get_settings_requested() && !state->settings_ui.is_open()) {
         SDL_Window* parent_win = state->active_window ? state->active_window->window : nullptr;
         if (parent_win && state->settings_ui.open(parent_win)) {
-            state->settings_ui.set_paths(state->video_path, state->font_path);
+            state->settings_ui.set_paths(background_display(state), state->font_path);
             state->settings_ui.set_animated_typing(state->active_window ? state->active_window->animated_typing : true);
             state->settings_ui.set_exposure(state->active_window ? state->active_window->exposure : 1.0f);
             state->settings_ui.set_hue_shift(state->active_window ? state->active_window->hue_shift_degrees : 0.0f);
@@ -2071,7 +2168,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         if ((mod & SDL_KMOD_GUI) && sym == SDLK_COMMA) {
             if (!state->settings_ui.is_open()) {
                 if (state->settings_ui.open(target_tw->window)) {
-                    state->settings_ui.set_paths(state->video_path, state->font_path);
+                    state->settings_ui.set_paths(background_display(state), state->font_path);
                     state->settings_ui.set_animated_typing(target_tw->animated_typing);
                     state->settings_ui.set_exposure(target_tw->exposure);
                     state->settings_ui.set_hue_shift(target_tw->hue_shift_degrees);
@@ -2334,28 +2431,17 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             }
         }
     } else if (event->type == SDL_EVENT_USER) {
-        if (event->user.code == 1) { // Media file selected
-            char* path = (char*)event->user.data1;
-            std::cout << "Settings Event: background changed: " << path << std::endl;
-
-            state->video_path = path;
-
-            for (auto* tw : state->windows) {
-                tw->video_engine.stop();
-                tw->video_engine.close_video();
-                tw->has_video = false;
-                tw->video_path = state->video_path;
-                if (!state->video_path.empty() && state->video_path != "None") {
-                    if (tw->video_engine.open_video(tw->renderer, state->video_path)) {
-                        tw->video_engine.start();
-                        tw->has_video = true;
-                        tw->fade_state = TerminalWindow::FADE_HOLD_BLACK;
-                        tw->fade_opacity = 1.0f;
-                    }
-                }
-            }
-
-            state->settings_ui.set_paths(state->video_path, state->font_path);
+        if (event->user.code == 1 || event->user.code == 3) {
+            // 1: a video picked in Settings. 3: "clear", back to the
+            // built-in pool video.
+            char* path = event->user.code == 1 ? (char*)event->user.data1 : nullptr;
+            state->background = path ? std::string(path) : std::string("pool");
+            config::PresetValues p = config::resolve_preset(state->config.config(), state->active_preset_name);
+            p.background = state->background;
+            p.theme = state->theme_name;
+            state->video_path = resolve_background(state->background);
+            for (auto* tw : state->windows) apply_background(state, tw, p);
+            state->settings_ui.set_paths(background_display(state), state->font_path);
             save_config(state);
             free(path);
         } else if (event->user.code == 2) { // Font selected
@@ -2375,26 +2461,9 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 }
             }
 
-            state->settings_ui.set_paths(state->video_path, state->font_path);
+            state->settings_ui.set_paths(background_display(state), state->font_path);
             save_config(state);
             free(path);
-        } else if (event->user.code == 3) { // Clear media -> reset to default pool video background
-            std::cout << "Settings Event: background cleared to default." << std::endl;
-            state->video_path = resolve_default_video_path();
-            for (auto* tw : state->windows) {
-                tw->video_engine.stop();
-                tw->video_engine.close_video();
-                tw->has_video = false;
-                tw->video_path = state->video_path;
-                if (tw->video_engine.open_video(tw->renderer, state->video_path)) {
-                    tw->video_engine.start();
-                    tw->has_video = true;
-                    tw->fade_state = TerminalWindow::FADE_HOLD_BLACK;
-                    tw->fade_opacity = 1.0f;
-                }
-            }
-            state->settings_ui.set_paths(state->video_path, state->font_path);
-            save_config(state);
         } else if (event->user.code == 4) { // Typing effect toggle
             bool anim = (bool)(intptr_t)event->user.data1;
             std::cout << "Settings Event: typing effect toggled: " << (anim ? "ON" : "OFF") << std::endl;
@@ -2461,9 +2530,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             config::PresetValues p = config::resolve_preset(state->config.config(), state->active_preset_name);
             p.theme = state->theme_name;
             state->color_scheme = scheme_for(p);
+            p.background = state->background;
             for (auto* tw : state->windows) {
                 tw->color_scheme = state->color_scheme;
                 for (Pane* pane : all_panes(tw)) pane->terminal.set_color_scheme(tw->color_scheme);
+                apply_background(state, tw, p);  // the gradient and gel follow the theme
             }
             save_config(state);
             state->settings_ui.set_themes(themes::names(), state->theme_name);
@@ -3242,15 +3313,43 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             tw->crt_shader.begin_scene(tw->renderer);
         }
 
-        // Render Active Window Context
-        if (tw->vibrancy_enabled && !tw->has_video) {
-            SDL_SetRenderDrawColor(tw->renderer, 0, 0, 0, 80);
-        } else {
-            SDL_SetRenderDrawColor(tw->renderer, 0, 0, 0, 255);
+        // A. The background. Opaque kinds cover the window; the clear and
+        // glass ones lay a tint of the theme's background over the desktop
+        // (or the glass macOS draws behind the window).
+        const SDL_FColor& bc = tw->backdrop_color;
+        const float lit = tw->exposure;
+        switch (tw->backdrop) {
+            case Backdrop::Color:
+                SDL_SetRenderDrawColorFloat(tw->renderer, bc.r * lit, bc.g * lit, bc.b * lit, 1.0f);
+                break;
+            case Backdrop::Clear:
+            case Backdrop::Frosted:
+            case Backdrop::LiquidGlass:
+                SDL_SetRenderDrawColorFloat(tw->renderer, bc.r, bc.g, bc.b, tw->glass_tint);
+                break;
+            case Backdrop::Gradient:
+            case Backdrop::Gel:
+            case Backdrop::Video:
+                SDL_SetRenderDrawColor(tw->renderer, 0, 0, 0, 255);
+                break;
         }
         SDL_RenderClear(tw->renderer);
+        if (tw->backdrop == Backdrop::Gradient || tw->backdrop == Backdrop::Gel) {
+            if (tw->backdrop == Backdrop::Gel) tw->backdrop_params.time += dt * tw->gel_speed;
+            BackgroundShader::Params params = tw->backdrop_params;
+            params.exposure = tw->exposure;
+            params.hue_degrees = tw->hue_shift_degrees;
+            params.logical_w = draw_w / tw->display_scale;
+            params.logical_h = draw_h / tw->display_scale;
+            if (tw->background_shader.is_ready()) {
+                tw->background_shader.draw(tw->renderer, params);
+            } else {
+                SDL_SetRenderDrawColorFloat(tw->renderer, bc.r * lit, bc.g * lit, bc.b * lit, 1.0f);
+                SDL_RenderClear(tw->renderer);
+            }
+        }
 
-        // A. Render video background YUV frame if active
+        // The video, when that's the background.
         if (tw->has_video) {
             tw->video_engine.update_frame(tw->renderer, dt);
             SDL_Texture* frame_tex = tw->video_engine.get_texture();

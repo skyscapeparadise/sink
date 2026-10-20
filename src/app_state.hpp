@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "ansi_parser.hpp"
+#include "background_shader.hpp"
 #include "config_store.hpp"
 #include "crt_shader.hpp"
 #include "font_manager.hpp"
@@ -148,6 +149,16 @@ struct TerminalWindow {
     std::string font_path;
     // Its preset's theme, given to every pane, including ones split off later.
     ColorScheme color_scheme;
+
+    // What's behind the text (`background` in sink.toml); see apply_background.
+    enum class Backdrop { Video, Color, Gradient, Gel, Clear, Frosted, LiquidGlass };
+    Backdrop backdrop = Backdrop::Video;
+    std::string background;              // the setting, as written
+    BackgroundShader background_shader;  // gradient and gel
+    BackgroundShader::Params backdrop_params;
+    SDL_FColor backdrop_color{0, 0, 0, 1};  // solid, and the tint over glass
+    float glass_tint = 0.3f;
+    float gel_speed = 1.0f;
     float exposure = 0.7f;
     float hue_shift_degrees = 0.0f;
     HueShiftEffect hue_shift;
@@ -249,6 +260,7 @@ struct AppState {
     // The active preset's theme, for new windows.
     ColorScheme color_scheme;
     std::string theme_name = "sink";
+    std::string background = "pool";    // the active preset's, as written
 
     std::string video_path;
     std::string font_path;

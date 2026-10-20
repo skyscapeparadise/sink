@@ -278,6 +278,24 @@ static void test_paths() {
     CHECK(config::contract_home("/Users/tester/a") == "/Users/tester/a");
 }
 
+static void test_background_kinds() {
+    config::Config c = read_ok(
+        "[presets.a]\nbackground = \"Frosted Glass\"\n"   // any case
+        "[presets.b]\nbackground = \"~/v.mp4\"\n"          // a path
+        "[presets.c]\nbackground = \"sparkles\"\n"         // line 6: neither
+        "[presets.d]\nbackground = \"gel\"\n[presets.d.gel]\nspeed = 9\ncolors = [\"#000\", \"#111\"]\n");
+    CHECK(config::resolve_preset(c, "a").background == "frosted glass");
+    CHECK(config::resolve_preset(c, "b").background == "/Users/test/v.mp4");
+    CHECK(config::resolve_preset(c, "c").background == "pool");
+    CHECK(has_warning(c, "presets.c.background = \"sparkles\" isn't a path", 6));
+    config::PresetValues d = config::resolve_preset(c, "d");
+    CHECK(d.background == "gel");
+    CHECK(d.gel_speed == 4.0);                   // clamped
+    CHECK(d.gel_colors.size() == 2);
+    CHECK(d.gradient_angle == 45.0);
+    CHECK(d.glass_tint > 0.29 && d.glass_tint < 0.31);
+}
+
 static std::string read_source_file(const std::string& relative) {
     std::string path = std::string(SINK_SOURCE_DIR) + "/" + relative;
     FILE* f = std::fopen(path.c_str(), "rb");
@@ -331,6 +349,7 @@ int main() {
     test_value_and_key_text();
     test_paths();
     test_reference_is_a_valid_config();
+    test_background_kinds();
     test_published_schema_and_readme_are_current();
     std::printf("%d/%d checks passed\n", checks_run - checks_failed, checks_run);
     return checks_failed == 0 ? 0 : 1;

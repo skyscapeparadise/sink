@@ -20,9 +20,8 @@
         "additionalProperties": false,
         "properties": {
           "background": {
-            "description": "The video behind the terminal: a built-in background's name, or a path to a video file.",
-            "type": "string",
-            "minLength": 1,
+            "description": "What's behind the text. A video: \"pool\" (built in) or a path to a video file. Or one of: \"color\", the theme's background color; \"gradient\" and \"gel\" (a slowly churning nebula), in the theme's colors unless [presets.<name>.gradient] or [presets.<name>.gel] say otherwise; \"clear\", \"frosted glass\" and \"liquid glass\", showing the desktop through the window.",
+            "anyOf": [{ "enum": ["pool", "color", "gradient", "gel", "clear", "frosted glass", "liquid glass"] }, { "type": "string", "pattern": "^~|/" }],
             "default": "pool"
           },
           "font": {
@@ -93,7 +92,7 @@
                 "default": ""
               },
               "background": {
-                "description": "The background color programs paint with, and that sink reports to programs that ask whether it's light or dark. A video background shows through it. Empty uses the theme's.",
+                "description": "The background color: what background = \"color\" fills the window with and the glass kinds are tinted by, what programs paint with, and what sink reports to programs that ask whether it's light or dark. A video shows through it. Empty uses the theme's.",
                 "type": "string",
                 "pattern": "^(#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3})?$",
                 "default": ""
@@ -116,6 +115,59 @@
                 "maxItems": 16,
                 "items": { "type": "string", "pattern": "^(#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3})$" },
                 "default": []
+              }
+            }
+          },
+          "gradient": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "colors": {
+                "description": "For background = \"gradient\": its colors, in order, evenly spaced. Empty runs from the theme's background toward its blue.",
+                "type": "array",
+                "maxItems": 8,
+                "items": { "type": "string", "pattern": "^(#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3})$" },
+                "default": []
+              },
+              "angle": {
+                "description": "Which way the gradient runs, in degrees: 0 is left to right, 90 top to bottom, 45 top-left to bottom-right. 0 to 360.",
+                "type": "number",
+                "minimum": 0,
+                "maximum": 360,
+                "default": 45
+              }
+            }
+          },
+          "gel": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "colors": {
+                "description": "For background = \"gel\": five colors from the darkest depths to the brightest wisps. Empty uses the theme's (sink's own theme gives the original purple).",
+                "type": "array",
+                "maxItems": 5,
+                "items": { "type": "string", "pattern": "^(#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3})$" },
+                "default": []
+              },
+              "speed": {
+                "description": "How fast the gel churns. 0 holds it still. 0 to 4.",
+                "type": "number",
+                "minimum": 0,
+                "maximum": 4,
+                "default": 1
+              }
+            }
+          },
+          "glass": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "tint": {
+                "description": "For the clear and glass backgrounds: how much of the theme's background color is laid over them, so text stays readable. 0 is none. 0 to 1.",
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.3
               }
             }
           }

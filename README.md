@@ -112,7 +112,7 @@ a preset can set:
 
 | key | default | |
 |---|---|---|
-| `background` | `"pool"` | a built-in background, or a path to a video |
+| `background` | `"pool"` | a video (`"pool"` or a path), or `"color"`, `"gradient"`, `"gel"`, `"clear"`, `"frosted glass"`, `"liquid glass"` (see below) |
 | `font` | `"Monaspace Neon"` | an installed font by name (`"Menlo"`, `"Menlo Bold"`), the bundled font, or a path to a font file |
 | `font_size` | `15` | in points. view > bigger and smaller change one window, default size comes back to this |
 | `exposure` | `0.7` | brightness of the background, 0 to 2 |
@@ -137,6 +137,37 @@ selection = "#7aa2f7"
 background = "#1a1b26"   # what programs paint with; your video still shows through
 palette = ["#15161e", "#f7768e"]   # replaces black and red, keeps the rest
 ```
+
+backgrounds don't have to be videos:
+
+- `color` fills the window with the theme's background color
+- `gradient` blends from the theme's background toward its blue, or your own colors
+- `gel` is a slowly churning nebula. with sink's own theme it's the original deep purple; with another theme it takes that theme's colors
+- `clear`, `frosted glass` and `liquid glass` show your desktop through the window, as is, blurred, or through macOS's liquid glass
+
+```toml
+[presets.nebula]
+background = "gel"
+
+[presets.nebula.gel]
+speed = 0.5                      # 0 holds it still
+colors = ["#020104", "#1c092b", "#4d1361", "#8f33a3", "#d18fe6"]   # depths to wisps
+
+[presets.dusk]
+background = "gradient"
+
+[presets.dusk.gradient]
+colors = ["#1a1b26", "#414868", "#7aa2f7"]
+angle = 45                       # 0 is left to right, 90 top to bottom
+
+[presets.see-through]
+background = "frosted glass"
+
+[presets.see-through.glass]
+tint = 0.3                       # how much of the theme's background lies over the glass
+```
+
+exposure and hue shift work on all of them, not just videos.
 
 `pool` is built in, so you can't rename or delete it. change something while it's active and sink saves your changes as `pool copy`.
 

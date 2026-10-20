@@ -112,6 +112,12 @@ void select_native_tab(SDL_Window* sdl_win, int index);
 // Enable or disable macOS native translucent window vibrancy / acrylic blur
 void enable_macos_window_vibrancy(SDL_Window* sdl_win, bool enable);
 
+// What macOS shows behind a window's (non-opaque) content: 0 nothing (the
+// desktop itself, or an opaque background covering it), 1 frosted glass
+// (the full-window NSVisualEffectView), 2 Liquid Glass (NSGlassEffectView).
+// Call after enable_macos_window_vibrancy, which makes the window non-opaque.
+void set_macos_window_backdrop(SDL_Window* sdl_win, int backdrop);
+
 // Classic macOS "zoom" (grow to fill the screen, or restore) with AppKit's
 // own native animation -- the same toggle a double-click on a native title
 // bar performs. Distinct from the green-button Spaces-based fullscreen.

@@ -43,9 +43,14 @@ const std::vector<KeyInfo>& keys() {
           "both Option keys, or \"left\" or \"right\" for just one." },
 
         // Preset
-        { "background", Scope::Preset, KeyType::Path, std::string("pool"), 0, 0, {},
-          "The video behind the terminal: a built-in background's name, or a "
-          "path to a video file." },
+        { "background", Scope::Preset, KeyType::Path, std::string("pool"),
+          0, 0, { "pool", "color", "gradient", "gel", "clear", "frosted glass", "liquid glass" },
+          "What's behind the text. A video: \"pool\" (built in) or a path to "
+          "a video file. Or one of: \"color\", the theme's background color; "
+          "\"gradient\" and \"gel\" (a slowly churning nebula), in the theme's "
+          "colors unless [presets.<name>.gradient] or [presets.<name>.gel] say "
+          "otherwise; \"clear\", \"frosted glass\" and \"liquid glass\", "
+          "showing the desktop through the window." },
         { "font", Scope::Preset, KeyType::Path, std::string("Monaspace Neon"), 0, 0, {},
           "The typeface: the name of an installed font (\"Menlo\", \"JetBrains "
           "Mono\", or a specific face such as \"Menlo Bold\"), \"Monaspace Neon\" "
@@ -74,9 +79,10 @@ const std::vector<KeyInfo>& keys() {
         { "colors.foreground", Scope::Preset, KeyType::Color, std::string(""), 0, 0, {},
           "Text color, as \"#rrggbb\". Empty uses the theme's." },
         { "colors.background", Scope::Preset, KeyType::Color, std::string(""), 0, 0, {},
-          "The background color programs paint with, and that sink reports to "
-          "programs that ask whether it's light or dark. A video background "
-          "shows through it. Empty uses the theme's." },
+          "The background color: what background = \"color\" fills the window "
+          "with and the glass kinds are tinted by, what programs paint with, and "
+          "what sink reports to programs that ask whether it's light or dark. A "
+          "video shows through it. Empty uses the theme's." },
         { "colors.cursor", Scope::Preset, KeyType::Color, std::string(""), 0, 0, {},
           "Cursor color. Empty uses the theme's." },
         { "colors.selection", Scope::Preset, KeyType::Color, std::string(""), 0, 0, {},
@@ -86,6 +92,22 @@ const std::vector<KeyInfo>& keys() {
           "The 16 colors programs choose from: black, red, green, yellow, blue, "
           "magenta, cyan, white, then their bright versions. A shorter list "
           "replaces just the first colors; the rest stay the theme's." },
+        { "gradient.colors", Scope::Preset, KeyType::ColorList, StringList{}, 0, 8, {},
+          "For background = \"gradient\": its colors, in order, evenly spaced. "
+          "Empty runs from the theme's background toward its blue." },
+        { "gradient.angle", Scope::Preset, KeyType::Float, 45.0, 0, 360, {},
+          "Which way the gradient runs, in degrees: 0 is left to right, 90 top "
+          "to bottom, 45 top-left to bottom-right." },
+        { "gel.colors", Scope::Preset, KeyType::ColorList, StringList{}, 0, 5, {},
+          "For background = \"gel\": five colors from the darkest depths to "
+          "the brightest wisps. Empty uses the theme's (sink's own theme gives "
+          "the original purple)." },
+        { "gel.speed", Scope::Preset, KeyType::Float, 1.0, 0, 4, {},
+          "How fast the gel churns. 0 holds it still." },
+        { "glass.tint", Scope::Preset, KeyType::Float, 0.3, 0, 1, {},
+          "For the clear and glass backgrounds: how much of the theme's "
+          "background color is laid over them, so text stays readable. 0 is "
+          "none." },
     };
     return k;
 }
@@ -198,7 +220,15 @@ std::optional<Value> convert(const KeyInfo& k, const std::string& where, const t
         case KeyType::Path:
             if (const auto* s = n.as_string()) {
                 if (s->get().empty()) return wrong_type();
-                return Value(s->get());
+                if (k.choices.empty() || is_path(s->get())) return Value(s->get());
+                for (const std::string& c : k.choices) {
+                    if (strcasecmp(c.c_str(), s->get().c_str()) == 0) return Value(c);
+                }
+                std::string allowed;
+                for (const std::string& c : k.choices) allowed += (allowed.empty() ? "\"" : ", \"") + c + "\"";
+                warnings.push_back({ line, where + " = \"" + s->get() + "\" isn't a path (one has a /) or one of " +
+                                           allowed + "; using the default" });
+                return std::nullopt;
             }
             return wrong_type();
         case KeyType::BoolOrChoice:
@@ -428,6 +458,11 @@ PresetValues resolve_preset(const Config& c, const std::string& name) {
     r.cursor = str("colors.cursor");
     r.selection = str("colors.selection");
     r.palette = std::get<StringList>(v["colors.palette"]);
+    r.gradient_colors = std::get<StringList>(v["gradient.colors"]);
+    r.gradient_angle = num("gradient.angle");
+    r.gel_colors = std::get<StringList>(v["gel.colors"]);
+    r.gel_speed = num("gel.speed");
+    r.glass_tint = num("glass.tint");
     return r;
 }
 
@@ -826,7 +861,13 @@ std::string key_schema(const KeyInfo& k, const std::string& pad) {
             break;
         case KeyType::String: out += pad + "\"type\": \"string\",\n"; break;
         case KeyType::Path:
-            out += pad + "\"type\": \"string\",\n" + pad + "\"minLength\": 1,\n";
+            if (k.choices.empty()) {
+                out += pad + "\"type\": \"string\",\n" + pad + "\"minLength\": 1,\n";
+            } else {
+                out += pad + "\"anyOf\": [{ \"enum\": [";
+                for (size_t i = 0; i < k.choices.size(); ++i) out += (i ? ", " : "") + json_string(k.choices[i]);
+                out += "] }, { \"type\": \"string\", \"pattern\": \"^~|/\" }],\n";
+            }
             break;
         case KeyType::BoolOrChoice: {
             out += pad + "\"anyOf\": [{ \"type\": \"boolean\" }, { \"enum\": [";
