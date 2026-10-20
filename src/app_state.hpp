@@ -128,8 +128,10 @@ struct TerminalWindow {
     std::string shown_title;
 
     // Font size in points. Per window, like Terminal's View > Bigger and
-    // Smaller; every window starts at AppState::base_font_size.
+    // Smaller; every window starts at its preset's font_size, which Default
+    // Size returns to.
     float font_size = 15.0f;
+    float base_font_size = 15.0f;
 
     std::atomic<bool> demo_running{false};
     std::atomic<bool> demo_skip_requested{false};

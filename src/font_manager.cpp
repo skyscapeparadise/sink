@@ -6,6 +6,50 @@
 #include <cstdlib>
 
 std::string FontManager::bundled_fallback_path_;
+FontManager::FontLookup FontManager::font_lookup_;
+
+namespace {
+
+// A font file and which face in it: .ttc collections hold several.
+struct FaceFile {
+    std::string path;
+    int face = 0;
+};
+
+TTF_Font* open_face(const FaceFile& f, float size) {
+    SDL_PropertiesID props = SDL_CreateProperties();
+    SDL_SetStringProperty(props, TTF_PROP_FONT_CREATE_FILENAME_STRING, f.path.c_str());
+    SDL_SetFloatProperty(props, TTF_PROP_FONT_CREATE_SIZE_FLOAT, size);
+    SDL_SetNumberProperty(props, TTF_PROP_FONT_CREATE_FACE_NUMBER, f.face);
+    TTF_Font* font = TTF_OpenFontWithProperties(props);
+    SDL_DestroyProperties(props);
+    return font;
+}
+
+// Which face of `path` has this family and style: face 0 unless the file is a
+// collection with a better match.
+int face_index(const std::string& path, const std::string& family, const std::string& style) {
+    TTF_Font* first = TTF_OpenFont(path.c_str(), 12.0f);
+    if (!first) return 0;
+    const int count = TTF_GetNumFontFaces(first);
+    TTF_CloseFont(first);
+    for (int i = 0; i < count; ++i) {
+        TTF_Font* f = open_face({ path, i }, 12.0f);
+        if (!f) continue;
+        const char* fam = TTF_GetFontFamilyName(f);
+        const char* sty = TTF_GetFontStyleName(f);
+        const bool match = fam && sty && family == fam && style == sty;
+        TTF_CloseFont(f);
+        if (match) return i;
+    }
+    return 0;
+}
+
+bool is_path(const std::string& font) {
+    return font.find('/') != std::string::npos;
+}
+
+} // namespace
 
 namespace {
 // Whether two paths name the same file, so the configured font is not also
@@ -15,6 +59,26 @@ bool same_file(const std::string& a, const std::string& b) {
     if (!realpath(a.c_str(), ra) || !realpath(b.c_str(), rb)) return a == b;
     return std::string(ra) == rb;
 }
+}
+
+// A path as is; a name through the lookup. Names found are remembered; ones
+// not found are asked again, so a font installed while sink runs is picked up.
+static std::optional<FaceFile> resolve_font(const std::string& font, const FontManager::FontLookup& lookup) {
+    if (is_path(font)) return FaceFile{ font, 0 };
+    static std::unordered_map<std::string, std::optional<FaceFile>> resolved;
+    if (auto it = resolved.find(font); it != resolved.end()) return it->second;
+    std::optional<FaceFile> result;
+    if (lookup) {
+        if (std::optional<FontManager::NamedFont> found = lookup(font)) {
+            result = FaceFile{ found->path, face_index(found->path, found->family, found->style) };
+        }
+    }
+    if (result) resolved[font] = result;
+    return result;
+}
+
+bool FontManager::can_open(const std::string& font) {
+    return resolve_font(font, font_lookup_).has_value();
 }
 
 FontManager::FontManager() {}
@@ -83,10 +147,16 @@ void FontManager::cleanup() {
     dynamic_row_h_ = 0;
 }
 
-bool FontManager::load_font(SDL_Renderer* renderer, const std::string& font_path, float font_size, bool bold) {
+bool FontManager::load_font(SDL_Renderer* renderer, const std::string& font, float font_size, bool bold) {
     if (!initialize()) {
         return false;
     }
+    const std::optional<FaceFile> file = resolve_font(font, font_lookup_);
+    if (!file) {
+        std::cerr << "Font not found: " << font << std::endl;
+        return false;
+    }
+    const std::string& font_path = file->path;
 
     for (TTF_Font** f : { &font_, &font_bold_, &font_italic_, &font_bold_italic_ }) {
         if (*f) {
@@ -122,7 +192,7 @@ bool FontManager::load_font(SDL_Renderer* renderer, const std::string& font_path
     dynamic_y_ = 0;
     dynamic_row_h_ = 0;
 
-    font_ = TTF_OpenFont(font_path.c_str(), font_size);
+    font_ = open_face(*file, font_size);
     if (!font_) {
         std::cerr << "Failed to open font " << font_path << ": " << SDL_GetError() << std::endl;
         return false;
@@ -139,13 +209,13 @@ bool FontManager::load_font(SDL_Renderer* renderer, const std::string& font_path
     // the font itself doesn't carry a dedicated bold/italic face. A failed
     // open here just means that style falls back to the regular face (see
     // font_for_style) -- not fatal, unlike the regular face failing above.
-    font_bold_ = TTF_OpenFont(font_path.c_str(), font_size);
+    font_bold_ = open_face(*file, font_size);
     if (font_bold_) TTF_SetFontStyle(font_bold_, TTF_STYLE_BOLD);
 
-    font_italic_ = TTF_OpenFont(font_path.c_str(), font_size);
+    font_italic_ = open_face(*file, font_size);
     if (font_italic_) TTF_SetFontStyle(font_italic_, TTF_STYLE_ITALIC);
 
-    font_bold_italic_ = TTF_OpenFont(font_path.c_str(), font_size);
+    font_bold_italic_ = open_face(*file, font_size);
     if (font_bold_italic_) TTF_SetFontStyle(font_bold_italic_, TTF_STYLE_BOLD | TTF_STYLE_ITALIC);
 
     // Load fallback emoji font
@@ -205,7 +275,7 @@ bool FontManager::load_font(SDL_Renderer* renderer, const std::string& font_path
     }
 
     // Same face, ~2x point size -- see get_ligature_glyph().
-    ligature_font_ = TTF_OpenFont(font_path.c_str(), font_size * 2.0f);
+    ligature_font_ = open_face(*file, font_size * 2.0f);
     if (!ligature_font_) {
         std::cerr << "Warning: Failed to open ligature-size font instance; ligatures will fall back to the softer upscaled rendering." << std::endl;
     } else if (bold) {

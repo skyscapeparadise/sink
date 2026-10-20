@@ -26,10 +26,17 @@
             "default": "pool"
           },
           "font": {
-            "description": "The typeface: \"Monaspace Neon\" (bundled), or a path to a font file. Characters the font lacks come from Monaspace Neon, then the system's fonts.",
+            "description": "The typeface: the name of an installed font (\"Menlo\", \"JetBrains Mono\", or a specific face such as \"Menlo Bold\"), \"Monaspace Neon\" (bundled), or a path to a font file. Characters the font lacks come from Monaspace Neon, then the system's fonts.",
             "type": "string",
             "minLength": 1,
             "default": "Monaspace Neon"
+          },
+          "font_size": {
+            "description": "Text size, in points. View > Bigger and Smaller change it for one window, and Default Size returns to this. 6 to 72.",
+            "type": "number",
+            "minimum": 6,
+            "maximum": 72,
+            "default": 15
           },
           "exposure": {
             "description": "Brightness of the background video. 0 to 2.",

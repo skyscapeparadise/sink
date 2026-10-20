@@ -113,7 +113,8 @@ a preset can set:
 | key | default | |
 |---|---|---|
 | `background` | `"pool"` | a built-in background, or a path to a video |
-| `font` | `"Monaspace Neon"` | the bundled font, or a path to a font file |
+| `font` | `"Monaspace Neon"` | an installed font by name (`"Menlo"`, `"Menlo Bold"`), the bundled font, or a path to a font file |
+| `font_size` | `15` | in points. view > bigger and smaller change one window, default size comes back to this |
 | `exposure` | `0.7` | brightness of the background, 0 to 2 |
 | `hue_shift` | `0` | rotates the background's colors, in degrees |
 | `crt` | `false` | scanlines, curvature and glow |

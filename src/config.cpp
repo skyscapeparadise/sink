@@ -45,9 +45,13 @@ const std::vector<KeyInfo>& keys() {
           "The video behind the terminal: a built-in background's name, or a "
           "path to a video file." },
         { "font", Scope::Preset, KeyType::Path, std::string("Monaspace Neon"), 0, 0, {},
-          "The typeface: \"Monaspace Neon\" (bundled), or a path to a font "
-          "file. Characters the font lacks come from Monaspace Neon, then the "
-          "system's fonts." },
+          "The typeface: the name of an installed font (\"Menlo\", \"JetBrains "
+          "Mono\", or a specific face such as \"Menlo Bold\"), \"Monaspace Neon\" "
+          "(bundled), or a path to a font file. Characters the font lacks come "
+          "from Monaspace Neon, then the system's fonts." },
+        { "font_size", Scope::Preset, KeyType::Float, 15.0, 6, 72, {},
+          "Text size, in points. View > Bigger and Smaller change it for one "
+          "window, and Default Size returns to this." },
         { "exposure", Scope::Preset, KeyType::Float, 0.7, 0, 2, {},
           "Brightness of the background video." },
         { "hue_shift", Scope::Preset, KeyType::Float, 0.0, 0, 360, {},
@@ -351,6 +355,7 @@ PresetValues resolve_preset(const Config& c, const std::string& name) {
     r.name = name;
     r.background = is_path(str("background")) ? expand_home(str("background")) : str("background");
     r.font = is_path(str("font")) ? expand_home(str("font")) : str("font");
+    r.font_size = num("font_size");
     r.exposure = num("exposure");
     r.hue_shift = num("hue_shift");
     r.crt = flag("crt");

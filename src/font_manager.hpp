@@ -2,6 +2,8 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3_ttf/SDL_ttf.h>
+#include <functional>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -20,13 +22,28 @@ public:
     bool initialize();
     void cleanup();
 
-    bool load_font(SDL_Renderer* renderer, const std::string& font_path, float font_size, bool bold = false);
+    // `font` is a path or a font name (see set_font_lookup).
+    bool load_font(SDL_Renderer* renderer, const std::string& font, float font_size, bool bold = false);
 
     // The bundled Monaspace Neon, consulted first when the configured font
     // has no glyph for a codepoint, so a user's own typeface borrows sink's
     // before any system face. Set once at startup, before any load_font();
     // an empty path (nothing bundled) just leaves it out of the chain.
     static void set_bundled_fallback_path(const std::string& path) { bundled_fallback_path_ = path; }
+
+    // Fonts can be given by name as well as by path. A lookup turns a name
+    // into the file and the face within it (system_fonts.hpp on macOS); set
+    // once at startup. Without one, only paths open.
+    struct NamedFont {
+        std::string path;
+        std::string family;  // the face to use when the file holds several
+        std::string style;
+    };
+    using FontLookup = std::function<std::optional<NamedFont>(const std::string& name)>;
+    static void set_font_lookup(FontLookup lookup) { font_lookup_ = std::move(lookup); }
+
+    // Whether `font` -- a path, or a name the lookup knows -- can be opened.
+    static bool can_open(const std::string& font);
 
     SDL_Texture* get_atlas_texture() const { return atlas_texture_; }
     SDL_Texture* get_dynamic_atlas_texture() const { return dynamic_atlas_texture_; }
@@ -103,6 +120,7 @@ private:
     std::vector<TTF_Font*> fallback_fonts_;
     TTF_Font* first_fallback_with(char32_t codepoint) const;
     static std::string bundled_fallback_path_;
+    static FontLookup font_lookup_;
     TTF_Font* ligature_font_ = nullptr; // same face as font_, ~2x point size
     SDL_Texture* atlas_texture_ = nullptr;
     SDL_Texture* dynamic_atlas_texture_ = nullptr;

@@ -187,6 +187,7 @@ set(SOURCES
     src/config.cpp
     src/toml_edit.cpp
     src/config_store.cpp
+    src/system_fonts.cpp
     src/hue_shift.cpp
     src/crt_shader.cpp
 )
@@ -215,7 +216,7 @@ target_link_libraries(sink PRIVATE
 
 # macOS Frameworks
 if(APPLE)
-    target_link_libraries(sink PRIVATE "-framework Cocoa")
+    target_link_libraries(sink PRIVATE "-framework Cocoa" "-framework CoreText")
 endif()
 
 # Linux compatibility: link against libutil for forkpty

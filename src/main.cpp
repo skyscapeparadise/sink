@@ -12,6 +12,7 @@
 #include <fstream>
 #include <sstream>
 #include <optional>
+#include <strings.h>
 #include <sys/stat.h>
 #include "terminal_grid.hpp"
 #include "pty_bridge.hpp"
@@ -22,6 +23,7 @@
 #include "sink_demo.hpp"
 #include "app_state.hpp"
 #include "config_store.hpp"
+#include "system_fonts.hpp"
 #include "hue_shift.hpp"
 #include "crt_shader.hpp"
 
@@ -314,8 +316,18 @@ static std::string resolve_background(const std::string& value) {
     return config::is_path(value) ? value : resolve_default_video_path();
 }
 
+// The bundled font's name in sink.toml.
+static bool is_bundled_font_name(const std::string& value) {
+    return strcasecmp(value.c_str(), "Monaspace Neon") == 0;
+}
+
+// A font as FontManager takes it: a path, or the name of an installed font.
+// One that isn't installed falls back to the bundled font, and Settings says
+// so (update_config_notice).
 static std::string resolve_font(const std::string& value) {
-    return config::is_path(value) ? value : resolve_default_font_path();
+    if (config::is_path(value)) return value;
+    if (is_bundled_font_name(value) || !FontManager::can_open(value)) return resolve_default_font_path();
+    return value;
 }
 
 static std::string background_setting(const std::string& resolved_path) {
@@ -386,6 +398,7 @@ static void set_state_from_preset(AppState* state, const config::PresetValues& p
     state->active_preset_name = p.name;
     state->video_path = resolve_background(p.background);
     state->font_path = resolve_font(p.font);
+    state->base_font_size = static_cast<float>(p.font_size);
     state->exposure = static_cast<float>(p.exposure);
     state->hue_shift = static_cast<float>(p.hue_shift);
     state->animated_typing = p.typing_animation;
@@ -460,7 +473,8 @@ static void load_window_font(AppState* state, TerminalWindow* tw) {
     const std::string& font = tw->font_path.empty() ? state->font_path : tw->font_path;
     std::string path = font.empty() ? "/System/Library/Fonts/SFNSMono.ttf" : font;
     float font_size_px = tw->font_size * tw->display_scale;
-    if (!tw->font_manager.load_font(tw->renderer, path, font_size_px, false)) {
+    if (!tw->font_manager.load_font(tw->renderer, path, font_size_px, false) &&
+        !tw->font_manager.load_font(tw->renderer, resolve_default_font_path(), font_size_px, false)) {
         tw->font_manager.load_font(tw->renderer, "/System/Library/Fonts/Supplemental/Courier New.ttf", font_size_px, false);
     }
     tw->cell_w = (tw->font_manager.get_cell_width() / tw->display_scale) + 1.0f;
@@ -491,7 +505,8 @@ static void refresh_display_scale(AppState* state, TerminalWindow* tw) {
 
 static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* parent_tab_window, const config::PresetValues* preset_override = nullptr) {
     TerminalWindow* tw = new TerminalWindow();
-    tw->font_size = state->base_font_size;
+    tw->base_font_size = preset_override ? static_cast<float>(preset_override->font_size) : state->base_font_size;
+    tw->font_size = tw->base_font_size;
 
     // Every window starts as a single-pane split tree
     tw->root = std::make_unique<PaneNode>();
@@ -598,7 +613,8 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     }
 
     float font_size_px = tw->font_size * scale;
-    if (!tw->font_manager.load_font(tw->renderer, typeface_path, font_size_px, false)) {
+    if (!tw->font_manager.load_font(tw->renderer, typeface_path, font_size_px, false) &&
+        !tw->font_manager.load_font(tw->renderer, resolve_default_font_path(), font_size_px, false)) {
         tw->font_manager.load_font(tw->renderer, "/System/Library/Fonts/Supplemental/Courier New.ttf", font_size_px, false);
     }
     tw->font_path = typeface_path;
@@ -1163,7 +1179,11 @@ static void apply_preset_to_window(AppState* state, TerminalWindow* tw, const co
         }
     }
 
-    if (tw->font_path != font) {
+    // A changed font_size is the new base for this window, replacing any
+    // View > Bigger/Smaller.
+    const bool size_changed = tw->base_font_size != static_cast<float>(p.font_size);
+    if (size_changed) tw->base_font_size = tw->font_size = static_cast<float>(p.font_size);
+    if (tw->font_path != font || size_changed) {
         tw->font_path = font;
         if (tw->font_manager.load_font(tw->renderer, font, tw->font_size * tw->display_scale, false)) {
             tw->cell_w = (tw->font_manager.get_cell_width() / tw->display_scale) + 1.0f;
@@ -1237,6 +1257,9 @@ static void update_config_notice(AppState* state) {
     if (const auto& err = store.error()) {
         notice = "sink.toml line " + std::to_string(err->line) + ": " + clean(err->message) +
                  " -- changes won't be saved until it's fixed";
+    } else if (const std::string font = config::resolve_preset(store.config(), state->active_preset_name).font;
+               !config::is_path(font) && !is_bundled_font_name(font) && !FontManager::can_open(font)) {
+        notice = "font \"" + font + "\" isn't installed; using Monaspace Neon";
     } else if (const auto& warnings = store.config().warnings; !warnings.empty()) {
         notice = "sink.toml line " + std::to_string(warnings.front().line) + ": " + clean(warnings.front().message);
         if (warnings.size() > 1) notice += " (+" + std::to_string(warnings.size() - 1) + " more)";
@@ -1399,6 +1422,11 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
     state->video_path = resolve_default_video_path();
     state->font_path = resolve_default_font_path();
     FontManager::set_bundled_fallback_path(resolve_bundled_font_path());
+    FontManager::set_font_lookup([](const std::string& name) -> std::optional<FontManager::NamedFont> {
+        std::optional<system_fonts::Found> found = system_fonts::find(name);
+        if (!found) return std::nullopt;
+        return FontManager::NamedFont{ found->path, found->family, found->style };
+    });
 
     // Load config if present (may override the defaults above with the
     // active preset's saved background/font/etc)
@@ -2783,7 +2811,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         }
         if (int change = get_font_size_requested()) {
             TerminalWindow* tw = state->active_window;
-            float size = (change == 2) ? state->base_font_size : tw->font_size + change;
+            float size = (change == 2) ? tw->base_font_size : tw->font_size + change;
             set_window_font_size(state, tw, size);
         }
     }
