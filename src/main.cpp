@@ -545,6 +545,13 @@ static void set_state_from_preset(AppState* state, const config::PresetValues& p
 static void apply_global_settings(AppState* state) {
     const config::Config& c = state->config.config();
     PTYBridge::set_shell_integration_enabled(config::global_bool(c, "shell.integration"));
+    PTYBridge::ShellSettings shell;
+    shell.command = config::expand_home(config::global_string(c, "shell.command"));
+    shell.args = config::global_strings(c, "shell.args");
+    shell.login = config::global_bool(c, "shell.login");
+    shell.env = config::global_table(c, "shell.env");
+    shell.working_directory = config::expand_home(config::global_string(c, "shell.working_directory"));
+    PTYBridge::set_shell_settings(shell);
     state->option_as_meta = key_bindings::parse_option_as_meta(config::option_as_meta(c));
     SDL_SetHint(SDL_HINT_MAC_OPTION_AS_ALT, key_bindings::option_as_alt_hint(state->option_as_meta));
     state->scrollback_lines = static_cast<int>(config::global_int(c, "terminal.scrollback_lines"));

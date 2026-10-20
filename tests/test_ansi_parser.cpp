@@ -1,6 +1,7 @@
 // Unit tests for ANSIParser + TerminalGrid. No window, renderer, or PTY is
 // created: byte sequences are fed straight into the parser and the resulting
 // grid state is asserted on. Run via `ctest --test-dir build` or ./build/sink_tests.
+#include "pty_bridge.hpp"
 #include "ansi_parser.hpp"
 #include "prompt_editing.hpp"
 #include "sink_demo.hpp"
@@ -2468,6 +2469,22 @@ static void test_shell_integration_plan() {
     CHECK((f.argv == std::vector<std::string>{ "/opt/homebrew/bin/fish", "-l" }) && f.set.empty());
     auto off = shell_integration::plan("/bin/zsh", "");
     CHECK(off.set.empty() && off.unset.empty());
+
+    // [shell]: login and args shape argv; [shell.env] is what the
+    // integration wraps, ahead of sink's own environment.
+    auto tmux = shell_integration::plan("/opt/homebrew/bin/tmux", "/d", false, { "new", "-A", "-s", "main" });
+    CHECK((tmux.argv == std::vector<std::string>{ "/opt/homebrew/bin/tmux", "new", "-A", "-s", "main" }));
+    auto zargs = shell_integration::plan("/bin/zsh", "/d", true, { "-i" }, { { "ZDOTDIR", "/from/config" } });
+    CHECK((zargs.argv == std::vector<std::string>{ "/bin/zsh", "-l", "-i" }));
+    CHECK(has(zargs, "SINK_ZSH_ZDOTDIR", "/from/config"));
+    auto benv = shell_integration::plan("/bin/bash", "/d", true, {}, { { "PROMPT_COMMAND", "theirs" } });
+    CHECK(has(benv, "PROMPT_COMMAND", "theirs\nbuiltin source \"$SINK_BASH_INTEGRATION\""));
+
+    // Finding a program the way [shell] command does.
+    CHECK(PTYBridge::find_program("/bin/zsh") == "/bin/zsh");
+    CHECK(PTYBridge::find_program("/no/such/shell").empty());
+    CHECK(PTYBridge::find_program("zsh").size() > 4);   // via PATH or /etc/shells
+    CHECK(PTYBridge::find_program("no-such-program-sink").empty());
 }
 
 // OSC 6973;L=n, the line length from the zsh integration: clicks past it stop

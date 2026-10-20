@@ -39,10 +39,22 @@ std::string install(const std::string& config_root) {
     return dir;
 }
 
-Launch plan(const std::string& shell, const std::string& dir) {
+Launch plan(const std::string& shell, const std::string& dir, bool login,
+            const std::vector<std::string>& args,
+            const std::vector<std::pair<std::string, std::string>>& env) {
     Launch launch;
-    launch.argv = { shell, "-l" };
+    launch.argv = { shell };
+    if (login) launch.argv.push_back("-l");
+    launch.argv.insert(launch.argv.end(), args.begin(), args.end());
     if (dir.empty()) return launch;
+
+    // [shell.env] first, then what sink itself was started with.
+    auto lookup = [&](const char* name) -> const char* {
+        for (const auto& kv : env) {
+            if (kv.first == name) return kv.second.c_str();
+        }
+        return getenv(name);
+    };
 
     const std::string name = basename_of(shell);
     if (name == "zsh") {
@@ -52,7 +64,7 @@ Launch plan(const std::string& shell, const std::string& dir) {
         // SINK_ZSH_ZDOTDIR -- absent meaning ZDOTDIR wasn't set at all.
         launch.set.push_back({ "ZDOTDIR", dir + "/zsh" });
         launch.set.push_back({ "SINK_SHELL_INTEGRATION_DIR", dir });
-        if (const char* orig = getenv("ZDOTDIR")) {
+        if (const char* orig = lookup("ZDOTDIR")) {
             launch.set.push_back({ "SINK_ZSH_ZDOTDIR", orig });
         } else {
             launch.unset.push_back("SINK_ZSH_ZDOTDIR");
@@ -67,7 +79,7 @@ Launch plan(const std::string& shell, const std::string& dir) {
         // unloaded.
         launch.set.push_back({ "SINK_BASH_INTEGRATION", dir + "/bash/sink.bash" });
         std::string prompt_command = kBashLoader;
-        if (const char* orig = getenv("PROMPT_COMMAND"); orig && *orig) {
+        if (const char* orig = lookup("PROMPT_COMMAND"); orig && *orig) {
             prompt_command = std::string(orig) + "\n" + kBashLoader;
         }
         launch.set.push_back({ "PROMPT_COMMAND", prompt_command });

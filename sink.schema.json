@@ -200,6 +200,33 @@
           "description": "Load sink's shell integration into zsh and bash: prompt marks (OSC 133) and the working directory (OSC 7), which make Cmd+Up/Down prompt jumping and new tabs in the current directory work.",
           "type": "boolean",
           "default": true
+        },
+        "command": {
+          "description": "The program to run in new terminals: a path, or a name such as \"fish\" (found on PATH, in Homebrew's folders or in /etc/shells). Empty runs your login shell.",
+          "type": "string",
+          "default": ""
+        },
+        "args": {
+          "description": "Arguments for it, after -l if login is on.",
+          "type": "array",
+          "items": { "type": "string" },
+          "default": []
+        },
+        "login": {
+          "description": "Start it as a login shell (-l), so it reads your login startup files. Turn off for a command that isn't a shell, such as tmux.",
+          "type": "boolean",
+          "default": true
+        },
+        "working_directory": {
+          "description": "Where new terminals start. Empty is your home folder. New tabs and splits still start where the shell beside them is, when it says.",
+          "type": "string",
+          "default": ""
+        },
+        "env": {
+          "description": "Environment variables to set for it, as a table: [shell.env] then NAME = \"value\" lines.",
+          "type": "object",
+          "additionalProperties": { "type": "string" },
+          "default": {}
         }
       }
     },

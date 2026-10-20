@@ -296,6 +296,31 @@ static void test_background_kinds() {
     CHECK(d.glass_tint > 0.29 && d.glass_tint < 0.31);
 }
 
+static void test_shell_settings() {
+    config::Config c = read_ok(
+        "[shell]\n"
+        "command = \"fish\"\n"
+        "args = [\"--private\"]\n"
+        "login = false\n"
+        "working_directory = \"~/code\"\n"
+        "[shell.env]\n"
+        "EDITOR = \"nvim\"\n"
+        "PAGER = \"less -R\"\n"
+        "COUNT = 3\n");                                  // line 9: not a string
+    CHECK(config::global_string(c, "shell.command") == "fish");
+    CHECK((config::global_strings(c, "shell.args") == config::StringList{ "--private" }));
+    CHECK(!config::global_bool(c, "shell.login"));
+    CHECK(config::global_string(c, "shell.working_directory") == "~/code");
+    config::StringMap env = config::global_table(c, "shell.env");
+    CHECK(env.size() == 2 && env[0].first == "EDITOR" && env[1].second == "less -R");
+    CHECK(has_warning(c, "shell.env.COUNT should be a string", 9));
+
+    config::Config defaults = read_ok("");
+    CHECK(config::global_bool(defaults, "shell.login"));
+    CHECK(config::global_strings(defaults, "shell.args").empty());
+    CHECK(config::global_table(defaults, "shell.env").empty());
+}
+
 static std::string read_source_file(const std::string& relative) {
     std::string path = std::string(SINK_SOURCE_DIR) + "/" + relative;
     FILE* f = std::fopen(path.c_str(), "rb");
@@ -350,6 +375,7 @@ int main() {
     test_paths();
     test_reference_is_a_valid_config();
     test_background_kinds();
+    test_shell_settings();
     test_published_schema_and_readme_are_current();
     std::printf("%d/%d checks passed\n", checks_run - checks_failed, checks_run);
     return checks_failed == 0 ? 0 : 1;

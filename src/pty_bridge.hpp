@@ -39,8 +39,26 @@ public:
     // Set from the config before spawning; applies to shells started after.
     static void set_shell_integration_enabled(bool enabled) { shell_integration_enabled_ = enabled; }
 
+    // sink.toml's [shell]: what to run in new terminals and how. Applies to
+    // shells started after it's set.
+    struct ShellSettings {
+        std::string command;             // a path, a name to look up, or "" for the login shell
+        std::vector<std::string> args;
+        bool login = true;
+        std::vector<std::pair<std::string, std::string>> env;
+        std::string working_directory;   // absolute; "" for home
+    };
+    static void set_shell_settings(const ShellSettings& settings) { shell_settings_ = settings; }
+
+    // `command` as an executable path: as given if it has a '/', else the
+    // first match on PATH, in Homebrew's folders, or among /etc/shells.
+    // Empty if there's none -- a Mac app started from Finder has a short
+    // PATH, which is why the extra places are searched.
+    static std::string find_program(const std::string& command);
+
 private:
     static bool shell_integration_enabled_;
+    static ShellSettings shell_settings_;
     int master_fd_ = -1;
     pid_t child_pid_ = -1;
     std::atomic<bool> running_{false};

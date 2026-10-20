@@ -61,6 +61,47 @@ const std::string& integration_dir() {
 } // namespace
 
 bool PTYBridge::shell_integration_enabled_ = true;
+PTYBridge::ShellSettings PTYBridge::shell_settings_;
+
+std::string PTYBridge::find_program(const std::string& command) {
+    if (command.empty()) return std::string();
+    if (command.find('/') != std::string::npos) {
+        return access(command.c_str(), X_OK) == 0 ? command : std::string();
+    }
+    std::vector<std::string> dirs;
+    if (const char* path = getenv("PATH")) {
+        std::string p = path;
+        for (size_t start = 0, end; start <= p.size(); start = end + 1) {
+            end = p.find(':', start);
+            if (end == std::string::npos) end = p.size();
+            if (end > start) dirs.push_back(p.substr(start, end - start));
+        }
+    }
+    dirs.push_back("/opt/homebrew/bin");
+    dirs.push_back("/usr/local/bin");
+    for (const std::string& dir : dirs) {
+        const std::string candidate = dir + "/" + command;
+        if (access(candidate.c_str(), X_OK) == 0) return candidate;
+    }
+    // /etc/shells lists the shells installed for login use, by full path.
+    if (FILE* f = fopen("/etc/shells", "r")) {
+        char line[1024];
+        std::string found;
+        while (found.empty() && fgets(line, sizeof(line), f)) {
+            std::string entry = line;
+            while (!entry.empty() && (entry.back() == '\n' || entry.back() == '\r' || entry.back() == ' ')) entry.pop_back();
+            if (entry.empty() || entry[0] == '#') continue;
+            const size_t slash = entry.rfind('/');
+            if (slash != std::string::npos && entry.substr(slash + 1) == command &&
+                access(entry.c_str(), X_OK) == 0) {
+                found = entry;
+            }
+        }
+        fclose(f);
+        if (!found.empty()) return found;
+    }
+    return std::string();
+}
 
 PTYBridge::PTYBridge() {}
 
@@ -84,12 +125,25 @@ bool PTYBridge::spawn(int cols, int rows, const std::string& cwd) {
     // reason: installing the integration scripts writes files.
     const char* shell_env = getenv("SHELL");
 #if defined(__APPLE__)
-    const std::string shell = shell_env ? shell_env : "/bin/zsh";
+    std::string shell = shell_env ? shell_env : "/bin/zsh";
 #else
-    const std::string shell = shell_env ? shell_env : "/bin/bash";
+    std::string shell = shell_env ? shell_env : "/bin/bash";
 #endif
+    // [shell] command, when it names something that's there. One that isn't
+    // falls back to the login shell rather than leaving a dead terminal.
+    const ShellSettings settings = shell_settings_;
+    if (!settings.command.empty()) {
+        const std::string program = find_program(settings.command);
+        if (!program.empty()) {
+            shell = program;
+        } else {
+            fprintf(stderr, "sink: [shell] command \"%s\" not found; starting %s\n",
+                    settings.command.c_str(), shell.c_str());
+        }
+    }
     const shell_integration::Launch launch =
-        shell_integration::plan(shell, shell_integration_enabled_ ? integration_dir() : std::string());
+        shell_integration::plan(shell, shell_integration_enabled_ ? integration_dir() : std::string(),
+                                settings.login, settings.args, settings.env);
 
     running_ = true;
     child_pid_ = forkpty(&master_fd_, nullptr, nullptr, &ws);
@@ -116,6 +170,8 @@ bool PTYBridge::spawn(int cols, int rows, const std::string& cwd) {
         // start somewhere sane instead.
         if (!cwd.empty()) {
             chdir(cwd.c_str());
+        } else if (!settings.working_directory.empty()) {
+            chdir(settings.working_directory.c_str());
         }
 
         // Change working directory to user home if launched with root directory (Finder launch default)
@@ -153,7 +209,11 @@ bool PTYBridge::spawn(int cols, int rows, const std::string& cwd) {
         setenv("TERM_PROGRAM", "sink", 1);
         setenv("TERM_PROGRAM_VERSION", SINK_VERSION, 1);
 
-        // The login shell, with shell integration if it applies -- worked out
+        // [shell.env], then what the integration needs on top (it already
+        // took these into account; see shell_integration::plan).
+        for (const auto& kv : settings.env) setenv(kv.first.c_str(), kv.second.c_str(), 1);
+
+        // The shell, with shell integration if it applies -- worked out
         // before the fork (see launch above); only applied here.
         for (const auto& kv : launch.set) setenv(kv.first.c_str(), kv.second.c_str(), 1);
         for (const auto& key : launch.unset) unsetenv(key.c_str());

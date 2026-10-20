@@ -234,6 +234,7 @@ endif()
 enable_testing()
 add_executable(sink_tests
     tests/test_ansi_parser.cpp
+    src/pty_bridge.cpp
     src/private_files.cpp
     src/shell_integration.cpp
     ${SHELL_INTEGRATION_INC}

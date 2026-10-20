@@ -28,7 +28,8 @@ constexpr int kCurrentVersion = 1;
 // ---- Values ----------------------------------------------------------------
 
 using StringList = std::vector<std::string>;
-using Value = std::variant<bool, int64_t, double, std::string, StringList>;
+using StringMap = std::vector<std::pair<std::string, std::string>>;  // in file order
+using Value = std::variant<bool, int64_t, double, std::string, StringList, StringMap>;
 
 enum class KeyType {
     Bool,
@@ -39,7 +40,9 @@ enum class KeyType {
     BoolOrChoice,// true, false, or one of KeyInfo::choices
     Choice,      // one of KeyInfo::choices, matched regardless of case
     Color,       // "#rrggbb" or "#rgb"; "" for the theme's
-    ColorList    // up to 16 colors
+    ColorList,   // up to 16 colors
+    Strings,     // a list of strings
+    Table        // a table of string values: [shell.env]
 };
 
 // Which part of the file a key lives in. Global keys are written at their
@@ -137,6 +140,8 @@ std::optional<Config> read_text(const std::string& text, Diagnostic& error);
 bool global_bool(const Config& c, const std::string& path);
 int64_t global_int(const Config& c, const std::string& path);
 std::string global_string(const Config& c, const std::string& path);
+StringList global_strings(const Config& c, const std::string& path);
+StringMap global_table(const Config& c, const std::string& path);
 
 // keyboard.option_as_meta as one of "none", "left", "right", "both".
 std::string option_as_meta(const Config& c);

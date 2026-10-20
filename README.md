@@ -95,6 +95,14 @@ scrollback_lines = 10000
 
 [shell]
 integration = true         # false keeps sink's shell integration out of your shell
+command = "fish"           # run something other than your login shell (a name or a path)
+args = []                  # arguments for it
+login = true               # start it as a login shell (-l); off for things like tmux
+working_directory = "~"    # where new terminals start
+                           # (new tabs and splits still open where you are)
+
+[shell.env]                # environment variables for it
+EDITOR = "nvim"
 
 [keyboard]
 option_as_meta = false     # true makes option act as meta (for emacs and readline),

@@ -37,6 +37,21 @@ const std::vector<KeyInfo>& keys() {
           "Load sink's shell integration into zsh and bash: prompt marks "
           "(OSC 133) and the working directory (OSC 7), which make Cmd+Up/Down "
           "prompt jumping and new tabs in the current directory work." },
+        { "shell.command", Scope::Global, KeyType::String, std::string(""), 0, 0, {},
+          "The program to run in new terminals: a path, or a name such as "
+          "\"fish\" (found on PATH, in Homebrew's folders or in /etc/shells). "
+          "Empty runs your login shell." },
+        { "shell.args", Scope::Global, KeyType::Strings, StringList{}, 0, 0, {},
+          "Arguments for it, after -l if login is on." },
+        { "shell.login", Scope::Global, KeyType::Bool, true, 0, 0, {},
+          "Start it as a login shell (-l), so it reads your login startup files. "
+          "Turn off for a command that isn't a shell, such as tmux." },
+        { "shell.working_directory", Scope::Global, KeyType::String, std::string(""), 0, 0, {},
+          "Where new terminals start. Empty is your home folder. New tabs and "
+          "splits still start where the shell beside them is, when it says." },
+        { "shell.env", Scope::Global, KeyType::Table, StringMap{}, 0, 0, {},
+          "Environment variables to set for it, as a table: [shell.env] then "
+          "NAME = \"value\" lines." },
         { "keyboard.option_as_meta", Scope::Global, KeyType::BoolOrChoice, false, 0, 0, {"left", "right"},
           "Make Option act as Meta, sending ESC before the key (for emacs and "
           "readline shortcuts) instead of typing special characters. true for "
@@ -154,6 +169,8 @@ std::string type_name(KeyType t) {
         case KeyType::Choice: return "a string";
         case KeyType::Color: return "a color like \"#1a1b26\"";
         case KeyType::ColorList: return "a list of colors like [\"#1a1b26\", ...]";
+        case KeyType::Strings: return "a list of strings";
+        case KeyType::Table: return "a table of strings";
     }
     return "a value";
 }
@@ -280,6 +297,32 @@ std::optional<Value> convert(const KeyInfo& k, const std::string& where, const t
             }
             return Value(colors);
         }
+        case KeyType::Strings: {
+            const auto* arr = n.as_array();
+            if (!arr) return wrong_type();
+            StringList items;
+            for (auto&& el : *arr) {
+                const auto* s = el.as_string();
+                if (!s) return wrong_type();
+                items.push_back(s->get());
+            }
+            return Value(items);
+        }
+        case KeyType::Table: {
+            const auto* t = n.as_table();
+            if (!t) return wrong_type();
+            StringMap entries;
+            for (auto&& [key, value] : *t) {
+                const auto* s = value.as_string();
+                if (!s) {
+                    warnings.push_back({ line_of(value), where + "." + std::string(key.str()) +
+                                                             " should be a string; leaving it out" });
+                    continue;
+                }
+                entries.push_back({ std::string(key.str()), s->get() });
+            }
+            return Value(entries);
+        }
     }
     return wrong_type();
 }
@@ -387,6 +430,16 @@ int64_t global_int(const Config& c, const std::string& path) {
 std::string global_string(const Config& c, const std::string& path) {
     Value v = global_value(c, path);
     return std::holds_alternative<std::string>(v) ? std::get<std::string>(v) : std::string();
+}
+
+StringList global_strings(const Config& c, const std::string& path) {
+    Value v = global_value(c, path);
+    return std::holds_alternative<StringList>(v) ? std::get<StringList>(v) : StringList{};
+}
+
+StringMap global_table(const Config& c, const std::string& path) {
+    Value v = global_value(c, path);
+    return std::holds_alternative<StringMap>(v) ? std::get<StringMap>(v) : StringMap{};
 }
 
 std::string option_as_meta(const Config& c) {
@@ -842,6 +895,12 @@ std::string json_value(const Value& v) {
     if (std::holds_alternative<int64_t>(v)) return std::to_string(std::get<int64_t>(v));
     if (std::holds_alternative<double>(v)) return format_number(std::get<double>(v));
     if (std::holds_alternative<std::string>(v)) return json_string(std::get<std::string>(v));
+    if (std::holds_alternative<StringMap>(v)) {
+        std::string out = "{";
+        const StringMap& m = std::get<StringMap>(v);
+        for (size_t i = 0; i < m.size(); ++i) out += (i ? ", " : "") + json_string(m[i].first) + ": " + json_string(m[i].second);
+        return out + "}";
+    }
     std::string out = "[";
     const StringList& list = std::get<StringList>(v);
     for (size_t i = 0; i < list.size(); ++i) out += (i ? ", " : "") + json_string(list[i]);
@@ -884,6 +943,12 @@ std::string key_schema(const KeyInfo& k, const std::string& pad) {
         case KeyType::Color:
             out += pad + "\"type\": \"string\",\n" + pad +
                    "\"pattern\": \"^(#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3})?$\",\n";
+            break;
+        case KeyType::Strings:
+            out += pad + "\"type\": \"array\",\n" + pad + "\"items\": { \"type\": \"string\" },\n";
+            break;
+        case KeyType::Table:
+            out += pad + "\"type\": \"object\",\n" + pad + "\"additionalProperties\": { \"type\": \"string\" },\n";
             break;
         case KeyType::ColorList:
             out += pad + "\"type\": \"array\",\n" + pad + "\"maxItems\": " + pretty_number(k.max) + ",\n" +
@@ -1050,6 +1115,13 @@ std::string to_toml(const Value& v) {
     if (std::holds_alternative<int64_t>(v)) return std::to_string(std::get<int64_t>(v));
     if (std::holds_alternative<double>(v)) return format_number(std::get<double>(v));
     if (std::holds_alternative<std::string>(v)) return quote(std::get<std::string>(v));
+    if (std::holds_alternative<StringMap>(v)) {
+        // An inline table: only the reference and --show-config write one.
+        std::string out = "{";
+        const StringMap& m = std::get<StringMap>(v);
+        for (size_t i = 0; i < m.size(); ++i) out += std::string(i ? ", " : " ") + toml_key(m[i].first) + " = " + quote(m[i].second);
+        return out + (m.empty() ? "}" : " }");
+    }
     const StringList& list = std::get<StringList>(v);
     std::string out = "[";
     for (size_t i = 0; i < list.size(); ++i) {
