@@ -137,9 +137,9 @@ copy_license "vendor/ffmpeg/README.sink"        "FFmpeg-README.txt"
 copy_license "vendor/textstack/COPYING"         "HarfBuzz-COPYING"
 copy_license "vendor/textstack/LICENSE.txt"     "SDL3_ttf-LICENSE.txt"
 copy_license "vendor/sdl3_image/LICENSE.txt"    "SDL3_image-LICENSE.txt"
-copy_license "/opt/homebrew/opt/sdl3/LICENSE.txt"     "SDL3-LICENSE.txt"
-copy_license "/opt/homebrew/opt/freetype/LICENSE.TXT" "FreeType-LICENSE.txt"
-copy_license "/opt/homebrew/opt/libpng/LICENSE"       "libpng-LICENSE"
+copy_license "vendor/sdl3/LICENSE.txt"              "SDL3-LICENSE.txt"
+copy_license "vendor/textstack/FreeType-LICENSE.txt" "FreeType-LICENSE.txt"
+copy_license "vendor/textstack/libpng-LICENSE"       "libpng-LICENSE"
 # The bundled fonts are under the SIL Open Font License, which requires its
 # text to travel with them.
 copy_license "fonts/MonaspaceNeon-OFL.txt"           "MonaspaceNeon-OFL.txt"
@@ -290,6 +290,58 @@ for target in "${FRAMEWORKS_DIR}"/*.dylib "${BIN}"; do
 done
 if [ "${UNRESOLVED}" -ne 0 ]; then
     echo "bundle is not self-contained; aborting."
+    exit 1
+fi
+
+# Everything in the bundle has to run on the oldest macOS sink claims
+# (LSMinimumSystemVersion, from MACOSX_DEPLOYMENT_TARGET). Homebrew builds for
+# the macOS it runs on, which is how 0.11 shipped an SDL3, FreeType and libpng
+# that need macOS 27. So check both each Mach-O's own minimum, and that every
+# system library it links exists in the SDK for the oldest supported macOS --
+# a library built against a newer SDK can link one that older systems lack.
+# The installed SDK is the newest of that major version (26.5, say), so this
+# can't see a library added partway through it; that's why FreeType is built
+# without libhvf (see vendor/build_text_stack.sh).
+echo "  verifying everything runs on macOS ${MACOSX_DEPLOYMENT_TARGET}..."
+version_gt() {  # true if dotted version $1 is newer than $2
+    awk -v a="$1" -v b="$2" 'BEGIN {
+        n = split(a, x, "."); m = split(b, y, ".");
+        for (i = 1; i <= (n > m ? n : m); i++) {
+            if ((x[i] + 0) > (y[i] + 0)) exit 0;
+            if ((x[i] + 0) < (y[i] + 0)) exit 1;
+        }
+        exit 1 }'
+}
+MIN_MAJOR="${MACOSX_DEPLOYMENT_TARGET%%.*}"
+MIN_SDK=""
+for cand in "/Library/Developer/CommandLineTools/SDKs/MacOSX${MIN_MAJOR}.sdk" \
+            "$(xcode-select -p 2>/dev/null)/Platforms/MacOSX.platform/Developer/SDKs/MacOSX${MIN_MAJOR}.sdk"; do
+    if [ -d "${cand}" ]; then MIN_SDK="${cand}"; break; fi
+done
+if [ -z "${MIN_SDK}" ]; then
+    echo "  ERROR: no macOS ${MIN_MAJOR} SDK found to check system libraries against."
+    echo "         Install the Command Line Tools that include MacOSX${MIN_MAJOR}.sdk."
+    exit 1
+fi
+TOO_NEW=0
+for target in "${FRAMEWORKS_DIR}"/*.dylib "${BIN}"; do
+    minos="$(otool -l "${target}" | awk '/LC_BUILD_VERSION/{f=1} f && /minos/{print $2; exit}')"
+    if [ -n "${minos}" ] && version_gt "${minos}" "${MACOSX_DEPLOYMENT_TARGET}"; then
+        echo "  ERROR: $(basename "${target}") needs macOS ${minos}; sink supports ${MACOSX_DEPLOYMENT_TARGET}"
+        TOO_NEW=1
+    fi
+    for dep in $(deps_of "${target}"); do
+        case "${dep}" in
+            /usr/lib/*|/System/*)
+                if [ ! -e "${MIN_SDK}${dep%.dylib}.tbd" ] && [ ! -e "${MIN_SDK}${dep}.tbd" ]; then
+                    echo "  ERROR: $(basename "${target}") links ${dep}, which isn't in macOS ${MIN_MAJOR}"
+                    TOO_NEW=1
+                fi ;;
+        esac
+    done
+done
+if [ "${TOO_NEW}" -ne 0 ]; then
+    echo "bundle would not run on macOS ${MACOSX_DEPLOYMENT_TARGET}; aborting."
     exit 1
 fi
 

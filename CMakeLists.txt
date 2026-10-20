@@ -78,6 +78,20 @@ add_compile_options(
 # Find SDL3, SDL3_ttf, and SDL3_image
 # 3.4.0 minimum: the video background hue-shift effect uses the GPU render
 # backend and SDL_GPURenderState custom-shader API, both added in 3.4.0.
+#
+# Prefer the vendored SDL3 (vendor/build_sdl3.sh). Homebrew's is built for
+# whatever macOS the build machine runs, which is how 0.11 shipped an SDL3
+# that needs macOS 27 in an app that promises 26.
+set(SINK_VENDORED_SDL3 "${CMAKE_CURRENT_SOURCE_DIR}/vendor/sdl3")
+if(EXISTS "${SINK_VENDORED_SDL3}/lib/cmake/SDL3/SDL3Config.cmake")
+    message(STATUS "Using vendored SDL3: ${SINK_VENDORED_SDL3}")
+    set(SDL3_DIR "${SINK_VENDORED_SDL3}/lib/cmake/SDL3")
+    list(PREPEND CMAKE_PREFIX_PATH "${SINK_VENDORED_SDL3}")
+else()
+    message(WARNING
+        "Vendored SDL3 not found. Falling back to the system one, which may "
+        "need a newer macOS than sink supports. Run vendor/build_sdl3.sh.")
+endif()
 find_package(SDL3 3.4.0 REQUIRED)
 # Prefer the vendored SDL3_ttf + HarfBuzz (vendor/build_text_stack.sh).
 # Homebrew's harfbuzz links glib (and thus libpcre2 + libintl) and graphite2:

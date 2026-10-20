@@ -27,6 +27,7 @@ SDLIMAGE_SHA256="29751304a13d25ac513f24305fa25b06a6edd9607718c90129b8350d35fc557
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PREFIX="${SCRIPT_DIR}/sdl3_image"
+SDL3_PREFIX="${SCRIPT_DIR}/sdl3"
 CACHE_DIR="${SCRIPT_DIR}/.cache"
 BUILD_DIR="${SCRIPT_DIR}/.build"
 TARBALL="${CACHE_DIR}/SDL3_image-${SDLIMAGE_VERSION}.tar.gz"
@@ -39,11 +40,16 @@ if [ "${1:-}" = "--clean" ]; then
 fi
 
 STAMP="${PREFIX}/.sink-sdl3-image-stamp"
-STAMP_VALUE="${SDLIMAGE_VERSION}-$(shasum -a 256 "$0" | cut -c1-12)"
+STAMP_VALUE="${SDLIMAGE_VERSION}-${MACOSX_DEPLOYMENT_TARGET:-unset}-$(shasum -a 256 "$0" | cut -c1-12)"
 if [ -f "${STAMP}" ] && [ "$(cat "${STAMP}")" = "${STAMP_VALUE}" ]; then
     echo "vendored SDL3_image ${SDLIMAGE_VERSION} already built at ${PREFIX}"
     echo "(run '$0 --clean' to force a rebuild)"
     exit 0
+fi
+
+if [ ! -f "${SDL3_PREFIX}/lib/cmake/SDL3/SDL3Config.cmake" ]; then
+    echo "ERROR: vendored SDL3 not found. Run vendor/build_sdl3.sh first."
+    exit 1
 fi
 
 mkdir -p "${CACHE_DIR}" "${BUILD_DIR}"
@@ -75,6 +81,8 @@ tar -xzf "${TARBALL}" -C "${BUILD_DIR}"
 # bundled stb_image, and PNG via SDL3's, rather than linking libpng/libjpeg-turbo.
 echo "configuring (SVG + dependency-free formats only)..."
 cmake -S "${SRC_DIR}" -B "${SRC_DIR}/build" \
+    -DCMAKE_PREFIX_PATH="${SDL3_PREFIX}" \
+    -DSDL3_DIR="${SDL3_PREFIX}/lib/cmake/SDL3" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
     -DBUILD_SHARED_LIBS=ON \
@@ -113,6 +121,10 @@ if [ -n "${LEAKED}" ]; then
     exit 1
 fi
 echo "  clean -- links only SDL3 and system libraries"
+if otool -L "${PREFIX}/lib/libSDL3_image.0.dylib" | tail -n +2 | grep -q "/opt/homebrew"; then
+    echo "ERROR: libSDL3_image links Homebrew's SDL3 rather than vendor/sdl3"
+    exit 1
+fi
 
 echo
 echo "vendored SDL3_image ${SDLIMAGE_VERSION} built at ${PREFIX}"

@@ -1,5 +1,5 @@
 #!/bin/bash
-# build_text_stack.sh - Build minimal HarfBuzz + SDL3_ttf for sink.
+# build_text_stack.sh - Build libpng, FreeType, HarfBuzz and SDL3_ttf for sink.
 #
 # Homebrew's harfbuzz links glib (which drags in libpcre2 and libintl) and
 # graphite2: ~2.2MB in the app bundle. Neither is needed here.
@@ -15,19 +15,37 @@
 # so HarfBuzz is on the untrusted-input path -- keep it current. Single glyphs
 # still render via TTF_RenderGlyph_Blended, FreeType only.
 #
-# freetype comes from Homebrew: it's small, its only dep is libpng (needed for
-# colour bitmap glyphs, i.e. emoji), and it carries no license problem.
+# FreeType and libpng (which FreeType needs for colour bitmap glyphs, i.e.
+# emoji) used to come from Homebrew. Homebrew builds for the macOS it's
+# running on, so after the build machine moved to macOS 27, sink 0.11 shipped
+# both with a 27.0 minimum inside an app that promises 26.0. They're built here
+# now, for MACOSX_DEPLOYMENT_TARGET like everything else; FreeType without
+# brotli (WOFF2 web fonts, which sink never loads) or its own HarfBuzz.
+#
+# All four libraries go into one prefix, so they are siblings and find each
+# other through @loader_path. SDL3_ttf links the vendored SDL3
+# (build_sdl3.sh), which must be built first.
 #
 # Output: vendor/textstack. Picked up by CMakeLists.txt.
 
 set -euo pipefail
 
+PNG_VERSION="1.6.59"
+# libpng publishes no signature for 1.6.59. This tarball was checked file for
+# file against the v1.6.59 tag in github.com/pnggroup/libpng, which Cosmin
+# Truta signed (GitHub verifies it).
+PNG_SHA256="d80dd2a38a37f803cb9b6ac7b14bd6e74ddc3b654780a8380bdf93523fdb4389"
+FT_VERSION="2.15.0"
+# Checked against Werner Lemberg's signature (freetype-2.15.0.tar.xz.sig, key
+# E30674707856409FF1948010BE6C3AAC63AD8E3F).
+FT_SHA256="93cd47eb719c325107f2d3cf087d06299e944c3b48a40b55537302304dea1dd5"
 HB_VERSION="14.6.0"
 HB_SHA256="d07a007327277708a2a73ae437887cdbaf282937f6d03ca5467723e9099af586"
 TTF_VERSION="3.2.2"
 TTF_SHA256="63547d58d0185c833213885b635a2c0548201cc8f301e6587c0be1a67e1e045d"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SDL3_PREFIX="${SCRIPT_DIR}/sdl3"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 # One shared prefix on purpose. HarfBuzz installs with an install_name of
 # @rpath/libharfbuzz.dylib, so libSDL3_ttf can only resolve it via an
@@ -41,16 +59,27 @@ BUILD_DIR="${SCRIPT_DIR}/.build"
 if [ "${1:-}" = "--clean" ]; then
     echo "removing ${PREFIX}..."
     rm -rf "${PREFIX}"
+    rm -rf "${BUILD_DIR}/libpng-${PNG_VERSION}" "${BUILD_DIR}/freetype-${FT_VERSION}"
     rm -rf "${BUILD_DIR}/harfbuzz-${HB_VERSION}" "${BUILD_DIR}/SDL3_ttf-${TTF_VERSION}"
     exit 0
 fi
 
 STAMP="${TTF_PREFIX}/.sink-text-stack-stamp"
-STAMP_VALUE="${HB_VERSION}-${TTF_VERSION}-$(shasum -a 256 "$0" | cut -c1-12)"
+STAMP_VALUE="${PNG_VERSION}-${FT_VERSION}-${HB_VERSION}-${TTF_VERSION}-${MACOSX_DEPLOYMENT_TARGET:-unset}-$(shasum -a 256 "$0" | cut -c1-12)"
 if [ -f "${STAMP}" ] && [ "$(cat "${STAMP}")" = "${STAMP_VALUE}" ]; then
-    echo "vendored text stack already built (harfbuzz ${HB_VERSION}, SDL3_ttf ${TTF_VERSION})"
+    echo "vendored text stack already built (libpng ${PNG_VERSION}, freetype ${FT_VERSION}, harfbuzz ${HB_VERSION}, SDL3_ttf ${TTF_VERSION})"
     echo "(run '$0 --clean' to force a rebuild)"
     exit 0
+fi
+
+if [ -z "${MACOSX_DEPLOYMENT_TARGET:-}" ]; then
+    echo "ERROR: MACOSX_DEPLOYMENT_TARGET is not set. Run via ./build.sh, or"
+    echo "       'source ./sdk_env.sh' first."
+    exit 1
+fi
+if [ ! -f "${SDL3_PREFIX}/lib/cmake/SDL3/SDL3Config.cmake" ]; then
+    echo "ERROR: vendored SDL3 not found. Run vendor/build_sdl3.sh first."
+    exit 1
 fi
 
 mkdir -p "${CACHE_DIR}" "${BUILD_DIR}"
@@ -71,10 +100,66 @@ fetch() {
     fi
 }
 
+fetch "https://download.sourceforge.net/libpng/libpng-${PNG_VERSION}.tar.xz" \
+      "${CACHE_DIR}/libpng-${PNG_VERSION}.tar.xz" "${PNG_SHA256}"
+fetch "https://download.savannah.gnu.org/releases/freetype/freetype-${FT_VERSION}.tar.xz" \
+      "${CACHE_DIR}/freetype-${FT_VERSION}.tar.xz" "${FT_SHA256}"
 fetch "https://github.com/harfbuzz/harfbuzz/releases/download/${HB_VERSION}/harfbuzz-${HB_VERSION}.tar.xz" \
       "${CACHE_DIR}/harfbuzz-${HB_VERSION}.tar.xz" "${HB_SHA256}"
 fetch "https://github.com/libsdl-org/SDL_ttf/releases/download/release-${TTF_VERSION}/SDL3_ttf-${TTF_VERSION}.tar.gz" \
       "${CACHE_DIR}/SDL3_ttf-${TTF_VERSION}.tar.gz" "${TTF_SHA256}"
+
+rm -rf "${PREFIX}"
+
+# ------------------------------------------------------------------ libpng
+PNG_SRC="${BUILD_DIR}/libpng-${PNG_VERSION}"
+echo "extracting libpng..."
+rm -rf "${PNG_SRC}"
+tar -xf "${CACHE_DIR}/libpng-${PNG_VERSION}.tar.xz" -C "${BUILD_DIR}"
+
+echo "configuring libpng (shared library only, system zlib)..."
+cmake -S "${PNG_SRC}" -B "${PNG_SRC}/build" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET}" \
+    -DPNG_SHARED=ON \
+    -DPNG_STATIC=OFF \
+    -DPNG_FRAMEWORK=OFF \
+    -DPNG_TESTS=OFF \
+    -DPNG_TOOLS=OFF
+
+echo "compiling libpng..."
+cmake --build "${PNG_SRC}/build" -j"$(sysctl -n hw.ncpu)"
+cmake --install "${PNG_SRC}/build"
+cp "${PNG_SRC}/LICENSE" "${PREFIX}/libpng-LICENSE"
+
+# ---------------------------------------------------------------- freetype
+FT_SRC="${BUILD_DIR}/freetype-${FT_VERSION}"
+echo "extracting freetype..."
+rm -rf "${FT_SRC}"
+tar -xf "${CACHE_DIR}/freetype-${FT_VERSION}.tar.xz" -C "${BUILD_DIR}"
+
+# HVF is Apple's experimental vector font format, read through
+# /usr/lib/libhvf.dylib. That library is in the macOS 26.5 SDK, but nothing
+# says 26.0-26.4 have it, and linking it would stop FreeType loading on any
+# that don't. sink has no use for HVF fonts.
+echo "configuring freetype (libpng and system zlib; no brotli, harfbuzz or HVF)..."
+cmake -S "${FT_SRC}" -B "${FT_SRC}/build" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX="${PREFIX}" \
+    -DCMAKE_PREFIX_PATH="${PREFIX}" \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET}" \
+    -DBUILD_SHARED_LIBS=ON \
+    -DFT_REQUIRE_PNG=ON \
+    -DFT_REQUIRE_ZLIB=ON \
+    -DFT_DISABLE_BROTLI=ON \
+    -DFT_DISABLE_HARFBUZZ=ON \
+    -DFT_DISABLE_HVF=ON
+
+echo "compiling freetype..."
+cmake --build "${FT_SRC}/build" -j"$(sysctl -n hw.ncpu)"
+cmake --install "${FT_SRC}/build"
+cp "${FT_SRC}/LICENSE.TXT" "${PREFIX}/FreeType-LICENSE.txt"
 
 # ---------------------------------------------------------------- harfbuzz
 HB_SRC="${BUILD_DIR}/harfbuzz-${HB_VERSION}"
@@ -86,6 +171,8 @@ echo "configuring harfbuzz (freetype only, no glib/graphite2/icu/cairo)..."
 cmake -S "${HB_SRC}" -B "${HB_SRC}/build" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="${HB_PREFIX}" \
+    -DCMAKE_PREFIX_PATH="${PREFIX}" \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET}" \
     -DBUILD_SHARED_LIBS=ON \
     -DHB_HAVE_FREETYPE=ON \
     -DHB_HAVE_GLIB=OFF \
@@ -102,7 +189,6 @@ cmake -S "${HB_SRC}" -B "${HB_SRC}/build" \
 
 echo "compiling harfbuzz..."
 cmake --build "${HB_SRC}/build" -j"$(sysctl -n hw.ncpu)"
-rm -rf "${PREFIX}"
 cmake --install "${HB_SRC}/build"
 cp "${HB_SRC}/COPYING" "${HB_PREFIX}/COPYING" 2>/dev/null || true
 
@@ -112,11 +198,13 @@ echo "extracting SDL3_ttf..."
 rm -rf "${TTF_SRC}"
 tar -xzf "${CACHE_DIR}/SDL3_ttf-${TTF_VERSION}.tar.gz" -C "${BUILD_DIR}"
 
-echo "configuring SDL3_ttf against the vendored harfbuzz..."
+echo "configuring SDL3_ttf against the vendored SDL3, freetype and harfbuzz..."
 cmake -S "${TTF_SRC}" -B "${TTF_SRC}/build" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX="${TTF_PREFIX}" \
-    -DCMAKE_PREFIX_PATH="${HB_PREFIX}" \
+    -DCMAKE_PREFIX_PATH="${PREFIX};${SDL3_PREFIX}" \
+    -DSDL3_DIR="${SDL3_PREFIX}/lib/cmake/SDL3" \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET}" \
     -DBUILD_SHARED_LIBS=ON \
     -DSDLTTF_VENDORED=OFF \
     -DSDLTTF_HARFBUZZ=ON \
@@ -128,11 +216,15 @@ echo "compiling SDL3_ttf..."
 cmake --build "${TTF_SRC}/build" -j"$(sysctl -n hw.ncpu)"
 cmake --install "${TTF_SRC}/build"
 
-# CMake strips build-tree rpaths on install, leaving libSDL3_ttf with a
-# @rpath/libharfbuzz.dylib load command and no rpath to satisfy it. Both libs
-# are siblings in ${PREFIX}/lib, so @loader_path is all that is needed.
-install_name_tool -add_rpath "@loader_path" "${TTF_PREFIX}/lib/libSDL3_ttf.0.dylib" 2>/dev/null || true
-codesign --force --sign - "${TTF_PREFIX}/lib/libSDL3_ttf.0.dylib" 2>/dev/null || true
+# CMake strips build-tree rpaths on install, leaving @rpath load commands
+# (SDL3_ttf -> harfbuzz, harfbuzz -> freetype, freetype -> libpng) with no
+# rpath to satisfy them. They are all siblings in ${PREFIX}/lib, so
+# @loader_path is all that is needed. SDL3 itself is found through the
+# executable's rpath, as in the app bundle.
+for lib in "${PREFIX}"/lib/libSDL3_ttf.0.dylib "${PREFIX}"/lib/libharfbuzz.dylib "${PREFIX}"/lib/libfreetype.6.dylib; do
+    install_name_tool -add_rpath "@loader_path" "$(cd "$(dirname "${lib}")" && pwd)/$(basename "$(readlink -f "${lib}")")" 2>/dev/null || true
+    codesign --force --sign - "$(readlink -f "${lib}")" 2>/dev/null || true
+done
 cp "${TTF_SRC}/LICENSE.txt" "${TTF_PREFIX}/LICENSE.txt" 2>/dev/null || true
 
 # -------------------------------------------------------------- assertions
@@ -268,13 +360,32 @@ int main(int argc, char **argv) {
     return 0;
 }
 EOF
-clang "${BUILD_DIR}/loadchk.c" -o "${BUILD_DIR}/loadchk"
+clang "${BUILD_DIR}/loadchk.c" -o "${BUILD_DIR}/loadchk" -Wl,-rpath,"${SDL3_PREFIX}/lib"
 if ! "${BUILD_DIR}/loadchk" "${TTF_PREFIX}/lib/libSDL3_ttf.0.dylib"; then
     echo "ERROR: vendored SDL3_ttf cannot be loaded. Refusing to continue."
     exit 1
 fi
 
+# Nothing from Homebrew, and nothing newer than the macOS sink supports.
+echo
+echo "verifying every library is self-built and targets macOS ${MACOSX_DEPLOYMENT_TARGET}..."
+for f in "${PREFIX}"/lib/*.dylib; do
+    [ -L "${f}" ] && continue
+    if otool -L "${f}" | tail -n +2 | grep -q "/opt/homebrew"; then
+        echo "ERROR: ${f} links a Homebrew library:"
+        otool -L "${f}" | grep "/opt/homebrew" | sed 's/^/    /'
+        exit 1
+    fi
+    minos="$(otool -l "${f}" | awk '/LC_BUILD_VERSION/{f=1} f && /minos/{print $2; exit}')"
+    if [ "${minos}" != "${MACOSX_DEPLOYMENT_TARGET}" ]; then
+        echo "ERROR: ${f} targets macOS ${minos}, not ${MACOSX_DEPLOYMENT_TARGET}"
+        exit 1
+    fi
+done
+echo "  clean"
+
 echo "${STAMP_VALUE}" > "${STAMP}"
 echo
 echo "vendored text stack built:"
 du -sh "${PREFIX}/lib"
+

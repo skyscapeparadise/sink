@@ -42,6 +42,7 @@ bench/vte_bench/target/
 vendor/ffmpeg/
 vendor/.cache/
 vendor/.build/
+vendor/sdl3/
 vendor/sdl3_image/
 vendor/textstack/
 vendor/sparkle/

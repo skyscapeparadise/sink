@@ -17,10 +17,14 @@ source ./sdk_env.sh
 echo "  checking vendored ffmpeg..."
 ./vendor/build_ffmpeg.sh
 
+# SDL3 first: SDL3_image and SDL3_ttf build against it.
+echo "  checking vendored SDL3..."
+./vendor/build_sdl3.sh
+
 echo "  checking vendored SDL3_image..."
 ./vendor/build_sdl3_image.sh
 
-echo "  checking vendored text stack (harfbuzz + SDL3_ttf)..."
+echo "  checking vendored text stack (libpng, freetype, harfbuzz, SDL3_ttf)..."
 ./vendor/build_text_stack.sh
 
 # 2. Configure. This runs every time rather than only when build/ is missing.
