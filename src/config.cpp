@@ -1,4 +1,5 @@
 #include "config.hpp"
+#include "themes.hpp"
 
 // toml++ v3.4.0 still uses the pre-C++23 whitespace-before-literal-suffix
 // syntax internally; silence that rather than let a third-party header's
@@ -18,6 +19,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <sstream>
+#include <strings.h>
 
 namespace config {
 
@@ -66,6 +68,24 @@ const std::vector<KeyInfo>& keys() {
           "Show the translucent title bar." },
         { "typing_animation", Scope::Preset, KeyType::Bool, true, 0, 0, {},
           "Animate output as it is typed onto the screen." },
+        { "theme", Scope::Preset, KeyType::Choice, std::string("sink"), 0, 0, themes::names(),
+          "The color theme: text, the cursor, the selection, and the colors "
+          "programs use. Any of its colors can be changed in [presets.<name>.colors]." },
+        { "colors.foreground", Scope::Preset, KeyType::Color, std::string(""), 0, 0, {},
+          "Text color, as \"#rrggbb\". Empty uses the theme's." },
+        { "colors.background", Scope::Preset, KeyType::Color, std::string(""), 0, 0, {},
+          "The background color programs paint with, and that sink reports to "
+          "programs that ask whether it's light or dark. A video background "
+          "shows through it. Empty uses the theme's." },
+        { "colors.cursor", Scope::Preset, KeyType::Color, std::string(""), 0, 0, {},
+          "Cursor color. Empty uses the theme's." },
+        { "colors.selection", Scope::Preset, KeyType::Color, std::string(""), 0, 0, {},
+          "Selection highlight, drawn translucently over what's behind it. "
+          "Empty uses the theme's." },
+        { "colors.palette", Scope::Preset, KeyType::ColorList, StringList{}, 0, 16, {},
+          "The 16 colors programs choose from: black, red, green, yellow, blue, "
+          "magenta, cyan, white, then their bright versions. A shorter list "
+          "replaces just the first colors; the rest stay the theme's." },
     };
     return k;
 }
@@ -109,6 +129,9 @@ std::string type_name(KeyType t) {
         case KeyType::String: return "a string";
         case KeyType::Path: return "a string";
         case KeyType::BoolOrChoice: return "true, false or a string";
+        case KeyType::Choice: return "a string";
+        case KeyType::Color: return "a color like \"#1a1b26\"";
+        case KeyType::ColorList: return "a list of colors like [\"#1a1b26\", ...]";
     }
     return "a value";
 }
@@ -191,6 +214,42 @@ std::optional<Value> convert(const KeyInfo& k, const std::string& where, const t
                 return std::nullopt;
             }
             return wrong_type();
+        case KeyType::Choice: {
+            const auto* s = n.as_string();
+            if (!s) return wrong_type();
+            for (const std::string& c : k.choices) {
+                if (strcasecmp(c.c_str(), s->get().c_str()) == 0) return Value(c);
+            }
+            std::string allowed;
+            for (const std::string& c : k.choices) allowed += (allowed.empty() ? "\"" : ", \"") + c + "\"";
+            warnings.push_back({ line, where + " = \"" + s->get() + "\" isn't one of " + allowed +
+                                       "; using the default" });
+            return std::nullopt;
+        }
+        case KeyType::Color: {
+            const auto* s = n.as_string();
+            themes::Rgb rgb;
+            if (!s) return wrong_type();
+            if (!s->get().empty() && !themes::parse_hex(s->get(), rgb)) return wrong_type();
+            return Value(s->get());
+        }
+        case KeyType::ColorList: {
+            const auto* arr = n.as_array();
+            if (!arr) return wrong_type();
+            StringList colors;
+            for (auto&& el : *arr) {
+                const auto* s = el.as_string();
+                themes::Rgb rgb;
+                if (!s || !themes::parse_hex(s->get(), rgb)) return wrong_type();
+                colors.push_back(s->get());
+            }
+            if (colors.size() > static_cast<size_t>(k.max)) {
+                warnings.push_back({ line, where + " has " + std::to_string(colors.size()) +
+                                           " colors; using the first " + pretty_number(k.max) });
+                colors.resize(static_cast<size_t>(k.max));
+            }
+            return Value(colors);
+        }
     }
     return wrong_type();
 }
@@ -363,6 +422,12 @@ PresetValues resolve_preset(const Config& c, const std::string& name) {
     r.ligatures = flag("ligatures");
     r.title_bar = flag("title_bar");
     r.typing_animation = flag("typing_animation");
+    r.theme = str("theme");
+    r.foreground = str("colors.foreground");
+    r.background_color = str("colors.background");
+    r.cursor = str("colors.cursor");
+    r.selection = str("colors.selection");
+    r.palette = std::get<StringList>(v["colors.palette"]);
     return r;
 }
 
@@ -769,6 +834,20 @@ std::string key_schema(const KeyInfo& k, const std::string& pad) {
             out += "] }],\n";
             break;
         }
+        case KeyType::Choice: {
+            out += pad + "\"enum\": [";
+            for (size_t i = 0; i < k.choices.size(); ++i) out += (i ? ", " : "") + json_string(k.choices[i]);
+            out += "],\n";
+            break;
+        }
+        case KeyType::Color:
+            out += pad + "\"type\": \"string\",\n" + pad +
+                   "\"pattern\": \"^(#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3})?$\",\n";
+            break;
+        case KeyType::ColorList:
+            out += pad + "\"type\": \"array\",\n" + pad + "\"maxItems\": " + pretty_number(k.max) + ",\n" +
+                   pad + "\"items\": { \"type\": \"string\", \"pattern\": \"^(#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3})$\" },\n";
+            break;
     }
     out += pad + "\"default\": " + json_value(k.default_value) + "\n";
     return out;

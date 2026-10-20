@@ -144,6 +144,8 @@ copy_license "vendor/textstack/libpng-LICENSE"       "libpng-LICENSE"
 # text to travel with them.
 copy_license "fonts/MonaspaceNeon-OFL.txt"           "MonaspaceNeon-OFL.txt"
 copy_license "fonts/MonaSans-OFL.txt"                "MonaSans-OFL.txt"
+# The bundled color themes' licenses (src/themes.cpp).
+copy_license "themes/LICENSES.txt"                   "Themes-LICENSES.txt"
 
 # 4. Bundle third-party dylibs into the app
 #

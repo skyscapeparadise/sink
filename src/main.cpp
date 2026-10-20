@@ -24,6 +24,7 @@
 #include "app_state.hpp"
 #include "config_store.hpp"
 #include "system_fonts.hpp"
+#include "themes.hpp"
 #include "hue_shift.hpp"
 #include "crt_shader.hpp"
 
@@ -341,6 +342,30 @@ static std::string font_setting(const std::string& resolved_path) {
 
 static void refresh_settings_ui_presets(AppState* state);
 
+// A preset's colors: its theme (sink's own if the name isn't one), with any
+// [presets.<name>.colors] overrides on top.
+static ColorScheme scheme_for(const config::PresetValues& p) {
+    const themes::Theme* t = themes::find(p.theme);
+    if (!t) t = &themes::all().front();
+    auto color = [](const themes::Rgb& c, float alpha = 1.0f) {
+        return SDL_FColor{ c.r / 255.0f, c.g / 255.0f, c.b / 255.0f, alpha };
+    };
+    auto pick = [&](const std::string& override_hex, const themes::Rgb& theme_color) {
+        themes::Rgb rgb;
+        return (!override_hex.empty() && themes::parse_hex(override_hex, rgb)) ? rgb : theme_color;
+    };
+    ColorScheme s;
+    s.foreground = color(pick(p.foreground, t->foreground));
+    s.background = color(pick(p.background_color, t->background));
+    s.cursor = color(pick(p.cursor, t->cursor));
+    s.selection = color(pick(p.selection, t->selection), t->selection_alpha);
+    for (int i = 0; i < 16; ++i) {
+        s.palette[i] = color(pick(i < static_cast<int>(p.palette.size()) ? p.palette[i] : std::string(),
+                                  t->palette[i]));
+    }
+    return s;
+}
+
 // For the File menu's "New Window/Tab with Preset" submenus (macos_menu.mm).
 std::vector<std::string> current_preset_names() {
     if (!g_app_state) return {};
@@ -377,6 +402,7 @@ static void save_config(AppState* state) {
     changed_bool("crt", state->crt_mode_enabled, saved.crt);
     changed_bool("ligatures", state->ligatures_enabled, saved.ligatures);
     changed_bool("hdr_text", state->hdr_console_enabled, saved.hdr_text);
+    changed_str("theme", state->theme_name, saved.theme);
     if (changes.empty()) return;
 
     if (config::is_builtin(name)) {
@@ -399,6 +425,8 @@ static void set_state_from_preset(AppState* state, const config::PresetValues& p
     state->video_path = resolve_background(p.background);
     state->font_path = resolve_font(p.font);
     state->base_font_size = static_cast<float>(p.font_size);
+    state->color_scheme = scheme_for(p);
+    state->theme_name = p.theme;
     state->exposure = static_cast<float>(p.exposure);
     state->hue_shift = static_cast<float>(p.hue_shift);
     state->animated_typing = p.typing_animation;
@@ -554,6 +582,8 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     tw->hdr_console_enabled = hdr_console_enabled;
     tw->fpane().terminal.set_enable_ligatures(ligatures_enabled);
     tw->fpane().terminal.set_max_scrollback(static_cast<size_t>(scrollback_lines));
+    tw->color_scheme = preset_override ? scheme_for(*preset_override) : state->color_scheme;
+    tw->fpane().terminal.set_color_scheme(tw->color_scheme);
 
     // Create Renderer. "gpu" backend (not the default per-platform driver)
     // so the video/hue-shift/CRT effects can plug custom shaders into this
@@ -851,6 +881,7 @@ static void split_focused_pane(AppState* state, TerminalWindow* tw, bool vertica
     auto new_pane = std::make_unique<Pane>();
     new_pane->terminal.set_enable_ligatures(state->ligatures_enabled);
     new_pane->terminal.set_max_scrollback(static_cast<size_t>(state->scrollback_lines));
+    new_pane->terminal.set_color_scheme(tw->color_scheme);
 
     // Seed the new grid/PTY at roughly half the old pane; layout_panes
     // recomputes the exact geometry right after
@@ -1197,9 +1228,11 @@ static void apply_preset_to_window(AppState* state, TerminalWindow* tw, const co
     tw->animated_typing = p.typing_animation;
     tw->vibrancy_enabled = p.title_bar;
     tw->crt_mode_enabled = p.crt;
+    tw->color_scheme = scheme_for(p);
     for (Pane* pane : all_panes(tw)) {
         pane->terminal.set_enable_ligatures(p.ligatures);
         pane->terminal.set_max_scrollback(static_cast<size_t>(state->scrollback_lines));
+        pane->terminal.set_color_scheme(tw->color_scheme);
     }
     if (tw->hdr_console_enabled != p.hdr_text) {
         tw->hdr_console_enabled = p.hdr_text;
@@ -1240,6 +1273,7 @@ static void sync_settings_ui_from_state(AppState* state) {
     state->settings_ui.set_crt_effect_enabled(state->crt_mode_enabled);
     state->settings_ui.set_ligatures_enabled(state->ligatures_enabled);
     state->settings_ui.set_hdr_console_enabled(state->hdr_console_enabled);
+    state->settings_ui.set_themes(themes::names(), state->theme_name);
     refresh_settings_ui_presets(state);
 }
 
@@ -2418,6 +2452,22 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 apply_preset_to_state_and_windows(state, config::resolve_preset(c, config::active_preset(c)));
             }
             sync_settings_ui_from_state(state);
+        } else if (event->user.code == 17) { // Theme picked in Settings
+            char* name = (char*)event->user.data1;
+            state->theme_name = name;
+            // The active preset's colors under the new theme, keeping its
+            // own color overrides, for every window -- as the other Settings
+            // controls do.
+            config::PresetValues p = config::resolve_preset(state->config.config(), state->active_preset_name);
+            p.theme = state->theme_name;
+            state->color_scheme = scheme_for(p);
+            for (auto* tw : state->windows) {
+                tw->color_scheme = state->color_scheme;
+                for (Pane* pane : all_panes(tw)) pane->terminal.set_color_scheme(tw->color_scheme);
+            }
+            save_config(state);
+            state->settings_ui.set_themes(themes::names(), state->theme_name);
+            free(name);
         } else if (event->user.code == 15) { // File menu: New Window with Preset
             char* name = (char*)event->user.data1;
             std::cout << "Menu Event: new window with preset '" << name << "'" << std::endl;

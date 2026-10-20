@@ -122,6 +122,21 @@ a preset can set:
 | `ligatures` | `true` | draws `->`, `!=` and friends as single symbols |
 | `title_bar` | `true` | the translucent title bar |
 | `typing_animation` | `true` | output types itself onto the screen |
+| `theme` | `"sink"` | the color theme (see below) |
+
+themes color your text, cursor, selection, and the 16 colors programs pick from. sink ships with its own (`sink`) plus `tokyo night`, `catppuccin mocha`, `dracula`, `gruvbox dark`, `nord`, `rose pine`, `solarized dark`, and the light ones: `catppuccin latte`, `solarized light`, `rose pine dawn`, `gruvbox light`. switching themes recolors what's already on screen too. tweak any color of a theme in the preset's `colors` table:
+
+```toml
+[presets.clouds]
+theme = "tokyo night"
+
+[presets.clouds.colors]
+foreground = "#e0e0ff"
+cursor = "#ff9e64"
+selection = "#7aa2f7"
+background = "#1a1b26"   # what programs paint with; your video still shows through
+palette = ["#15161e", "#f7768e"]   # replaces black and red, keeps the rest
+```
 
 `pool` is built in, so you can't rename or delete it. change something while it's active and sink saves your changes as `pool copy`.
 

@@ -185,6 +185,7 @@ set(SOURCES
     src/settings_ui.cpp
     src/sink_demo.cpp
     src/config.cpp
+    src/themes.cpp
     src/toml_edit.cpp
     src/config_store.cpp
     src/system_fonts.cpp
@@ -308,6 +309,7 @@ endif()
 add_executable(config_tests
     tests/test_config.cpp
     src/config.cpp
+    src/themes.cpp
 )
 target_include_directories(config_tests PRIVATE src vendor/tomlplusplus)
 target_compile_definitions(config_tests PRIVATE SINK_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
@@ -326,6 +328,7 @@ add_executable(config_store_tests
     tests/test_config_store.cpp
     src/config_store.cpp
     src/config.cpp
+    src/themes.cpp
     src/toml_edit.cpp
 )
 target_include_directories(config_store_tests PRIVATE src vendor/tomlplusplus)

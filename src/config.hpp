@@ -36,7 +36,10 @@ enum class KeyType {
     Float,
     String,
     Path,        // a file path, or a name with no '/' (see is_path())
-    BoolOrChoice // true, false, or one of KeyInfo::choices
+    BoolOrChoice,// true, false, or one of KeyInfo::choices
+    Choice,      // one of KeyInfo::choices, matched regardless of case
+    Color,       // "#rrggbb" or "#rgb"; "" for the theme's
+    ColorList    // up to 16 colors
 };
 
 // Which part of the file a key lives in. Global keys are written at their
@@ -51,7 +54,7 @@ struct KeyInfo {
     Value default_value;
     double min = 0;      // Int and Float only
     double max = 0;
-    StringList choices;  // BoolOrChoice only
+    StringList choices;  // BoolOrChoice and Choice only
     const char* doc;
 };
 
@@ -97,6 +100,10 @@ struct PresetValues {
     bool ligatures = true;
     bool title_bar = true;
     bool typing_animation = true;
+    std::string theme;         // a bundled theme's name, as the theme spells it
+    // Overrides of the theme's colors: "#rrggbb", or "" to keep the theme's.
+    std::string foreground, background_color, cursor, selection;
+    StringList palette;        // replaces the theme's first palette.size() colors
 };
 
 struct BuiltinPreset {

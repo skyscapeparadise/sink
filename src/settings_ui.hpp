@@ -13,6 +13,7 @@ enum PresetButtonId {
     PRESET_BTN_DUPLICATE = 22,
     PRESET_BTN_RENAME = 23,
     PRESET_BTN_DELETE = 24,
+    THEME_BTN = 25,           // click to open the theme list
 };
 
 // What a committed name-edit should do once the user presses Enter.
@@ -98,6 +99,8 @@ public:
     // One line at the bottom of the window about sink.toml, such as a syntax
     // error that is stopping changes from being saved. Empty hides it.
     void set_config_notice(const std::string& text);
+    // The bundled themes and the one in use, for the theme button and its list.
+    void set_themes(const std::vector<std::string>& names, const std::string& active);
 
 private:
     SDL_Window* window_ = nullptr;
@@ -132,6 +135,12 @@ private:
     std::string active_preset_ = "pool";
     std::vector<std::string> builtin_presets_ = {"pool"};
     std::string config_notice_;
+    std::vector<std::string> theme_names_;
+    std::string active_theme_ = "sink";
+    bool theme_dropdown_open_ = false;
+    int theme_hover_index_ = -1;
+    SDL_FRect theme_row_rect(int index) const;  // opens upward from the button
+    void draw_theme_list(float scale);
     bool is_builtin(const std::string& name) const;
     bool preset_dropdown_open_ = false;
     int dropdown_hover_index_ = -1;

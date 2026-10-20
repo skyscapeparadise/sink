@@ -265,6 +265,47 @@ void SettingsUI::set_config_notice(const std::string& text) {
     config_notice_ = text;
 }
 
+void SettingsUI::set_themes(const std::vector<std::string>& names, const std::string& active) {
+    theme_names_ = names;
+    active_theme_ = active;
+    // Short names fit beside "theme:"; long ones take the whole button.
+    const std::string label = active.size() <= 11 ? "theme: " + active : active;
+    for (auto& btn : buttons_) {
+        if (btn.id == THEME_BTN) btn.label = label;
+    }
+}
+
+// The list opens upward, ending just above the theme button: there's no room
+// below it.
+SDL_FRect SettingsUI::theme_row_rect(int index) const {
+    const int count = static_cast<int>(theme_names_.size());
+    return { 264.0f, 393.0f - (count - index) * 22.0f, 220.0f, 22.0f };
+}
+
+void SettingsUI::draw_theme_list(float scale) {
+    const int count = static_cast<int>(theme_names_.size());
+    if (count == 0) return;
+    SDL_FRect first = theme_row_rect(0);
+    SDL_FRect list_bg = { first.x * scale, first.y * scale, first.w * scale, (count * 22.0f) * scale };
+    draw_rect_filled(list_bg, SDL_FColor{0.06f, 0.08f, 0.10f, 0.98f}, 6.0f * scale);
+    draw_rect_outline(list_bg, colors_.border, 6.0f * scale);
+    for (int i = 0; i < count; ++i) {
+        SDL_FRect row = theme_row_rect(i);
+        SDL_FRect phys_row = { row.x * scale, row.y * scale, row.w * scale, row.h * scale };
+        const bool is_active = theme_names_[i] == active_theme_;
+        const bool is_hovered = i == theme_hover_index_;
+        if (is_hovered || is_active) {
+            SDL_FRect highlight = { phys_row.x + 3.0f * scale, phys_row.y + 2.0f * scale,
+                                    phys_row.w - 6.0f * scale, phys_row.h - 4.0f * scale };
+            draw_rect_filled(highlight, is_hovered ? SDL_FColor{1.0f, 1.0f, 1.0f, 0.10f}
+                                                   : SDL_FColor{0.0f, 0.8f, 0.8f, 0.15f}, 4.0f * scale);
+        }
+        draw_text(theme_names_[i], phys_row.x + 10.0f * scale,
+                  phys_row.y + (phys_row.h / 2.0f) - (font_manager_.get_cell_height() / 2.0f),
+                  (is_active || is_hovered) ? colors_.text_primary : colors_.text_secondary);
+    }
+}
+
 bool SettingsUI::is_builtin(const std::string& name) const {
     return std::find(builtin_presets_.begin(), builtin_presets_.end(), name) != builtin_presets_.end();
 }
@@ -428,6 +469,9 @@ void SettingsUI::init_layout() {
     buttons_.push_back(btn_ligatures_toggle);
     buttons_.push_back(btn_hdr_console_toggle);
     buttons_.push_back(btn_broadcast_toggle);
+    UIButton btn_theme = { THEME_BTN, active_theme_.size() <= 11 ? "theme: " + active_theme_ : active_theme_,
+                           {344.0f, 397.0f, 140.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    buttons_.push_back(btn_theme);
 
     // 3. UI Sliders
     char exposure_buf[32];
@@ -482,6 +526,15 @@ void SettingsUI::process_event(const SDL_Event& event) {
             SDL_FRect cancel = edit_cancel_rect();
             edit_save_hovered_ = (mx >= save.x && mx <= save.x + save.w && my >= save.y && my <= save.y + save.h);
             edit_cancel_hovered_ = (mx >= cancel.x && mx <= cancel.x + cancel.w && my >= cancel.y && my <= cancel.y + cancel.h);
+        } else if (theme_dropdown_open_) {
+            theme_hover_index_ = -1;
+            for (int i = 0; i < static_cast<int>(theme_names_.size()); ++i) {
+                SDL_FRect row = theme_row_rect(i);
+                if (mx >= row.x && mx <= row.x + row.w && my >= row.y && my <= row.y + row.h) {
+                    theme_hover_index_ = i;
+                    break;
+                }
+            }
         } else if (preset_dropdown_open_) {
             dropdown_hover_index_ = -1;
             for (size_t i = 0; i < preset_names_.size() && static_cast<int>(i) < kMaxDropdownRows; ++i) {
@@ -512,6 +565,27 @@ void SettingsUI::process_event(const SDL_Event& event) {
                 bool hit_save = (mx >= save.x && mx <= save.x + save.w && my >= save.y && my <= save.y + save.h);
                 // Clicking "cancel" or anywhere else both just abandon the edit.
                 hit_save ? commit_edit() : cancel_edit();
+                return;
+            }
+
+            // Likewise the theme list: a row picks that theme, a miss closes it.
+            if (theme_dropdown_open_) {
+                for (int i = 0; i < static_cast<int>(theme_names_.size()); ++i) {
+                    SDL_FRect row = theme_row_rect(i);
+                    if (mx >= row.x && mx <= row.x + row.w && my >= row.y && my <= row.y + row.h) {
+                        if (theme_names_[i] != active_theme_) {
+                            SDL_Event ev;
+                            std::memset(&ev, 0, sizeof(ev));
+                            ev.type = SDL_EVENT_USER;
+                            ev.user.code = 17; // Theme picked
+                            ev.user.data1 = strdup(theme_names_[i].c_str());
+                            SDL_PushEvent(&ev);
+                        }
+                        break;
+                    }
+                }
+                theme_dropdown_open_ = false;
+                theme_hover_index_ = -1;
                 return;
             }
 
@@ -595,6 +669,9 @@ void SettingsUI::process_event(const SDL_Event& event) {
                         set_ligatures_enabled(!ligatures_enabled_);
                     } else if (btn.id == 10) { // Toggle HDR Console
                         set_hdr_console_enabled(!hdr_console_enabled_);
+                    } else if (btn.id == THEME_BTN) {
+                        theme_dropdown_open_ = true;
+                        theme_hover_index_ = -1;
                     } else if (btn.id == PRESET_BTN_NAME) {
                         preset_dropdown_open_ = true;
                         dropdown_hover_index_ = -1;
@@ -653,6 +730,9 @@ void SettingsUI::process_event(const SDL_Event& event) {
         } else if (event.key.key == SDLK_ESCAPE && preset_dropdown_open_) {
             preset_dropdown_open_ = false;
             dropdown_hover_index_ = -1;
+        } else if (event.key.key == SDLK_ESCAPE && theme_dropdown_open_) {
+            theme_dropdown_open_ = false;
+            theme_hover_index_ = -1;
         }
     }
 }
@@ -917,6 +997,9 @@ void SettingsUI::render() {
         draw_rect_filled(phys_knob, colors_.text_primary, 4.0f * scale); // White handle knob
         draw_rect_outline(phys_knob, colors_.border, 4.0f * scale);
     }
+
+    // Last, so it sits over every other control.
+    if (theme_dropdown_open_) draw_theme_list(scale);
 
     SDL_RenderPresent(renderer_);
 }

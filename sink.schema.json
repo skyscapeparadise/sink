@@ -76,6 +76,48 @@
             "description": "Animate output as it is typed onto the screen.",
             "type": "boolean",
             "default": true
+          },
+          "theme": {
+            "description": "The color theme: text, the cursor, the selection, and the colors programs use. Any of its colors can be changed in [presets.<name>.colors].",
+            "enum": ["sink", "tokyo night", "catppuccin mocha", "dracula", "gruvbox dark", "nord", "rose pine", "solarized dark", "catppuccin latte", "solarized light", "rose pine dawn", "gruvbox light"],
+            "default": "sink"
+          },
+          "colors": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "foreground": {
+                "description": "Text color, as \"#rrggbb\". Empty uses the theme's.",
+                "type": "string",
+                "pattern": "^(#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3})?$",
+                "default": ""
+              },
+              "background": {
+                "description": "The background color programs paint with, and that sink reports to programs that ask whether it's light or dark. A video background shows through it. Empty uses the theme's.",
+                "type": "string",
+                "pattern": "^(#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3})?$",
+                "default": ""
+              },
+              "cursor": {
+                "description": "Cursor color. Empty uses the theme's.",
+                "type": "string",
+                "pattern": "^(#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3})?$",
+                "default": ""
+              },
+              "selection": {
+                "description": "Selection highlight, drawn translucently over what's behind it. Empty uses the theme's.",
+                "type": "string",
+                "pattern": "^(#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3})?$",
+                "default": ""
+              },
+              "palette": {
+                "description": "The 16 colors programs choose from: black, red, green, yellow, blue, magenta, cyan, white, then their bright versions. A shorter list replaces just the first colors; the rest stay the theme's.",
+                "type": "array",
+                "maxItems": 16,
+                "items": { "type": "string", "pattern": "^(#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3})$" },
+                "default": []
+              }
+            }
           }
         }
       }

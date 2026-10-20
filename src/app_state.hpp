@@ -146,6 +146,8 @@ struct TerminalWindow {
     std::string preset_name;
     std::string video_path;
     std::string font_path;
+    // Its preset's theme, given to every pane, including ones split off later.
+    ColorScheme color_scheme;
     float exposure = 0.7f;
     float hue_shift_degrees = 0.0f;
     HueShiftEffect hue_shift;
@@ -244,6 +246,9 @@ struct AppState {
     // sink.toml. Read at startup, edited by the Settings window, and saved
     // a moment after the last change (see ConfigStore).
     ConfigStore config;
+    // The active preset's theme, for new windows.
+    ColorScheme color_scheme;
+    std::string theme_name = "sink";
 
     std::string video_path;
     std::string font_path;
