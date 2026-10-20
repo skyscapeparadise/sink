@@ -42,10 +42,10 @@ bool SettingsUI::open(SDL_Window* parent_window) {
 
     parent_ = parent_window;
     
-    // Create settings window (spacious dimensions 500x475, High-DPI enabled)
+    // Create settings window (500x517, High-DPI enabled)
     window_ = SDL_CreateWindow(
         "sink settings",
-        500, 475,
+        500, 517,
         SDL_WINDOW_HIGH_PIXEL_DENSITY
     );
 
@@ -272,6 +272,13 @@ void SettingsUI::set_hdr_console_enabled(bool enabled) {
             btn.label = std::string("hdr console: ") + (hdr_console_enabled_ ? "on" : "off");
             break;
         }
+    }
+}
+
+void SettingsUI::set_shell_integration_enabled(bool enabled) {
+    shell_integration_enabled_ = enabled;
+    for (auto& btn : buttons_) {
+        if (btn.id == 11) btn.label = std::string("shell integration: ") + (enabled ? "on" : "off");
     }
 }
 
@@ -511,6 +518,9 @@ void SettingsUI::init_layout() {
     UIButton btn_theme = { THEME_BTN, theme_list_.active.size() <= 11 ? "theme: " + theme_list_.active : theme_list_.active,
                            {344.0f, 397.0f, 140.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
     buttons_.push_back(btn_theme);
+    UIButton btn_shell_integration = { 11, std::string("shell integration: ") + (shell_integration_enabled_ ? "on" : "off"),
+                                       {24.0f, 439.0f, 200.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    buttons_.push_back(btn_shell_integration);
 
     // 3. UI Sliders
     char exposure_buf[32];
@@ -687,6 +697,8 @@ void SettingsUI::process_event(const SDL_Event& event) {
                         set_ligatures_enabled(!ligatures_enabled_);
                     } else if (btn.id == 10) { // Toggle HDR Console
                         set_hdr_console_enabled(!hdr_console_enabled_);
+                    } else if (btn.id == 11) { // Toggle shell integration
+                        set_shell_integration_enabled(!shell_integration_enabled_);
                     } else if (btn.id == THEME_BTN) {
                         theme_list_.open = true;
                         theme_list_.hover = -1;
@@ -792,7 +804,7 @@ void SettingsUI::render() {
     draw_rect_filled(bg_card, colors_.card, 10.0f * scale);
     draw_rect_outline(bg_card, colors_.border, 10.0f * scale);
 
-    SDL_FRect font_card = { 16.0f * scale, 279.0f * scale, 468.0f * scale, 165.0f * scale };
+    SDL_FRect font_card = { 16.0f * scale, 279.0f * scale, 468.0f * scale, 207.0f * scale };
     draw_rect_filled(font_card, colors_.card, 10.0f * scale);
     draw_rect_outline(font_card, colors_.border, 10.0f * scale);
 
@@ -981,7 +993,7 @@ void SettingsUI::render() {
             }
             shown += "...";
         }
-        draw_text(shown, 24.0f * scale, 443.0f * scale, SDL_FColor{1.0f, 0.55f, 0.45f, 1.0f});
+        draw_text(shown, 24.0f * scale, 492.0f * scale, SDL_FColor{1.0f, 0.55f, 0.45f, 1.0f});
     }
 
     // 5. Draw Sliders

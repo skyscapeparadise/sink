@@ -1378,6 +1378,7 @@ static void sync_settings_ui_from_state(AppState* state) {
     state->settings_ui.set_ligatures_enabled(state->ligatures_enabled);
     state->settings_ui.set_hdr_console_enabled(state->hdr_console_enabled);
     state->settings_ui.set_themes(themes::names(), state->theme_name);
+    state->settings_ui.set_shell_integration_enabled(config::global_bool(state->config.config(), "shell.integration"));
     refresh_settings_ui_presets(state);
 }
 
@@ -1647,6 +1648,8 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             state->settings_ui.set_exposure(state->active_window ? state->active_window->exposure : 1.0f);
             state->settings_ui.set_hue_shift(state->active_window ? state->active_window->hue_shift_degrees : 0.0f);
             state->settings_ui.set_hdr_console_enabled(state->active_window ? state->active_window->hdr_console_enabled : false);
+            state->settings_ui.set_themes(themes::names(), state->theme_name);
+            state->settings_ui.set_shell_integration_enabled(config::global_bool(state->config.config(), "shell.integration"));
             refresh_settings_ui_presets(state);
         }
     }
@@ -2183,6 +2186,8 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                     state->settings_ui.set_vibrancy_enabled(target_tw->vibrancy_enabled);
                     state->settings_ui.set_crt_effect_enabled(target_tw->crt_mode_enabled);
                     state->settings_ui.set_hdr_console_enabled(target_tw->hdr_console_enabled);
+                    state->settings_ui.set_themes(themes::names(), state->theme_name);
+                    state->settings_ui.set_shell_integration_enabled(config::global_bool(state->config.config(), "shell.integration"));
                     refresh_settings_ui_presets(state);
                 }
             } else {
@@ -3021,6 +3026,14 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 }
             }
             save_config(state);
+        }
+
+        // Shell integration lives in [shell], not in a preset, and changes
+        // only the shells started from now on.
+        bool shell_integration = state->settings_ui.get_shell_integration_enabled();
+        if (config::global_bool(state->config.config(), "shell.integration") != shell_integration) {
+            state->config.set_global("shell.integration", config::Value(shell_integration));
+            PTYBridge::set_shell_integration_enabled(shell_integration);
         }
 
         bool hdr_console = state->settings_ui.get_hdr_console_enabled();

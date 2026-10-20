@@ -82,7 +82,7 @@ and the editing keys your fingers already know from other Mac terminals:
 
 ## config
 
-most things live in the settings window (⌘,): your background, font, exposure, hue shift, the CRT shader, HDR text, ligatures, the typing animation, and presets.
+most things live in the settings window (⌘,): your background, font, exposure, hue shift, the CRT shader, HDR text, ligatures, the typing animation, shell integration, and presets.
 
 under the hood it's all in `~/.config/sink/sink.toml`, and you can edit it by hand too. sink only ever rewrites the lines for settings you change in the settings window, so your comments and layout stay put. save the file and open windows pick up the change within a second.
 

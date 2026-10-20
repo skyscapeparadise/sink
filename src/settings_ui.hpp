@@ -88,6 +88,10 @@ public:
     bool get_ligatures_enabled() const { return ligatures_enabled_; }
 
     void set_hdr_console_enabled(bool enabled);
+    // [shell] integration: not part of a preset, and only for shells started
+    // after it changes.
+    void set_shell_integration_enabled(bool enabled);
+    bool get_shell_integration_enabled() const { return shell_integration_enabled_; }
     bool get_hdr_console_enabled() const { return hdr_console_enabled_; }
 
     // Preset list + currently active preset, shown in the preset row.
@@ -122,6 +126,7 @@ private:
     bool crt_effect_enabled_ = false;
     bool ligatures_enabled_ = true;
     bool hdr_console_enabled_ = false;
+    bool shell_integration_enabled_ = true;
 
     bool dragging_ = false;
     int active_slider_id_ = 0;
