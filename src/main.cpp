@@ -2431,10 +2431,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             }
         }
     } else if (event->type == SDL_EVENT_USER) {
-        if (event->user.code == 1 || event->user.code == 3) {
-            // 1: a video picked in Settings. 3: "clear", back to the
-            // built-in pool video.
-            char* path = event->user.code == 1 ? (char*)event->user.data1 : nullptr;
+        if (event->user.code == 1 || event->user.code == 3 || event->user.code == 18) {
+            // 1: a video file picked in Settings. 18: a kind picked from the
+            // background list ("pool" being the built-in video). 3: back to
+            // the built-in video.
+            char* path = event->user.code == 3 ? nullptr : (char*)event->user.data1;
             state->background = path ? std::string(path) : std::string("pool");
             config::PresetValues p = config::resolve_preset(state->config.config(), state->active_preset_name);
             p.background = state->background;

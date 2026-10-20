@@ -14,6 +14,7 @@ enum PresetButtonId {
     PRESET_BTN_RENAME = 23,
     PRESET_BTN_DELETE = 24,
     THEME_BTN = 25,           // click to open the theme list
+    BG_KIND_BTN = 26,         // click to open the background kinds
 };
 
 // What a committed name-edit should do once the user presses Enter.
@@ -135,12 +136,35 @@ private:
     std::string active_preset_ = "pool";
     std::vector<std::string> builtin_presets_ = {"pool"};
     std::string config_notice_;
-    std::vector<std::string> theme_names_;
-    std::string active_theme_ = "sink";
-    bool theme_dropdown_open_ = false;
-    int theme_hover_index_ = -1;
-    SDL_FRect theme_row_rect(int index) const;  // opens upward from the button
-    void draw_theme_list(float scale);
+    // A list that drops open from a button; picking a row sends `user_code`
+    // with the row's text (strdup'd) as data1.
+    struct DropList {
+        std::vector<std::string> items;
+        std::string active;
+        bool open = false;
+        int hover = -1;
+        float x = 0, y = 0, w = 220;  // the edge it opens from
+        bool upward = false;
+        int user_code = 0;
+        SDL_FRect row(int i) const {
+            const float n = static_cast<float>(items.size());
+            return { x, upward ? y - (n - i) * 22.0f : y + i * 22.0f, w, 22.0f };
+        }
+        int at(float mx, float my) const {
+            for (int i = 0; i < static_cast<int>(items.size()); ++i) {
+                SDL_FRect r = row(i);
+                if (mx >= r.x && mx <= r.x + r.w && my >= r.y && my <= r.y + r.h) return i;
+            }
+            return -1;
+        }
+    };
+    DropList theme_list_;       // opens upward from the theme button: no room below
+    DropList background_list_;  // opens down from the background type button
+    static const std::vector<std::string> kBackgroundKinds;
+    std::string background_kind_label() const;
+    void draw_list(const DropList& list, float scale);
+    // Handles a click while `list` is open: picks a row, or just closes it.
+    void click_list(DropList& list, float mx, float my);
     bool is_builtin(const std::string& name) const;
     bool preset_dropdown_open_ = false;
     int dropdown_hover_index_ = -1;

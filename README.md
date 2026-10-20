@@ -138,7 +138,7 @@ background = "#1a1b26"   # what programs paint with; your video still shows thro
 palette = ["#15161e", "#f7768e"]   # replaces black and red, keeps the rest
 ```
 
-backgrounds don't have to be videos:
+backgrounds don't have to be videos. pick one from the type button in settings, or set it in the file:
 
 - `color` fills the window with the theme's background color
 - `gradient` blends from the theme's background toward its blue, or your own colors

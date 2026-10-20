@@ -162,6 +162,28 @@ void SettingsUI::close() {
 void SettingsUI::set_paths(const std::string& bg_path, const std::string& font_path) {
     bg_path_ = bg_path.empty() ? "none" : bg_path;
     font_path_ = font_path.empty() ? "default" : font_path;
+    const std::string kind = background_kind_label();
+    background_list_.active = kind == "video" ? std::string() : kind;  // a video file isn't in the list
+    for (auto& btn : buttons_) {
+        if (btn.id == BG_KIND_BTN) btn.label = kind;
+    }
+}
+
+// The background kinds the list offers. "pool" is the built-in video.
+const std::vector<std::string> SettingsUI::kBackgroundKinds = {
+    "pool", "color", "gradient", "gel", "clear", "frosted glass", "liquid glass",
+};
+
+// What the type button says: the kind, "pool" for the built-in video, or
+// "video" for one picked from a file.
+std::string SettingsUI::background_kind_label() const {
+    std::string lower = bg_path_;
+    std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+    if (lower.find("sinkpool.mp4") != std::string::npos || lower == "default" || lower == "pool") return "pool";
+    for (const std::string& k : kBackgroundKinds) {
+        if (lower == k) return k;
+    }
+    return "video";
 }
 
 void SettingsUI::set_animated_typing(bool enabled) {
@@ -266,8 +288,8 @@ void SettingsUI::set_config_notice(const std::string& text) {
 }
 
 void SettingsUI::set_themes(const std::vector<std::string>& names, const std::string& active) {
-    theme_names_ = names;
-    active_theme_ = active;
+    theme_list_.items = names;
+    theme_list_.active = active;
     // Short names fit beside "theme:"; long ones take the whole button.
     const std::string label = active.size() <= 11 ? "theme: " + active : active;
     for (auto& btn : buttons_) {
@@ -275,35 +297,42 @@ void SettingsUI::set_themes(const std::vector<std::string>& names, const std::st
     }
 }
 
-// The list opens upward, ending just above the theme button: there's no room
-// below it.
-SDL_FRect SettingsUI::theme_row_rect(int index) const {
-    const int count = static_cast<int>(theme_names_.size());
-    return { 264.0f, 393.0f - (count - index) * 22.0f, 220.0f, 22.0f };
-}
-
-void SettingsUI::draw_theme_list(float scale) {
-    const int count = static_cast<int>(theme_names_.size());
+void SettingsUI::draw_list(const DropList& list, float scale) {
+    const int count = static_cast<int>(list.items.size());
     if (count == 0) return;
-    SDL_FRect first = theme_row_rect(0);
+    SDL_FRect first = list.row(0);
     SDL_FRect list_bg = { first.x * scale, first.y * scale, first.w * scale, (count * 22.0f) * scale };
     draw_rect_filled(list_bg, SDL_FColor{0.06f, 0.08f, 0.10f, 0.98f}, 6.0f * scale);
     draw_rect_outline(list_bg, colors_.border, 6.0f * scale);
     for (int i = 0; i < count; ++i) {
-        SDL_FRect row = theme_row_rect(i);
+        SDL_FRect row = list.row(i);
         SDL_FRect phys_row = { row.x * scale, row.y * scale, row.w * scale, row.h * scale };
-        const bool is_active = theme_names_[i] == active_theme_;
-        const bool is_hovered = i == theme_hover_index_;
+        const bool is_active = list.items[i] == list.active;
+        const bool is_hovered = i == list.hover;
         if (is_hovered || is_active) {
             SDL_FRect highlight = { phys_row.x + 3.0f * scale, phys_row.y + 2.0f * scale,
                                     phys_row.w - 6.0f * scale, phys_row.h - 4.0f * scale };
             draw_rect_filled(highlight, is_hovered ? SDL_FColor{1.0f, 1.0f, 1.0f, 0.10f}
                                                    : SDL_FColor{0.0f, 0.8f, 0.8f, 0.15f}, 4.0f * scale);
         }
-        draw_text(theme_names_[i], phys_row.x + 10.0f * scale,
+        draw_text(list.items[i], phys_row.x + 10.0f * scale,
                   phys_row.y + (phys_row.h / 2.0f) - (font_manager_.get_cell_height() / 2.0f),
                   (is_active || is_hovered) ? colors_.text_primary : colors_.text_secondary);
     }
+}
+
+void SettingsUI::click_list(DropList& list, float mx, float my) {
+    const int i = list.at(mx, my);
+    if (i >= 0 && list.items[i] != list.active) {
+        SDL_Event ev;
+        std::memset(&ev, 0, sizeof(ev));
+        ev.type = SDL_EVENT_USER;
+        ev.user.code = list.user_code;
+        ev.user.data1 = strdup(list.items[i].c_str());
+        SDL_PushEvent(&ev);
+    }
+    list.open = false;
+    list.hover = -1;
 }
 
 bool SettingsUI::is_builtin(const std::string& name) const {
@@ -425,6 +454,16 @@ std::string SettingsUI::truncate_head(const std::string& text, float max_width) 
 
 void SettingsUI::init_layout() {
     buttons_.clear();
+
+    theme_list_.x = 264.0f;
+    theme_list_.y = 393.0f;
+    theme_list_.upward = true;
+    theme_list_.user_code = 17;  // theme picked
+    background_list_.items = kBackgroundKinds;
+    background_list_.x = 24.0f;
+    background_list_.y = 166.0f;
+    background_list_.w = 180.0f;
+    background_list_.user_code = 18;  // background kind picked
     sliders_.clear();
 
     // 1. Preset row (not affected by the +44 shift below -- everything else
@@ -447,8 +486,8 @@ void SettingsUI::init_layout() {
     // 2. UI Buttons (shifted down 44pt from their original position to make
     // room for the preset row above, then another 43pt below the sliders
     // to make room for the hue shift slider added alongside exposure)
-    UIButton btn_bg_select = { 1, "select file...", {24.0f, 136.0f, 125.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
-    UIButton btn_bg_clear = { 2, "clear", {159.0f, 136.0f, 75.0f, 28.0f}, colors_.btn_danger, colors_.btn_danger_hover };
+    UIButton btn_bg_kind = { BG_KIND_BTN, background_kind_label(), {24.0f, 136.0f, 125.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    UIButton btn_bg_select = { 1, "select video...", {159.0f, 136.0f, 115.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
     UIButton btn_font_select = { 3, "select font...", {24.0f, 313.0f, 125.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
 
     // Two rows of toggles, packed to their actual label widths instead of
@@ -461,15 +500,15 @@ void SettingsUI::init_layout() {
     UIButton btn_hdr_console_toggle = { 10, std::string("hdr console: ") + (hdr_console_enabled_ ? "on" : "off"), {24.0f, 397.0f, 165.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
     UIButton btn_broadcast_toggle = { 6, std::string("broadcast: ") + (broadcasting_ ? "on" : "off"), {199.0f, 397.0f, 135.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
 
+    buttons_.push_back(btn_bg_kind);
     buttons_.push_back(btn_bg_select);
-    buttons_.push_back(btn_bg_clear);
     buttons_.push_back(btn_font_select);
     buttons_.push_back(btn_crt_toggle);
     buttons_.push_back(btn_vibrancy_toggle);
     buttons_.push_back(btn_ligatures_toggle);
     buttons_.push_back(btn_hdr_console_toggle);
     buttons_.push_back(btn_broadcast_toggle);
-    UIButton btn_theme = { THEME_BTN, active_theme_.size() <= 11 ? "theme: " + active_theme_ : active_theme_,
+    UIButton btn_theme = { THEME_BTN, theme_list_.active.size() <= 11 ? "theme: " + theme_list_.active : theme_list_.active,
                            {344.0f, 397.0f, 140.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
     buttons_.push_back(btn_theme);
 
@@ -526,15 +565,10 @@ void SettingsUI::process_event(const SDL_Event& event) {
             SDL_FRect cancel = edit_cancel_rect();
             edit_save_hovered_ = (mx >= save.x && mx <= save.x + save.w && my >= save.y && my <= save.y + save.h);
             edit_cancel_hovered_ = (mx >= cancel.x && mx <= cancel.x + cancel.w && my >= cancel.y && my <= cancel.y + cancel.h);
-        } else if (theme_dropdown_open_) {
-            theme_hover_index_ = -1;
-            for (int i = 0; i < static_cast<int>(theme_names_.size()); ++i) {
-                SDL_FRect row = theme_row_rect(i);
-                if (mx >= row.x && mx <= row.x + row.w && my >= row.y && my <= row.y + row.h) {
-                    theme_hover_index_ = i;
-                    break;
-                }
-            }
+        } else if (theme_list_.open) {
+            theme_list_.hover = theme_list_.at(mx, my);
+        } else if (background_list_.open) {
+            background_list_.hover = background_list_.at(mx, my);
         } else if (preset_dropdown_open_) {
             dropdown_hover_index_ = -1;
             for (size_t i = 0; i < preset_names_.size() && static_cast<int>(i) < kMaxDropdownRows; ++i) {
@@ -568,24 +602,14 @@ void SettingsUI::process_event(const SDL_Event& event) {
                 return;
             }
 
-            // Likewise the theme list: a row picks that theme, a miss closes it.
-            if (theme_dropdown_open_) {
-                for (int i = 0; i < static_cast<int>(theme_names_.size()); ++i) {
-                    SDL_FRect row = theme_row_rect(i);
-                    if (mx >= row.x && mx <= row.x + row.w && my >= row.y && my <= row.y + row.h) {
-                        if (theme_names_[i] != active_theme_) {
-                            SDL_Event ev;
-                            std::memset(&ev, 0, sizeof(ev));
-                            ev.type = SDL_EVENT_USER;
-                            ev.user.code = 17; // Theme picked
-                            ev.user.data1 = strdup(theme_names_[i].c_str());
-                            SDL_PushEvent(&ev);
-                        }
-                        break;
-                    }
-                }
-                theme_dropdown_open_ = false;
-                theme_hover_index_ = -1;
+            // Likewise the theme and background lists: a row picks it, a
+            // miss closes the list.
+            if (theme_list_.open) {
+                click_list(theme_list_, mx, my);
+                return;
+            }
+            if (background_list_.open) {
+                click_list(background_list_, mx, my);
                 return;
             }
 
@@ -632,12 +656,6 @@ void SettingsUI::process_event(const SDL_Event& event) {
                     if (btn.id == 1) { // Select Background
                         SDL_DialogFileFilter filters[] = { {"Media files", "mp4;mov;mkv;png;jpg;jpeg;bmp"} };
                         SDL_ShowOpenFileDialog(background_dialog_callback, nullptr, window_, filters, 1, nullptr, false);
-                    } else if (btn.id == 2) { // Clear Background
-                        SDL_Event ev;
-                        std::memset(&ev, 0, sizeof(ev));
-                        ev.type = SDL_EVENT_USER;
-                        ev.user.code = 3; // Clear background
-                        SDL_PushEvent(&ev);
                     } else if (btn.id == 3) { // Select Font
                         SDL_DialogFileFilter filters[] = { {"Font files", "ttf;otf;ttc"} };
                         SDL_ShowOpenFileDialog(font_dialog_callback, nullptr, window_, filters, 1, nullptr, false);
@@ -670,8 +688,11 @@ void SettingsUI::process_event(const SDL_Event& event) {
                     } else if (btn.id == 10) { // Toggle HDR Console
                         set_hdr_console_enabled(!hdr_console_enabled_);
                     } else if (btn.id == THEME_BTN) {
-                        theme_dropdown_open_ = true;
-                        theme_hover_index_ = -1;
+                        theme_list_.open = true;
+                        theme_list_.hover = -1;
+                    } else if (btn.id == BG_KIND_BTN) {
+                        background_list_.open = true;
+                        background_list_.hover = -1;
                     } else if (btn.id == PRESET_BTN_NAME) {
                         preset_dropdown_open_ = true;
                         dropdown_hover_index_ = -1;
@@ -730,9 +751,9 @@ void SettingsUI::process_event(const SDL_Event& event) {
         } else if (event.key.key == SDLK_ESCAPE && preset_dropdown_open_) {
             preset_dropdown_open_ = false;
             dropdown_hover_index_ = -1;
-        } else if (event.key.key == SDLK_ESCAPE && theme_dropdown_open_) {
-            theme_dropdown_open_ = false;
-            theme_hover_index_ = -1;
+        } else if (event.key.key == SDLK_ESCAPE && (theme_list_.open || background_list_.open)) {
+            theme_list_.open = background_list_.open = false;
+            theme_list_.hover = background_list_.hover = -1;
         }
     }
 }
@@ -808,14 +829,18 @@ void SettingsUI::render() {
     // arbitrarily short prefix.
     float value_right_edge = 476.0f * scale; // card right edge (484) minus a small margin
 
-    draw_text("background media", 24.0f * scale, 112.0f * scale, colors_.text_secondary);
-    std::string bg_disp = bg_path_;
-    std::string bg_lower = bg_disp;
-    std::transform(bg_lower.begin(), bg_lower.end(), bg_lower.begin(), ::tolower);
-    if (bg_lower.find("sinkpool.mp4") != std::string::npos || bg_disp.empty() || bg_lower == "default") {
-        bg_disp = "default";
-    }
-    float bg_value_x = 244.0f * scale;
+    draw_text("background", 24.0f * scale, 112.0f * scale, colors_.text_secondary);
+    // Beside the buttons: the video file, or what the kind is.
+    const std::string kind = background_kind_label();
+    std::string bg_disp = kind == "video"        ? bg_path_
+                        : kind == "pool"         ? std::string("the built-in video")
+                        : kind == "color"        ? std::string("a solid color")
+                        : kind == "gradient"     ? std::string("a gradient")
+                        : kind == "gel"          ? std::string("a churning nebula")
+                        : kind == "clear"        ? std::string("the desktop, clear")
+                        : kind == "frosted glass" ? std::string("the desktop, frosted")
+                        : std::string("the desktop, through glass");
+    float bg_value_x = 284.0f * scale;
     bg_disp = truncate_head(bg_disp, value_right_edge - bg_value_x);
     draw_text(bg_disp, bg_value_x, 143.0f * scale, colors_.text_primary);
 
@@ -999,7 +1024,8 @@ void SettingsUI::render() {
     }
 
     // Last, so it sits over every other control.
-    if (theme_dropdown_open_) draw_theme_list(scale);
+    if (theme_list_.open) draw_list(theme_list_, scale);
+    if (background_list_.open) draw_list(background_list_, scale);
 
     SDL_RenderPresent(renderer_);
 }
