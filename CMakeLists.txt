@@ -311,6 +311,32 @@ add_executable(preset_manager_tests
 target_include_directories(preset_manager_tests PRIVATE src vendor/tomlplusplus)
 add_test(NAME preset_manager COMMAND preset_manager_tests)
 
+# sink.toml version 1: reading, validation, generation and migration.
+add_executable(config_tests
+    tests/test_config.cpp
+    src/config.cpp
+)
+target_include_directories(config_tests PRIVATE src vendor/tomlplusplus)
+add_test(NAME config COMMAND config_tests)
+
+# In-place edits to TOML text (what Settings uses to change sink.toml).
+add_executable(toml_edit_tests
+    tests/test_toml_edit.cpp
+    src/toml_edit.cpp
+)
+target_include_directories(toml_edit_tests PRIVATE src vendor/tomlplusplus)
+add_test(NAME toml_edit COMMAND toml_edit_tests)
+
+# The sink.toml file on disk: migration, saving, errors, outside changes.
+add_executable(config_store_tests
+    tests/test_config_store.cpp
+    src/config_store.cpp
+    src/config.cpp
+    src/toml_edit.cpp
+)
+target_include_directories(config_store_tests PRIVATE src vendor/tomlplusplus)
+add_test(NAME config_store COMMAND config_store_tests)
+
 # Headless parser/grid throughput benchmark (see bench/README.md). Not part
 # of `ctest` -- it prints a timing table for humans, not pass/fail checks.
 add_executable(sink_bench
