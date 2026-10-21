@@ -30,6 +30,13 @@
             "minLength": 1,
             "default": "Monaspace Neon"
           },
+          "line_height": {
+            "description": "Row height, as a multiple of the font size. 1 is compact; 1.15 gives Monaspace Neon its own, roomier spacing. 0.5 to 2.5.",
+            "type": "number",
+            "minimum": 0.5,
+            "maximum": 2.5,
+            "default": 1
+          },
           "font_size": {
             "description": "Text size, in points. View > Bigger and Smaller change it for one window, and Default Size returns to this. 6 to 72.",
             "type": "number",
@@ -239,7 +246,7 @@
     "keybindings": {
       "description": "Keys and what they do. Move an action to a key, free a key with \"none\", or make a key send text. Keys are written \"cmd+shift+d\" or as menus show them, \"⌘⇧D\".",
       "type": "object",
-      "additionalProperties": { "anyOf": [{ "enum": ["none", "new_window", "new_tab", "close_window", "settings", "print", "cut", "copy", "paste", "select_all", "find", "clear_screen", "font_bigger", "font_smaller", "font_default", "previous_prompt", "next_prompt", "split_right", "split_down", "close_pane", "select_pane_left", "select_pane_right", "select_pane_up", "select_pane_down", "next_pane", "previous_pane", "zoom_pane", "broadcast_input", "select_tab_1", "select_tab_2", "select_tab_3", "select_tab_4", "select_tab_5", "select_tab_6", "select_tab_7", "select_tab_8", "select_last_tab"] }, { "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"], "additionalProperties": false }] },
+      "additionalProperties": { "anyOf": [{ "enum": ["none", "new_window", "new_tab", "close_pane", "close_tab", "settings", "print", "cut", "copy", "paste", "select_all", "find", "clear_screen", "font_bigger", "font_smaller", "font_default", "previous_prompt", "next_prompt", "split_right", "split_down", "select_pane_left", "select_pane_right", "select_pane_up", "select_pane_down", "next_pane", "previous_pane", "zoom_pane", "broadcast_input", "select_tab_1", "select_tab_2", "select_tab_3", "select_tab_4", "select_tab_5", "select_tab_6", "select_tab_7", "select_tab_8", "select_last_tab"] }, { "type": "object", "properties": { "text": { "type": "string" } }, "required": ["text"], "additionalProperties": false }] },
       "default": {}
     },
     "keyboard": {

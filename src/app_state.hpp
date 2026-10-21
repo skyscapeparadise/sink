@@ -270,6 +270,7 @@ struct AppState {
     std::string active_preset_name = "pool";
     float padding = 2.0f;
     float base_font_size = 15.0f;
+    float line_height = 1.0f;  // the active preset's; see FontManager::set_line_height
     Uint64 last_tick = 0;
     bool input_broadcasting = false;
     // Set when a keypad press was already answered with an SS3 sequence, so

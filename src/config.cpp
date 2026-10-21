@@ -81,6 +81,9 @@ const std::vector<KeyInfo>& keys() {
           "Mono\", or a specific face such as \"Menlo Bold\"), \"Monaspace Neon\" "
           "(bundled), or a path to a font file. Characters the font lacks come "
           "from Monaspace Neon, then the system's fonts." },
+        { "line_height", Scope::Preset, KeyType::Float, 1.0, 0.5, 2.5, {},
+          "Row height, as a multiple of the font size. 1 is compact; 1.15 gives "
+          "Monaspace Neon its own, roomier spacing." },
         { "font_size", Scope::Preset, KeyType::Float, 15.0, 6, 72, {},
           "Text size, in points. View > Bigger and Smaller change it for one "
           "window, and Default Size returns to this." },
@@ -655,6 +658,7 @@ PresetValues resolve_preset(const Config& c, const std::string& name) {
     r.background = is_path(str("background")) ? expand_home(str("background")) : str("background");
     r.font = is_path(str("font")) ? expand_home(str("font")) : str("font");
     r.font_size = num("font_size");
+    r.line_height = num("line_height");
     r.exposure = num("exposure");
     r.hue_shift = num("hue_shift");
     r.crt = flag("crt");

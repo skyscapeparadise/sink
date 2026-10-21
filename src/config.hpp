@@ -108,6 +108,7 @@ struct PresetValues {
     std::string background;    // a path, or a built-in background's name
     std::string font;          // a path, or a font name
     double font_size = 15;
+    double line_height = 1;
     double exposure = 0;
     double hue_shift = 0;
     bool crt = false;

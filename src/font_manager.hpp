@@ -25,6 +25,13 @@ public:
     // `font` is a path or a font name (see set_font_lookup).
     bool load_font(SDL_Renderer* renderer, const std::string& font, float font_size, bool bold = false);
 
+    // Row height as a multiple of the font size: 1.0 is one em, the compact
+    // spacing sink has always defaulted to; fonts whose own line height is
+    // taller (Monaspace Neon 1.400's is 1.145 em) are centered in it. Takes
+    // effect at the next load_font.
+    void set_line_height(float multiple) { line_height_ = multiple; }
+    float line_height() const { return line_height_; }
+
     // The bundled Monaspace Neon, consulted first when the configured font
     // has no glyph for a codepoint, so a user's own typeface borrows sink's
     // before any system face. Set once at startup, before any load_font();
@@ -172,6 +179,7 @@ private:
     
     float cell_width_ = 0.0f;
     float cell_height_ = 0.0f;
+    float line_height_ = 1.0f;
     bool is_ttf_initialized_ = false;
 
     // Dynamic packer coordinates

@@ -62,8 +62,8 @@ sink is still in beta, so you might hit a rough edge here and there. if you do, 
 | ⌥⌘ + arrow keys | move between panes |
 | ⌘] / ⌘[ | next / previous pane |
 | ⇧⌘↩ | zoom a pane to fill the window (and back) |
-| ⇧⌘W | close pane |
-| ⌘W | close window |
+| ⌘W or ⇧⌘W | close pane (the tab, when it's the only pane) |
+| ⌥⌘W | close tab, splits and all |
 | ⌘↑ / ⌘↓ | jump to the previous / next prompt |
 | ⌘K | clear the screen and scrollback |
 | ⌘= / ⌘- / ⌘0 | bigger / smaller / default text size |
@@ -123,6 +123,7 @@ a preset can set:
 | `background` | `"pool"` | a video (`"pool"` or a path), or `"color"`, `"gradient"`, `"gel"`, `"clear"`, `"frosted glass"`, `"liquid glass"` (see below) |
 | `font` | `"Monaspace Neon"` | an installed font by name (`"Menlo"`, `"Menlo Bold"`), the bundled font, or a path to a font file |
 | `font_size` | `15` | in points. view > bigger and smaller change one window, default size comes back to this |
+| `line_height` | `1` | row height as a multiple of the font size. `1.15` gives monaspace neon its roomier spacing |
 | `exposure` | `0.7` | brightness of the background, 0 to 2 |
 | `hue_shift` | `0` | rotates the background's colors, in degrees |
 | `crt` | `false` | scanlines, curvature and glow |

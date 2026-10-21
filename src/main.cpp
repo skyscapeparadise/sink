@@ -531,6 +531,7 @@ static void set_state_from_preset(AppState* state, const config::PresetValues& p
     state->video_path = backdrop_of(p.background) == Backdrop::Video ? resolve_background(p.background) : std::string();
     state->font_path = resolve_font(p.font);
     state->base_font_size = static_cast<float>(p.font_size);
+    state->line_height = static_cast<float>(p.line_height);
     state->color_scheme = scheme_for(p);
     state->theme_name = p.theme;
     state->exposure = static_cast<float>(p.exposure);
@@ -680,6 +681,8 @@ static void refresh_display_scale(AppState* state, TerminalWindow* tw) {
 static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* parent_tab_window, const config::PresetValues* preset_override = nullptr) {
     TerminalWindow* tw = new TerminalWindow();
     tw->base_font_size = preset_override ? static_cast<float>(preset_override->font_size) : state->base_font_size;
+    tw->font_manager.set_line_height(preset_override ? static_cast<float>(preset_override->line_height)
+                                                     : state->line_height);
     tw->font_size = tw->base_font_size;
 
     // Every window starts as a single-pane split tree
@@ -1353,7 +1356,9 @@ static void apply_preset_to_window(AppState* state, TerminalWindow* tw, const co
     // View > Bigger/Smaller.
     const bool size_changed = tw->base_font_size != static_cast<float>(p.font_size);
     if (size_changed) tw->base_font_size = tw->font_size = static_cast<float>(p.font_size);
-    if (tw->font_path != font || size_changed) {
+    const bool spacing_changed = tw->font_manager.line_height() != static_cast<float>(p.line_height);
+    tw->font_manager.set_line_height(static_cast<float>(p.line_height));
+    if (tw->font_path != font || size_changed || spacing_changed) {
         tw->font_path = font;
         if (tw->font_manager.load_font(tw->renderer, font, tw->font_size * tw->display_scale, false)) {
             tw->cell_w = (tw->font_manager.get_cell_width() / tw->display_scale) + 1.0f;
@@ -1665,7 +1670,7 @@ static void run_binding(AppState* state, TerminalWindow* tw, const keybindings::
     }
     else if (a == "new_window") set_new_window_requested(true);
     else if (a == "new_tab") set_new_tab_requested(true);
-    else if (a == "close_window") set_close_window_requested(true);
+    else if (a == "close_tab") set_close_window_requested(true);
     else if (a == "print") set_print_requested(true);
     else if (a == "cut") set_cut_requested(true);
     else if (a == "copy") set_copy_requested(true);

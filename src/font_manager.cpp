@@ -1,5 +1,6 @@
 #include "font_manager.hpp"
 #include <iostream>
+#include <cmath>
 #include <algorithm>
 #include <vector>
 #include <climits>
@@ -295,8 +296,11 @@ bool FontManager::load_font(SDL_Renderer* renderer, const std::string& font, flo
     std::vector<uint32_t> empty_pixels(static_cast<size_t>(kDynamicAtlasSize) * kDynamicAtlasSize, 0);
     SDL_UpdateTexture(dynamic_atlas_texture_, nullptr, empty_pixels.data(), kDynamicAtlasSize * sizeof(uint32_t));
 
-    // Get monospace cell dimensions
-    cell_height_ = static_cast<float>(TTF_GetFontHeight(font_));
+    // Row height: line_height_ ems. Not the font's own line height, which
+    // varies from font to font -- and from version to version: Monaspace Neon
+    // 1.400's is 15% taller than 1.101's, which is how sink's rows grew in
+    // 0.11. Glyphs are centered in the row (TerminalGrid::render).
+    cell_height_ = std::round(font_size * line_height_);
     
     // Query glyph metrics for 'n' to establish cell width
     int advance = 0;
