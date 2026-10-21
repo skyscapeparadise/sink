@@ -40,9 +40,12 @@ bool is_reserved(const Chord& c);
 
 struct Action {
     const char* name;        // "split_right"
-    const char* default_key; // "cmd+d", or "" for none
+    const char* default_key; // "cmd+d"; several separated by spaces; "" for none
     const char* doc;
 };
+
+// An action's default keys, the first being the one its menu item shows.
+std::vector<std::string> default_keys(const Action& a);
 
 // Every action, in the order the reference lists them.
 const std::vector<Action>& actions();

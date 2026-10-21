@@ -562,7 +562,14 @@ void setup_macos_menu() {
         [fileMenu removeAllItems];
         [fileMenu setAutoenablesItems:NO];
         
-        NSMenuItem* closeWindowItem = [[NSMenuItem alloc] initWithTitle:@"Close Window" action:@selector(closeWindow:) keyEquivalent:@"w"];
+        // ⌘W closes the pane, and so the tab when it's the only pane, as in
+        // iTerm2 and Ghostty; ⌥⌘W closes the whole tab, splits and all. The
+        // shortcuts shown are [keybindings]'s (set_menu_shortcut).
+        NSMenuItem* closePaneFileItem = [[NSMenuItem alloc] initWithTitle:@"Close Pane" action:@selector(closePane:) keyEquivalent:@"w"];
+        [closePaneFileItem setTarget:g_menu_handler];
+        [closePaneFileItem setEnabled:YES];
+        NSMenuItem* closeWindowItem = [[NSMenuItem alloc] initWithTitle:@"Close Tab" action:@selector(closeWindow:) keyEquivalent:@"w"];
+        [closeWindowItem setKeyEquivalentModifierMask:(NSEventModifierFlagCommand | NSEventModifierFlagOption)];
         NSMenuItem* printItem = [[NSMenuItem alloc] initWithTitle:@"Print…" action:@selector(print:) keyEquivalent:@"p"];
 
         [closeWindowItem setTarget:g_menu_handler];
@@ -598,6 +605,7 @@ void setup_macos_menu() {
         [fileMenu addItem:newWindowItem];
         [fileMenu addItem:newTabItem];
         [fileMenu addItem:[NSMenuItem separatorItem]];
+        [fileMenu addItem:closePaneFileItem];
         [fileMenu addItem:closeWindowItem];
         [fileMenu addItem:[NSMenuItem separatorItem]];
         [fileMenu addItem:printItem];
@@ -743,12 +751,6 @@ void setup_macos_menu() {
         [splitDownItem setTarget:g_menu_handler];
         [splitDownItem setEnabled:YES];
 
-        NSMenuItem* closePaneItem = [[NSMenuItem alloc] initWithTitle:@"Close Pane"
-                                                               action:@selector(closePane:)
-                                                        keyEquivalent:@"w"];
-        [closePaneItem setKeyEquivalentModifierMask:(NSEventModifierFlagCommand | NSEventModifierFlagShift)];
-        [closePaneItem setTarget:g_menu_handler];
-        [closePaneItem setEnabled:YES];
 
         struct PaneDir { NSString* title; unichar key; int tag; };
         PaneDir dirs[] = {
@@ -789,7 +791,6 @@ void setup_macos_menu() {
             [item setEnabled:YES];
             [windowMenu insertItem:item atIndex:insertAt++];
         }
-        [windowMenu insertItem:closePaneItem atIndex:insertAt++];
 
         // Broadcast Input, with a checkmark while it's on, so the menu bar
         // can always say whether typing is going everywhere. No shortcut:
@@ -1118,7 +1119,7 @@ static NSString* action_of_item(NSMenuItem* item) {
         return nil;
     }
     static NSDictionary<NSString*, NSString*>* map = @{
-        @"openSettings:": @"settings",      @"closeWindow:": @"close_window",  @"print:": @"print",
+        @"openSettings:": @"settings",      @"closeWindow:": @"close_tab",     @"print:": @"print",
         @"cut:": @"cut",                    @"copy:": @"copy",                 @"paste:": @"paste",
         @"selectAll:": @"select_all",       @"find:": @"find",                 @"clearScreen:": @"clear_screen",
         @"biggerFont:": @"font_bigger",     @"smallerFont:": @"font_smaller",  @"defaultFontSize:": @"font_default",
@@ -1172,10 +1173,20 @@ static void set_shortcut_in(NSMenu* menu, NSString* action, NSString* equivalent
     }
 }
 
+// SDL's own Window menu closes the window on ⌘W (performClose:). sink's keys
+// are [keybindings]'s alone, so that one goes; the item stays, for the mouse.
+static void clear_sdl_close_shortcut(NSMenu* menu) {
+    for (NSMenuItem* item in [menu itemArray]) {
+        if ([item action] == @selector(performClose:)) [item setKeyEquivalent:@""];
+        if ([item submenu]) clear_sdl_close_shortcut([item submenu]);
+    }
+}
+
 void set_menu_shortcut(const char* action, const char* key, bool cmd, bool shift, bool opt, bool ctrl) {
     @autoreleasepool {
         NSMenu* main = [NSApp mainMenu];
         if (!main || !action) return;
+        clear_sdl_close_shortcut(main);
         NSEventModifierFlags mask = 0;
         if (cmd) mask |= NSEventModifierFlagCommand;
         if (shift) mask |= NSEventModifierFlagShift;

@@ -9,7 +9,8 @@ const std::vector<Action>& actions() {
     static const std::vector<Action> a = {
         { "new_window",        "cmd+n",            "Open a new window." },
         { "new_tab",           "cmd+t",            "Open a new tab." },
-        { "close_window",      "cmd+w",            "Close the window or tab." },
+        { "close_pane",        "cmd+w cmd+shift+w", "Close the pane -- and the tab, when it's the only pane." },
+        { "close_tab",         "opt+cmd+w",        "Close the tab (or window), with all its panes." },
         { "settings",          "cmd+,",            "Open Settings." },
         { "print",             "cmd+p",            "Print the terminal's text." },
         { "cut",               "cmd+x",            "Cut the selection (where it's editable)." },
@@ -25,7 +26,6 @@ const std::vector<Action>& actions() {
         { "next_prompt",       "cmd+down",         "Scroll to the prompt below." },
         { "split_right",       "cmd+d",            "Split the pane, the new one on the right." },
         { "split_down",        "cmd+shift+d",      "Split the pane, the new one below." },
-        { "close_pane",        "cmd+shift+w",      "Close the pane." },
         { "select_pane_left",  "opt+cmd+left",     "Move to the pane on the left." },
         { "select_pane_right", "opt+cmd+right",    "Move to the pane on the right." },
         { "select_pane_up",    "opt+cmd+up",       "Move to the pane above." },
@@ -45,6 +45,17 @@ const std::vector<Action>& actions() {
         { "select_last_tab",   "cmd+9",            "Show the last tab." },
     };
     return a;
+}
+
+std::vector<std::string> default_keys(const Action& a) {
+    std::vector<std::string> keys;
+    std::string k = a.default_key;
+    for (size_t start = 0, end; start < k.size(); start = end + 1) {
+        end = k.find(' ', start);
+        if (end == std::string::npos) end = k.size();
+        if (end > start) keys.push_back(k.substr(start, end - start));
+    }
+    return keys;
 }
 
 const Action* find_action(const std::string& name) {
@@ -183,6 +194,7 @@ std::string to_string(const Chord& c) {
 }
 
 bool is_reserved(const Chord& c) {
+    if (c.cmd && c.ctrl && !c.opt && !c.shift && c.key == "f") return true;  // full screen
     if (!c.cmd || c.ctrl) return false;
     if (!c.opt && !c.shift && (c.key == "q" || c.key == "h" || c.key == "m" || c.key == "`" || c.key == "tab")) {
         return true;
@@ -222,15 +234,15 @@ std::vector<Binding> resolve(const std::vector<UserEntry>& user, std::vector<Pro
     // Defaults, minus actions the user moved and keys the user set.
     std::vector<Binding> out;
     for (const Action& a : actions()) {
-        if (!*a.default_key) continue;
         const bool moved = std::any_of(parsed.begin(), parsed.end(), [&](const Parsed& p) {
             return !p.entry->has_text && p.entry->action == a.name;
         });
         if (moved) continue;
-        const Chord c = *parse_chord(a.default_key);
-        const bool taken = std::any_of(parsed.begin(), parsed.end(), [&](const Parsed& p) { return p.chord == c; });
-        if (taken) continue;
-        out.push_back({ c, a.name, "" });
+        for (const std::string& key : default_keys(a)) {
+            const Chord c = *parse_chord(key);
+            const bool taken = std::any_of(parsed.begin(), parsed.end(), [&](const Parsed& p) { return p.chord == c; });
+            if (!taken) out.push_back({ c, a.name, "" });
+        }
     }
     // The user's, the last of any repeated key winning.
     for (const Parsed& p : parsed) {

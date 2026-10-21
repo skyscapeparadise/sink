@@ -56,8 +56,18 @@ static void test_defaults() {
     CHECK(find(b, *parse_chord("cmd+9"))->action == "select_last_tab");
     CHECK(!key_for(b, "broadcast_input"));  // no default key
     for (const Action& a : actions()) {
-        if (*a.default_key) CHECK(parse_chord(a.default_key).has_value());
+        for (const std::string& k : default_keys(a)) CHECK(parse_chord(k).has_value());
     }
+    // cmd+w closes the pane (and so the tab when it's the only one), as does
+    // cmd+shift+w; opt+cmd+w closes the whole tab. The menu shows cmd+w.
+    CHECK(find(b, *parse_chord("cmd+w"))->action == "close_pane");
+    CHECK(find(b, *parse_chord("cmd+shift+w"))->action == "close_pane");
+    CHECK(find(b, *parse_chord("opt+cmd+w"))->action == "close_tab");
+    CHECK(to_string(*key_for(b, "close_pane")) == "cmd+w");
+    // Moving an action with two default keys frees both.
+    std::vector<Binding> moved = resolve({ { "ctrl+w", "close_pane", "", false, 1 } });
+    CHECK(!find(moved, *parse_chord("cmd+w")) && !find(moved, *parse_chord("cmd+shift+w")));
+    CHECK(is_reserved(*parse_chord("ctrl+cmd+f")));
 }
 
 static void test_user_bindings() {
