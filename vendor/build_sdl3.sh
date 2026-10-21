@@ -10,6 +10,10 @@
 # SDL3 is also what decodes kitty-protocol PNGs from terminal output (see
 # build_sdl3_image.sh), so keep it current.
 #
+# sink patches SDL: vendor/patches/sdl3-*.patch, applied after extracting, each
+# saying what it changes and why. A new SDL version may need them updated or
+# dropped, if upstream has taken them.
+#
 # Output: vendor/sdl3/{include,lib}. Picked up by CMakeLists.txt, and by the
 # SDL3_image and SDL3_ttf builds, which must link this one rather than
 # Homebrew's.
@@ -37,7 +41,10 @@ if [ "${1:-}" = "--clean" ]; then
 fi
 
 STAMP="${PREFIX}/.sink-sdl3-stamp"
-STAMP_VALUE="${SDL_VERSION}-${MACOSX_DEPLOYMENT_TARGET:-unset}-$(shasum -a 256 "$0" | cut -c1-12)"
+# sink's changes to SDL, one patch each, explained at the top of each file.
+PATCHES=$(ls "${SCRIPT_DIR}"/patches/sdl3-*.patch 2>/dev/null | sort || true)
+PATCHES_HASH=$( (cat "$0"; for p in ${PATCHES}; do cat "$p"; done) | shasum -a 256 | cut -c1-12)
+STAMP_VALUE="${SDL_VERSION}-${MACOSX_DEPLOYMENT_TARGET:-unset}-${PATCHES_HASH}"
 if [ -f "${STAMP}" ] && [ "$(cat "${STAMP}")" = "${STAMP_VALUE}" ]; then
     echo "vendored SDL3 ${SDL_VERSION} already built at ${PREFIX}"
     exit 0
@@ -68,6 +75,11 @@ fi
 echo "extracting..."
 rm -rf "${SRC_DIR}"
 tar -xzf "${TARBALL}" -C "${BUILD_DIR}"
+
+for p in ${PATCHES}; do
+    echo "applying $(basename "$p")..."
+    patch -p1 --forward --silent -d "${SRC_DIR}" < "$p" || { echo "ERROR: $(basename "$p") doesn't apply to SDL ${SDL_VERSION}"; exit 1; }
+done
 
 echo "configuring SDL3 for macOS ${MACOSX_DEPLOYMENT_TARGET}..."
 cmake -S "${SRC_DIR}" -B "${SRC_DIR}/build" \

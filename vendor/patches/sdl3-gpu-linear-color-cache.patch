@@ -1,0 +1,43 @@
+sink's change to SDL 3.4.18 (zlib license: this is an altered version).
+
+SDL's GPU renderer converts every vertex color from sRGB to linear -- three
+powf calls -- whenever it draws into a linear target, which sink does with HDR
+text on. A terminal's vertex colors repeat almost entirely (a glyph's corners
+share one; indexed quads revisit them; text runs share a color), so the last
+conversion is reused when the next color matches. Drawing a screen of text
+with HDR text on measured 2-3x slower than without before this.
+
+Applied by vendor/build_sdl3.sh.
+
+--- a/src/render/gpu/SDL_render_gpu.c	2026-10-21 00:51:52
++++ b/src/render/gpu/SDL_render_gpu.c	2026-10-21 00:51:52
+@@ -676,6 +676,12 @@
+ 
+     cmd->data.draw.count = count;
+     size_indices = indices ? size_indices : 0;
++
++    /* Converting to linear costs three powf calls, and vertex colors repeat:
++     * a quad's corners share one, indexed quads visit each corner again, and
++     * text runs share a color. Reuse the last conversion when it matches. */
++    SDL_FColor last_in = { -1.0f, -1.0f, -1.0f, 0.0f };
++    SDL_FColor last_out = { 0.0f, 0.0f, 0.0f, 0.0f };
+ 
+     for (i = 0; i < count; i++) {
+         int j;
+@@ -698,7 +704,15 @@
+ 
+         col_ = *(SDL_FColor *)((char *)color + j * color_stride);
+         if (convert_color) {
+-            SDL_ConvertToLinear(&col_);
++            if (col_.r == last_in.r && col_.g == last_in.g && col_.b == last_in.b) {
++                col_.r = last_out.r;
++                col_.g = last_out.g;
++                col_.b = last_out.b;
++            } else {
++                last_in = col_;
++                SDL_ConvertToLinear(&col_);
++                last_out = col_;
++            }
+         }
+ 
+         *(verts++) = col_.r;

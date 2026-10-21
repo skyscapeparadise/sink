@@ -38,7 +38,7 @@ jobs:
             vendor/sdl3_image
             vendor/textstack
             vendor/.cache
-          key: vendor-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vendor/build_*.sh') }}
+          key: vendor-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vendor/build_*.sh', 'vendor/patches/*') }}
           restore-keys: vendor-${{ runner.os }}-${{ runner.arch }}-
 
       - name: Build
