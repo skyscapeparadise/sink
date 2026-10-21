@@ -46,6 +46,12 @@ struct Pane {
     // frame until it is gone.
     std::vector<char> pty_pending;
 
+    // The synchronized update (DECSET 2026) this pane last saw open, by
+    // TerminalGrid::synchronized_updates(), and when it was first seen. See
+    // kMaxSyncUpdateMs in main.cpp.
+    uint64_t sync_update_seen = 0;
+    Uint64 sync_update_since_ms = 0;
+
     // Typewriter-animation pacing
     std::vector<char> animation_buffer;
     Uint64 last_output_chunk_time = 0;

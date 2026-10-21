@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
 #include <SDL3/SDL.h>
 #include <vector>
 #include <deque>
@@ -375,8 +376,16 @@ public:
     // single update but not a run of them: vtebench's sync benchmark sends a
     // BSU/ESU pair roughly every 400 bytes, so the deadline was always freshly
     // armed and the window never presented again.
-    void set_synchronized_output(bool active) { synchronized_output_ = active; }
+    void set_synchronized_output(bool active) {
+        if (active && !synchronized_output_) ++synchronized_updates_;
+        synchronized_output_ = active;
+    }
     bool is_synchronized_output() const { return synchronized_output_; }
+    // How many updates have opened so far. The render loop compares it from
+    // frame to frame to tell one update held open (a program killed before it
+    // could close it) from a stream of short ones, which look the same when
+    // only sampled once a frame.
+    uint64_t synchronized_updates() const { return synchronized_updates_; }
 
     // Focus reporting (DECSET/DECRST 1004): the app is told when the terminal
     // gains or loses focus, which vim uses to drive autoread and tmux to
@@ -786,6 +795,7 @@ private:
     CursorShape cursor_shape_ = CursorShape::Block;
     bool bracketed_paste_active_ = false;
     bool synchronized_output_ = false;
+    uint64_t synchronized_updates_ = 0;
     bool focus_reporting_ = false;
     int mouse_mode_ = 0;
     bool mouse_sgr_ = false;

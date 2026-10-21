@@ -2892,6 +2892,13 @@ static std::string strip_paste_markers(const char* text, size_t len) {
 // only engages when something misbehaves or streams updates continuously.
 static constexpr Uint64 kMaxSyncHoldMs = 100;
 
+// Longest one synchronized update may stay open before sink decides it was
+// abandoned and ends it, as Ghostty does after a second. A program killed
+// mid-update (Ctrl+C on hollywood) never sends the closing sequence, and
+// without this the window stayed capped at kMaxSyncHoldMs -- about nine
+// frames a second -- until the pane was closed.
+static constexpr Uint64 kMaxSyncUpdateMs = 1000;
+
 // How long a resize has to stop before the final layout is taken as done.
 static constexpr Uint64 kResizeSettleMs = 100;
 
@@ -3565,11 +3572,20 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         // bytes -- so a per-update deadline is always freshly armed and never
         // expires, which froze the window entirely. Presenting a partial frame
         // after 100ms is a visible glitch; never presenting again is a hang.
+        Uint64 now_ms = SDL_GetTicks();
         bool sync_open = false;
         for (Pane* pane : all_panes(tw)) {
-            if (pane && pane->terminal.is_synchronized_output()) { sync_open = true; break; }
+            if (!pane || !pane->terminal.is_synchronized_output()) continue;
+            const uint64_t update = pane->terminal.synchronized_updates();
+            if (update != pane->sync_update_seen) {
+                pane->sync_update_seen = update;
+                pane->sync_update_since_ms = now_ms;
+            } else if (now_ms - pane->sync_update_since_ms >= kMaxSyncUpdateMs) {
+                pane->terminal.set_synchronized_output(false);
+                continue;
+            }
+            sync_open = true;
         }
-        Uint64 now_ms = SDL_GetTicks();
         bool starved = (now_ms - tw->last_present_ms) >= kMaxSyncHoldMs;
         if (!sync_open || starved) {
             SDL_RenderPresent(tw->renderer);

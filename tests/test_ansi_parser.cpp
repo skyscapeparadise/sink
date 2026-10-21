@@ -396,6 +396,16 @@ static void test_synchronized_output_and_focus_modes() {
     feed(p, g, "\x1b[?2026l");
     CHECK(!g.is_synchronized_output());
 
+    // Each update that opens is counted, so the render loop can tell one held
+    // open from a stream of short ones. Repeating the opening sequence inside
+    // an update doesn't start a new one.
+    const uint64_t before = g.synchronized_updates();
+    feed(p, g, "\x1b[?2026h\x1b[?2026h");
+    CHECK(g.synchronized_updates() == before + 1);
+    feed(p, g, "\x1b[?2026lx\x1b[?2026h");
+    CHECK(g.synchronized_updates() == before + 2);
+    feed(p, g, "\x1b[?2026l");
+
     feed(p, g, "\x1b[?1004h");
     CHECK(g.is_focus_reporting());
     feed(p, g, "\x1b[?1004l");
