@@ -8,6 +8,7 @@
 #include "shell_integration.hpp"
 #include "terminal_grid.hpp"
 #include "terminal_images.hpp"
+#include "sync_output.hpp"
 #include "key_bindings.hpp"
 
 #include <cmath>
@@ -2633,6 +2634,58 @@ static void test_color_scheme() {
     CHECK(color_near(pack_color(g.get_reported_bg()), 1.0f, 1.0f, 1.0f));
 }
 
+// Output inside a synchronized update is held until the update closes, then
+// parsed in one go; a held update that never closes is let go after
+// sync_output::kMaxUpdateMs.
+static void test_synchronized_output_holds_output() {
+    TerminalGrid g; g.resize(20, 5);
+    ANSIParser p;
+    sync_output::Hold hold;
+    auto never = []() { return false; };
+    auto run = [&](const std::string& bytes, uint64_t now_ms) {
+        return sync_output::parse(p, g, hold, bytes.data(), bytes.size(), now_ms, never);
+    };
+
+    // Everything up to and including the opening sequence is parsed; what
+    // follows waits.
+    std::string pending = "a\x1b[?2026hbc";
+    size_t used = run(pending, 0);
+    CHECK(used == pending.size() - 2);
+    CHECK(row_text(g, 0) == "a");
+    CHECK(g.is_synchronized_output());
+    pending.erase(0, used);
+
+    // Still open half a second on: the text hasn't changed.
+    pending += "d";
+    CHECK(run(pending, 500) == 0);
+    CHECK(row_text(g, 0) == "a");
+
+    // The closing sequence arrives, split across two reads.
+    pending += "\x1b[?20";
+    CHECK(run(pending, 600) == 0);
+    pending += "26le";
+    CHECK(run(pending, 700) == pending.size());
+    CHECK(row_text(g, 0) == "abcde");
+    CHECK(!g.is_synchronized_output());
+
+    // An update left open -- its program killed -- is let go after a second.
+    pending = "\x1b[?2026hf";
+    used = run(pending, 1000);
+    pending.erase(0, used);
+    CHECK(pending == "f");
+    CHECK(run(pending, 1500) == 0);
+    CHECK(run(pending, 1000 + sync_output::kMaxUpdateMs) == 1);
+    CHECK(row_text(g, 0) == "abcdef");
+    CHECK(!g.is_synchronized_output());
+
+    // A stream of short updates, each closed, never counts as one long one.
+    for (uint64_t t = 3000; t < 6000; t += 100) {
+        pending = "\x1b[?2026hg\x1b[?2026l";
+        CHECK(run(pending, t) == pending.size());
+    }
+    CHECK(!g.is_synchronized_output());
+}
+
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
@@ -2640,6 +2693,7 @@ int main() {
     test_combining_marks();
     test_search_column_mapping();
     test_synchronized_output_and_focus_modes();
+    test_synchronized_output_holds_output();
     test_wide_characters();
     test_wide_character_wrap();
     test_wide_character_copy();

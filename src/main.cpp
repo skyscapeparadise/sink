@@ -68,26 +68,21 @@ static const float kHdrConsoleTextBoost = 1.6f;
 // the range (5ms buys 32 MB/s, 14ms buys 89 MB/s) and this is the midpoint
 // where a frame still has as much time outside the parser as inside it.
 //
-// The slice is large enough that the clock read is noise and small enough
-// that overshoot past the budget is bounded to one slice -- measured at
-// 0.65ms over, on an 8ms budget.
+// The parse slice (sync_output::kSliceBytes) is large enough that the clock
+// read is noise and small enough that overshoot past the budget is bounded to
+// one slice -- measured at 0.65ms over, on an 8ms budget.
 static constexpr Uint64 kParseBudgetNs = 8ull * 1000000ull;
-static constexpr size_t kParseSliceBytes = 64u << 10;
 
-// Parses as much of `data` as the budget allows and returns how much that was.
-// Splitting a burst across frames is safe because ANSIParser carries its state
-// between calls -- a half-built CSI, a partial UTF-8 sequence and a pending
-// charset designation all survive the boundary.
+// Parses as much of `data` as the budget allows and returns how much that was;
+// the rest waits for the next frame. Splitting a burst across frames is safe
+// because ANSIParser carries its state between calls -- a half-built CSI, a
+// partial UTF-8 sequence and a pending charset designation all survive the
+// boundary. Output inside a synchronized update is held until the update
+// closes (see sync_output.hpp).
 static size_t parse_within_budget(Pane& pane, const char* data, size_t size) {
-    Uint64 start = SDL_GetTicksNS();
-    size_t pos = 0;
-    while (pos < size) {
-        size_t take = std::min(kParseSliceBytes, size - pos);
-        pane.parser.parse(pane.terminal, data + pos, take);
-        pos += take;
-        if (SDL_GetTicksNS() - start >= kParseBudgetNs) break;
-    }
-    return pos;
+    const Uint64 start = SDL_GetTicksNS();
+    return sync_output::parse(pane.parser, pane.terminal, pane.sync_hold, data, size, start / 1000000ull,
+                              [start]() { return SDL_GetTicksNS() - start >= kParseBudgetNs; });
 }
 
 // --- Kitty keyboard protocol encoding -------------------------------------
@@ -2887,17 +2882,6 @@ static std::string strip_paste_markers(const char* text, size_t len) {
     return out;
 }
 
-// Longest the screen may go without presenting while an application holds a
-// synchronized update open. Real updates complete in a few milliseconds; this
-// only engages when something misbehaves or streams updates continuously.
-static constexpr Uint64 kMaxSyncHoldMs = 100;
-
-// Longest one synchronized update may stay open before sink decides it was
-// abandoned and ends it, as Ghostty does after a second. A program killed
-// mid-update (Ctrl+C on hollywood) never sends the closing sequence, and
-// without this the window stayed capped at kMaxSyncHoldMs -- about nine
-// frames a second -- until the pane was closed.
-static constexpr Uint64 kMaxSyncUpdateMs = 1000;
 
 // How long a resize has to stop before the final layout is taken as done.
 static constexpr Uint64 kResizeSettleMs = 100;
@@ -3333,7 +3317,8 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 }
                 bool fast_turnover = pane.rapid_chunk_streak >= 3;
 
-                if (out_size > 5 || fast_turnover) {
+                // Output inside a synchronized update is held, not typed out.
+                if (out_size > 5 || fast_turnover || pane.terminal.is_synchronized_output()) {
                     // Large chunk / fast turnover (command or program output): bypass typing effect
                     if (!pane.animation_buffer.empty()) {
                         pane.parser.parse(pane.terminal, pane.animation_buffer.data(), pane.animation_buffer.size());
@@ -3559,38 +3544,10 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             SDL_RenderFillRect(tw->renderer, &full_rect);
         }
 
-        // Synchronized output (DECSET 2026): while any pane is mid-update,
-        // hold the finished frame on screen instead of presenting a partial
-        // one. The geometry above is still built -- only presentation is
-        // deferred -- so whenever the frame is released it shows current state.
-        // Every pane is checked rather than just the focused one, so a full
-        // screen app redrawing in a background split doesn't tear either.
-        //
-        // The cap is measured from the last *actual* present, not from when
-        // each update opened. Applications send these in a continuous stream
-        // -- vtebench's sync benchmark emits a BSU/ESU pair roughly every 400
-        // bytes -- so a per-update deadline is always freshly armed and never
-        // expires, which froze the window entirely. Presenting a partial frame
-        // after 100ms is a visible glitch; never presenting again is a hang.
-        Uint64 now_ms = SDL_GetTicks();
-        bool sync_open = false;
-        for (Pane* pane : all_panes(tw)) {
-            if (!pane || !pane->terminal.is_synchronized_output()) continue;
-            const uint64_t update = pane->terminal.synchronized_updates();
-            if (update != pane->sync_update_seen) {
-                pane->sync_update_seen = update;
-                pane->sync_update_since_ms = now_ms;
-            } else if (now_ms - pane->sync_update_since_ms >= kMaxSyncUpdateMs) {
-                pane->terminal.set_synchronized_output(false);
-                continue;
-            }
-            sync_open = true;
-        }
-        bool starved = (now_ms - tw->last_present_ms) >= kMaxSyncHoldMs;
-        if (!sync_open || starved) {
-            SDL_RenderPresent(tw->renderer);
-            tw->last_present_ms = now_ms;
-        }
+        // Every frame, even while a program has a synchronized update open:
+        // its output is what's held (see kSyncBegin), so the text on screen
+        // is always a finished update and the background keeps moving.
+        SDL_RenderPresent(tw->renderer);
     }
 
     // Draw Settings UI if open

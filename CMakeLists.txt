@@ -178,6 +178,7 @@ set(SOURCES
     src/font_manager.cpp
     src/terminal_grid.cpp
     src/terminal_images.cpp
+    src/sync_output.cpp
     ${SHELL_SPAWN_SOURCES}
     src/prompt_editing.cpp
     src/ansi_parser.cpp
@@ -235,6 +236,7 @@ endif()
 enable_testing()
 add_executable(sink_tests
     tests/test_ansi_parser.cpp
+    src/sync_output.cpp
     src/pty_bridge.cpp
     src/private_files.cpp
     src/shell_integration.cpp

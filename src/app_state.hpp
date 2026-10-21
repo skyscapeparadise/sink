@@ -21,6 +21,7 @@
 #include "hue_shift.hpp"
 #include "pty_bridge.hpp"
 #include "settings_ui.hpp"
+#include "sync_output.hpp"
 #include "terminal_grid.hpp"
 #include "video_engine.hpp"
 #include "key_bindings.hpp"
@@ -46,11 +47,9 @@ struct Pane {
     // frame until it is gone.
     std::vector<char> pty_pending;
 
-    // The synchronized update (DECSET 2026) this pane last saw open, by
-    // TerminalGrid::synchronized_updates(), and when it was first seen. See
-    // kMaxSyncUpdateMs in main.cpp.
-    uint64_t sync_update_seen = 0;
-    Uint64 sync_update_since_ms = 0;
+    // How long a synchronized update (DECSET 2026) has held this pane's
+    // output; see sync_output.hpp.
+    sync_output::Hold sync_hold;
 
     // Typewriter-animation pacing
     std::vector<char> animation_buffer;
@@ -218,11 +217,6 @@ struct TerminalWindow {
     Uint64 last_resize_event_time = 0;
     Uint64 last_live_layout_tick = 0;
     Uint64 live_layout_gap_ms = 0;  // twice what the last layout took, capped
-
-    // Last time this window actually presented. Synchronized output (DECSET
-    // 2026) defers presentation, and this is what bounds that: the screen has
-    // to refresh even if an application holds updates open back to back.
-    Uint64 last_present_ms = 0;
 
     // Detects a native tab bar appearing/disappearing (see
     // get_top_offset_pts): unlike an actual window resize, that doesn't
