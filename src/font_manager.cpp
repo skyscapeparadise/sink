@@ -300,7 +300,8 @@ bool FontManager::load_font(SDL_Renderer* renderer, const std::string& font, flo
     // varies from font to font -- and from version to version: Monaspace Neon
     // 1.400's is 15% taller than 1.101's, which is how sink's rows grew in
     // 0.11. Glyphs are centered in the row (TerminalGrid::render).
-    cell_height_ = std::round(font_size * line_height_);
+    cell_height_ = line_height_ > 0.0f ? std::round(font_size * line_height_)
+                                        : static_cast<float>(TTF_GetFontHeight(font_));
     
     // Query glyph metrics for 'n' to establish cell width
     int advance = 0;
