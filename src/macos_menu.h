@@ -109,6 +109,10 @@ void set_dock_badge(const char* label_utf8);
 // means the last tab, as in Safari and Terminal. No-op without tabs.
 void select_native_tab(SDL_Window* sdl_win, int index);
 
+// Shows `key` (a [keybindings] key name, "" for none) with these modifiers as
+// the shortcut of the menu item for `action`, if there is one.
+void set_menu_shortcut(const char* action, const char* key, bool cmd, bool shift, bool opt, bool ctrl);
+
 // Enable or disable macOS native translucent window vibrancy / acrylic blur
 void enable_macos_window_vibrancy(SDL_Window* sdl_win, bool enable);
 

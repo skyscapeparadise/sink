@@ -43,8 +43,13 @@ enum class KeyType {
     Color,       // "#rrggbb" or "#rgb"; "" for the theme's
     ColorList,   // up to 16 colors
     Strings,     // a list of strings
-    Table        // a table of string values: [shell.env]
+    Table,       // a table of string values: [shell.env]
+    Keybindings  // [keybindings]: key = "action" | "none" | { text = "..." }
 };
+
+// In a [keybindings] value as read, text to send is marked with this first
+// byte, so one string can carry either an action's name or text.
+constexpr char kKeybindingText = '\x01';
 
 // Which part of the file a key lives in. Global keys are written at their
 // path from the top of the document ("terminal.scrollback_lines"); preset keys

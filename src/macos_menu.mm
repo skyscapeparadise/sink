@@ -4,6 +4,8 @@
 #include <cstring>
 #include <vector>
 #include <string>
+#include <cctype>
+#include <cstdlib>
 
 // The preset names, built-ins first, from the running app's sink.toml
 // (defined in main.cpp).
@@ -232,29 +234,49 @@ extern "C" void trigger_menu_render_tick();
 - (void)onMenuTimer:(NSTimer*)timer;
 @end
 
+// Whether a menu item is being run by its own keyboard shortcut. sink's key
+// handler runs every shortcut itself, from [keybindings] (see main.cpp) --
+// SDL sees each key press before AppKit's menus do -- so an item fired by its
+// shortcut does nothing, or the action would happen twice. Picked with the
+// mouse, or by keyboard navigation inside an open menu, it runs as usual.
+static bool fired_by_shortcut(id sender) {
+    NSEvent* e = [NSApp currentEvent];
+    if (!e || [e type] != NSEventTypeKeyDown || ![sender isKindOfClass:[NSMenuItem class]]) return false;
+    NSString* equivalent = [(NSMenuItem*)sender keyEquivalent];
+    if ([equivalent length] == 0) return false;
+    NSString* typed = [e charactersIgnoringModifiers];
+    return [[typed lowercaseString] isEqualToString:[equivalent lowercaseString]];
+}
+
 @implementation MenuHandler
 
 - (void)openSettings:(id)sender {
+    if (fired_by_shortcut(sender)) return;
     set_settings_requested(true);
 }
 
 - (void)cut:(id)sender {
+    if (fired_by_shortcut(sender)) return;
     set_cut_requested(true);
 }
 
 - (void)copy:(id)sender {
+    if (fired_by_shortcut(sender)) return;
     set_copy_requested(true);
 }
 
 - (void)paste:(id)sender {
+    if (fired_by_shortcut(sender)) return;
     set_paste_requested(true);
 }
 
 - (void)selectAll:(id)sender {
+    if (fired_by_shortcut(sender)) return;
     set_select_all_requested(true);
 }
 
 - (void)find:(id)sender {
+    if (fired_by_shortcut(sender)) return;
     set_find_requested(true);
 }
 
@@ -314,59 +336,73 @@ extern "C" void trigger_menu_render_tick();
 }
 
 - (void)closeWindow:(id)sender {
+    if (fired_by_shortcut(sender)) return;
     set_close_window_requested(true);
 }
 
 - (void)splitPaneRight:(id)sender {
+    if (fired_by_shortcut(sender)) return;
     set_split_pane_right_requested(true);
 }
 
 - (void)splitPaneDown:(id)sender {
+    if (fired_by_shortcut(sender)) return;
     set_split_pane_down_requested(true);
 }
 
 - (void)closePane:(id)sender {
+    if (fired_by_shortcut(sender)) return;
     set_close_pane_requested(true);
 }
 
 // Direction is carried in the menu item's tag (1=left 2=right 3=up 4=down)
 - (void)selectPaneInDirection:(id)sender {
+    if (fired_by_shortcut(sender)) return;
     set_pane_focus_requested((int)[sender tag]);
 }
 
 - (void)selectNextPane:(id)sender {
+    if (fired_by_shortcut(sender)) return;
     set_pane_cycle_requested(1);
 }
 
 - (void)selectPreviousPane:(id)sender {
+    if (fired_by_shortcut(sender)) return;
     set_pane_cycle_requested(-1);
 }
 
 - (void)zoomPane:(id)sender {
+    if (fired_by_shortcut(sender)) return;
     set_zoom_pane_requested(true);
 }
 
 - (void)clearScreen:(id)sender {
+    if (fired_by_shortcut(sender)) return;
     set_clear_screen_requested(true);
 }
 
 - (void)biggerFont:(id)sender {
+    if (fired_by_shortcut(sender)) return;
     set_font_size_requested(1);
 }
 
 - (void)smallerFont:(id)sender {
+    if (fired_by_shortcut(sender)) return;
     set_font_size_requested(-1);
 }
 
 - (void)defaultFontSize:(id)sender {
+    if (fired_by_shortcut(sender)) return;
     set_font_size_requested(2);
 }
 
 - (void)toggleBroadcast:(id)sender {
+    if (fired_by_shortcut(sender)) return;
     set_toggle_broadcast_requested(true);
 }
 
 - (void)print:(id)sender {
+    if (fired_by_shortcut(sender)) return;
     set_print_requested(true);
 }
 
@@ -1060,5 +1096,91 @@ std::string get_bundle_resource_path(const std::string& filename) {
             return [path UTF8String];
         }
         return filename;
+    }
+}
+
+// ---- [keybindings] in the menus -----------------------------------------------
+
+// Which action a menu item runs, by its selector (and tag, for the pane
+// directions), or its title for the two items that have a submenu.
+static NSString* action_of_item(NSMenuItem* item) {
+    SEL sel = [item action];
+    if ([[item title] isEqualToString:@"New Window"]) return @"new_window";
+    if ([[item title] isEqualToString:@"New Tab"]) return @"new_tab";
+    if (!sel) return nil;
+    if (sel == @selector(selectPaneInDirection:)) {
+        switch ([item tag]) {
+            case 1: return @"select_pane_left";
+            case 2: return @"select_pane_right";
+            case 3: return @"select_pane_up";
+            case 4: return @"select_pane_down";
+        }
+        return nil;
+    }
+    static NSDictionary<NSString*, NSString*>* map = @{
+        @"openSettings:": @"settings",      @"closeWindow:": @"close_window",  @"print:": @"print",
+        @"cut:": @"cut",                    @"copy:": @"copy",                 @"paste:": @"paste",
+        @"selectAll:": @"select_all",       @"find:": @"find",                 @"clearScreen:": @"clear_screen",
+        @"biggerFont:": @"font_bigger",     @"smallerFont:": @"font_smaller",  @"defaultFontSize:": @"font_default",
+        @"splitPaneRight:": @"split_right", @"splitPaneDown:": @"split_down",  @"closePane:": @"close_pane",
+        @"selectNextPane:": @"next_pane",   @"selectPreviousPane:": @"previous_pane",
+        @"zoomPane:": @"zoom_pane",         @"toggleBroadcast:": @"broadcast_input",
+    };
+    return map[NSStringFromSelector(sel)];
+}
+
+// A [keybindings] key name as an NSMenuItem key equivalent.
+static NSString* key_equivalent(const char* key) {
+    std::string k = key ? key : "";
+    if (k.empty()) return @"";
+    auto fn = [](unichar c) { return [NSString stringWithCharacters:&c length:1]; };
+    if (k == "up") return fn(NSUpArrowFunctionKey);
+    if (k == "down") return fn(NSDownArrowFunctionKey);
+    if (k == "left") return fn(NSLeftArrowFunctionKey);
+    if (k == "right") return fn(NSRightArrowFunctionKey);
+    if (k == "return") return @"\r";
+    if (k == "tab") return @"\t";
+    if (k == "space") return @" ";
+    if (k == "escape") return @"\x1b";
+    if (k == "delete") return fn(NSBackspaceCharacter);
+    if (k == "forward_delete") return fn(NSDeleteFunctionKey);
+    if (k == "home") return fn(NSHomeFunctionKey);
+    if (k == "end") return fn(NSEndFunctionKey);
+    if (k == "page_up") return fn(NSPageUpFunctionKey);
+    if (k == "page_down") return fn(NSPageDownFunctionKey);
+    if (k.size() >= 2 && k[0] == 'f' && isdigit(static_cast<unsigned char>(k[1]))) {
+        return fn(static_cast<unichar>(NSF1FunctionKey + std::atoi(k.c_str() + 1) - 1));
+    }
+    return [NSString stringWithUTF8String:k.c_str()];
+}
+
+static void set_shortcut_in(NSMenu* menu, NSString* action, NSString* equivalent, NSEventModifierFlags mask) {
+    for (NSMenuItem* item in [menu itemArray]) {
+        if ([action isEqualToString:action_of_item(item)]) {
+            if ([item isHidden]) {
+                // View > Bigger's hidden twin, so ⌘+ works as well as ⌘=;
+                // only while Bigger is on ⌘=.
+                const bool on_equals = [equivalent isEqualToString:@"="] && mask == NSEventModifierFlagCommand;
+                [item setKeyEquivalent:on_equals ? @"+" : @""];
+                [item setKeyEquivalentModifierMask:NSEventModifierFlagCommand];
+            } else {
+                [item setKeyEquivalent:equivalent];
+                [item setKeyEquivalentModifierMask:mask];
+            }
+        }
+        if ([item submenu]) set_shortcut_in([item submenu], action, equivalent, mask);
+    }
+}
+
+void set_menu_shortcut(const char* action, const char* key, bool cmd, bool shift, bool opt, bool ctrl) {
+    @autoreleasepool {
+        NSMenu* main = [NSApp mainMenu];
+        if (!main || !action) return;
+        NSEventModifierFlags mask = 0;
+        if (cmd) mask |= NSEventModifierFlagCommand;
+        if (shift) mask |= NSEventModifierFlagShift;
+        if (opt) mask |= NSEventModifierFlagOption;
+        if (ctrl) mask |= NSEventModifierFlagControl;
+        set_shortcut_in(main, [NSString stringWithUTF8String:action], key_equivalent(key), mask);
     }
 }

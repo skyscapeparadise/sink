@@ -26,6 +26,7 @@
 #include "system_fonts.hpp"
 #include "themes.hpp"
 #include "background_shader.hpp"
+#include "keybindings.hpp"
 #include "hue_shift.hpp"
 #include "crt_shader.hpp"
 
@@ -541,6 +542,22 @@ static void set_state_from_preset(AppState* state, const config::PresetValues& p
     state->hdr_console_enabled = p.hdr_text;
 }
 
+// Puts each action's key from [keybindings] on its menu item, so the menus
+// show what the keys actually do. Before the menus exist this does nothing;
+// SDL_AppInit calls it again once they do.
+static void apply_menu_shortcuts(AppState* state) {
+#if defined(__APPLE__)
+    if (!state->menus_ready) return;
+    for (const keybindings::Action& a : keybindings::actions()) {
+        std::optional<keybindings::Chord> c = keybindings::key_for(state->bindings, a.name);
+        if (c) set_menu_shortcut(a.name, c->key.c_str(), c->cmd, c->shift, c->opt, c->ctrl);
+        else   set_menu_shortcut(a.name, "", false, false, false, false);
+    }
+#else
+    (void)state;
+#endif
+}
+
 // The settings that aren't part of a preset.
 static void apply_global_settings(AppState* state) {
     const config::Config& c = state->config.config();
@@ -552,6 +569,23 @@ static void apply_global_settings(AppState* state) {
     shell.env = config::global_table(c, "shell.env");
     shell.working_directory = config::expand_home(config::global_string(c, "shell.working_directory"));
     PTYBridge::set_shell_settings(shell);
+
+    // [keybindings], resolved over the defaults (problems were reported when
+    // the file was read). The menus show them once they exist.
+    std::vector<keybindings::UserEntry> user;
+    for (const auto& [key, value] : config::global_table(c, "keybindings")) {
+        keybindings::UserEntry e;
+        e.key = key;
+        if (!value.empty() && value[0] == config::kKeybindingText) {
+            e.text = value.substr(1);
+            e.has_text = true;
+        } else {
+            e.action = value;
+        }
+        user.push_back(e);
+    }
+    state->bindings = keybindings::resolve(user);
+    apply_menu_shortcuts(state);
     state->option_as_meta = key_bindings::parse_option_as_meta(config::option_as_meta(c));
     SDL_SetHint(SDL_HINT_MAC_OPTION_AS_ALT, key_bindings::option_as_alt_hint(state->option_as_meta));
     state->scrollback_lines = static_cast<int>(config::global_int(c, "terminal.scrollback_lines"));
@@ -1550,6 +1584,118 @@ static std::optional<int> run_command_line(int argc, char* argv[]) {
     return std::nullopt;
 }
 
+// ---- Keyboard shortcuts ------------------------------------------------------
+
+// A key press as [keybindings] names keys. The key is the unshifted one, so
+// shift+cmd+d is "d" with shift, not "D".
+static keybindings::Chord chord_of(const SDL_KeyboardEvent& key) {
+    keybindings::Chord c;
+    c.cmd = (key.mod & SDL_KMOD_GUI) != 0;
+    c.shift = (key.mod & SDL_KMOD_SHIFT) != 0;
+    c.opt = (key.mod & SDL_KMOD_ALT) != 0;
+    c.ctrl = (key.mod & SDL_KMOD_CTRL) != 0;
+    const SDL_Keycode k = SDL_GetKeyFromScancode(key.scancode, SDL_KMOD_NONE, false);
+    switch (k) {
+        case SDLK_UP: c.key = "up"; break;
+        case SDLK_DOWN: c.key = "down"; break;
+        case SDLK_LEFT: c.key = "left"; break;
+        case SDLK_RIGHT: c.key = "right"; break;
+        case SDLK_RETURN: case SDLK_KP_ENTER: c.key = "return"; break;
+        case SDLK_TAB: c.key = "tab"; break;
+        case SDLK_SPACE: c.key = "space"; break;
+        case SDLK_ESCAPE: c.key = "escape"; break;
+        case SDLK_BACKSPACE: c.key = "delete"; break;
+        case SDLK_DELETE: c.key = "forward_delete"; break;
+        case SDLK_HOME: c.key = "home"; break;
+        case SDLK_END: c.key = "end"; break;
+        case SDLK_PAGEUP: c.key = "page_up"; break;
+        case SDLK_PAGEDOWN: c.key = "page_down"; break;
+        default:
+            if (k >= SDLK_F1 && k <= SDLK_F12) c.key = "f" + std::to_string(k - SDLK_F1 + 1);
+            else if (k >= SDLK_F13 && k <= SDLK_F20) c.key = "f" + std::to_string(k - SDLK_F13 + 13);
+            else if (k > 32 && k < 127) c.key = std::string(1, static_cast<char>(std::tolower(static_cast<int>(k))));
+            break;
+    }
+    return c;
+}
+
+static void open_settings_window(AppState* state, TerminalWindow* tw) {
+    if (!tw || !state->settings_ui.open(tw->window)) return;
+    state->settings_ui.set_paths(background_display(state), state->font_path);
+    state->settings_ui.set_animated_typing(tw->animated_typing);
+    state->settings_ui.set_exposure(tw->exposure);
+    state->settings_ui.set_hue_shift(tw->hue_shift_degrees);
+    state->settings_ui.set_broadcasting(state->input_broadcasting);
+    state->settings_ui.set_vibrancy_enabled(tw->vibrancy_enabled);
+    state->settings_ui.set_crt_effect_enabled(tw->crt_mode_enabled);
+    state->settings_ui.set_hdr_console_enabled(tw->hdr_console_enabled);
+    state->settings_ui.set_themes(themes::names(), state->theme_name);
+    state->settings_ui.set_shell_integration_enabled(config::global_bool(state->config.config(), "shell.integration"));
+    refresh_settings_ui_presets(state);
+}
+
+static void toggle_search(TerminalWindow* tw) {
+    tw->search_drawer_open = !tw->search_drawer_open;
+    tw->fpane().terminal.set_search_active(tw->search_drawer_open);
+    if (tw->search_drawer_open) tw->fpane().terminal.set_search_query(tw->search_input_text);
+}
+
+// Runs what a key is bound to: text goes to the shell (to every pane while
+// broadcasting); an action does what its menu item does, through the same
+// requests where there is one.
+static void run_binding(AppState* state, TerminalWindow* tw, const keybindings::Binding& b) {
+    if (!tw) return;
+    if (b.action.empty()) {
+        std::vector<Pane*> targets;
+        if (state->input_broadcasting) {
+            for (auto* w : state->windows) for (Pane* p : all_panes(w)) targets.push_back(p);
+        } else {
+            targets.push_back(&tw->fpane());
+        }
+        for (Pane* p : targets) {
+            p->terminal.note_user_edit();
+            p->pty.write_to_pty(b.text.data(), b.text.size());
+        }
+        return;
+    }
+    const std::string& a = b.action;
+    if (a == "settings") {
+        if (state->settings_ui.is_open()) state->settings_ui.close();
+        else open_settings_window(state, tw);
+    }
+    else if (a == "new_window") set_new_window_requested(true);
+    else if (a == "new_tab") set_new_tab_requested(true);
+    else if (a == "close_window") set_close_window_requested(true);
+    else if (a == "print") set_print_requested(true);
+    else if (a == "cut") set_cut_requested(true);
+    else if (a == "copy") set_copy_requested(true);
+    else if (a == "paste") set_paste_requested(true);
+    else if (a == "select_all") set_select_all_requested(true);
+    else if (a == "find") toggle_search(tw);
+    else if (a == "clear_screen") set_clear_screen_requested(true);
+    else if (a == "font_bigger") set_font_size_requested(1);
+    else if (a == "font_smaller") set_font_size_requested(-1);
+    else if (a == "font_default") set_font_size_requested(2);
+    else if (a == "previous_prompt" || a == "next_prompt") {
+        std::lock_guard<std::mutex> lock(tw->fpane().grid_mutex);
+        if (a == "previous_prompt") tw->fpane().terminal.scroll_to_prev_prompt();
+        else tw->fpane().terminal.scroll_to_next_prompt();
+    }
+    else if (a == "split_right") set_split_pane_right_requested(true);
+    else if (a == "split_down") set_split_pane_down_requested(true);
+    else if (a == "close_pane") set_close_pane_requested(true);
+    else if (a == "select_pane_left") set_pane_focus_requested(1);
+    else if (a == "select_pane_right") set_pane_focus_requested(2);
+    else if (a == "select_pane_up") set_pane_focus_requested(3);
+    else if (a == "select_pane_down") set_pane_focus_requested(4);
+    else if (a == "next_pane") set_pane_cycle_requested(1);
+    else if (a == "previous_pane") set_pane_cycle_requested(-1);
+    else if (a == "zoom_pane") set_zoom_pane_requested(true);
+    else if (a == "broadcast_input") set_toggle_broadcast_requested(true);
+    else if (a == "select_last_tab") select_native_tab(tw->window, 9);
+    else if (a.compare(0, 11, "select_tab_") == 0) select_native_tab(tw->window, std::atoi(a.c_str() + 11));
+}
+
 // SDL3 Application initialization entry point
 SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
     // Before SDL starts, so `sink --show-config` opens no window and never
@@ -1602,6 +1748,8 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
 
 #if defined(__APPLE__)
     setup_macos_menu();
+    state->menus_ready = true;
+    apply_menu_shortcuts(state);
 #endif
 
     return SDL_APP_CONTINUE;
@@ -1656,17 +1804,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
 
     // Handle macOS menu settings trigger
     if (get_settings_requested() && !state->settings_ui.is_open()) {
-        SDL_Window* parent_win = state->active_window ? state->active_window->window : nullptr;
-        if (parent_win && state->settings_ui.open(parent_win)) {
-            state->settings_ui.set_paths(background_display(state), state->font_path);
-            state->settings_ui.set_animated_typing(state->active_window ? state->active_window->animated_typing : true);
-            state->settings_ui.set_exposure(state->active_window ? state->active_window->exposure : 1.0f);
-            state->settings_ui.set_hue_shift(state->active_window ? state->active_window->hue_shift_degrees : 0.0f);
-            state->settings_ui.set_hdr_console_enabled(state->active_window ? state->active_window->hdr_console_enabled : false);
-            state->settings_ui.set_themes(themes::names(), state->theme_name);
-            state->settings_ui.set_shell_integration_enabled(config::global_bool(state->config.config(), "shell.integration"));
-            refresh_settings_ui_presets(state);
-        }
+        open_settings_window(state, state->active_window);
     }
 
     // Forward events to Settings UI window if active
@@ -2130,13 +2268,14 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         // for a key that then typed nothing must not swallow the next key's.
         state->suppress_next_text_input = false;
 
-        // Cmd+F search bar toggle shortcut. Not Ctrl+F: that is forward-char
-        // in zsh, bash and emacs, and has to reach them.
-        if ((mod & SDL_KMOD_GUI) && sym == SDLK_F) {
-            target_tw->search_drawer_open = !target_tw->search_drawer_open;
-            target_tw->fpane().terminal.set_search_active(target_tw->search_drawer_open);
-            if (target_tw->search_drawer_open) {
-                target_tw->fpane().terminal.set_search_query(target_tw->search_input_text);
+        // [keybindings]: every shortcut sink has, as the user has set them.
+        // Menu items do nothing when fired by their own key (macos_menu.mm),
+        // so this is the only place a shortcut runs.
+        if (const keybindings::Binding* b = keybindings::find(state->bindings, chord_of(event->key))) {
+            const bool settings_focused =
+                state->settings_ui.is_open() && SDL_GetKeyboardFocus() == state->settings_ui.get_window();
+            if (b->action == "settings" || !settings_focused) {
+                run_binding(state, target_tw, *b);
             }
             return SDL_APP_CONTINUE;
         }
@@ -2180,74 +2319,11 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             }
         }
 
-        // Cmd+Up / Cmd+Down: jump between OSC 133 shell prompts (needs shell
-        // integration emitting 133;A marks; without them these do nothing)
-        if ((mod & SDL_KMOD_GUI) && (sym == SDLK_UP || sym == SDLK_DOWN)) {
-            std::lock_guard<std::mutex> lock(target_tw->fpane().grid_mutex);
-            if (sym == SDLK_UP) target_tw->fpane().terminal.scroll_to_prev_prompt();
-            else                target_tw->fpane().terminal.scroll_to_next_prompt();
-            return SDL_APP_CONTINUE;
-        }
-
-        // Cmd+Comma settings window trigger
-        if ((mod & SDL_KMOD_GUI) && sym == SDLK_COMMA) {
-            if (!state->settings_ui.is_open()) {
-                if (state->settings_ui.open(target_tw->window)) {
-                    state->settings_ui.set_paths(background_display(state), state->font_path);
-                    state->settings_ui.set_animated_typing(target_tw->animated_typing);
-                    state->settings_ui.set_exposure(target_tw->exposure);
-                    state->settings_ui.set_hue_shift(target_tw->hue_shift_degrees);
-                    state->settings_ui.set_broadcasting(state->input_broadcasting);
-                    state->settings_ui.set_vibrancy_enabled(target_tw->vibrancy_enabled);
-                    state->settings_ui.set_crt_effect_enabled(target_tw->crt_mode_enabled);
-                    state->settings_ui.set_hdr_console_enabled(target_tw->hdr_console_enabled);
-                    state->settings_ui.set_themes(themes::names(), state->theme_name);
-                    state->settings_ui.set_shell_integration_enabled(config::global_bool(state->config.config(), "shell.integration"));
-                    refresh_settings_ui_presets(state);
-                }
-            } else {
-                state->settings_ui.close();
-            }
-            return SDL_APP_CONTINUE;
-        }
-
         // Ignore input if settings has focus
         if (state->settings_ui.is_open() && SDL_GetKeyboardFocus() == state->settings_ui.get_window()) {
             return SDL_APP_CONTINUE;
         }
 
-        // Cmd+N / Cmd+T: New Window / New Tab. Handled directly here rather
-        // than via the Cocoa menu's keyEquivalent, since the "New Window"/
-        // "New Tab" items now carry a preset submenu -- once an NSMenuItem
-        // has a submenu, AppKit stops treating it as an actionable item, so
-        // its keyEquivalent is display-only. Both go through the same
-        // set_new_window_requested()/set_new_tab_requested() flags the menu
-        // items themselves used to set, so they land on the same "with
-        // whatever preset is currently active" path as before.
-        if ((mod & SDL_KMOD_GUI) && sym == SDLK_N) {
-            set_new_window_requested(true);
-            return SDL_APP_CONTINUE;
-        }
-        if ((mod & SDL_KMOD_GUI) && sym == SDLK_T) {
-            set_new_tab_requested(true);
-            return SDL_APP_CONTINUE;
-        }
-
-        // Cmd+1 to Cmd+9: bring that tab forward, Cmd+9 the last one -- as
-        // in Terminal, iTerm2 and Safari.
-        if ((mod & SDL_KMOD_GUI) && !(mod & (SDL_KMOD_SHIFT | SDL_KMOD_ALT | SDL_KMOD_CTRL)) &&
-            sym >= SDLK_1 && sym <= SDLK_9) {
-            select_native_tab(target_tw->window, static_cast<int>(sym - SDLK_1) + 1);
-            return SDL_APP_CONTINUE;
-        }
-
-        // Split-pane commands (Cmd+D, Cmd+Shift+D, Cmd+Shift+W, Cmd+Opt+arrows)
-        // are handled exclusively via the Shell menu's key equivalents +
-        // request-flag polling below -- same pattern as Cut/Copy/Paste/Find/
-        // Close Window, none of which have an SDL-side handler either.
-        // AppKit consumes the keystroke for its own menu dispatch, so an SDL
-        // handler here would double-fire alongside it (this used to be a bug:
-        // Cmd+D created two panes, one from each path).
 
         // Tab key demo skip trigger
         if (sym == SDLK_TAB && SinkDemo::is_demo_running(target_tw)) {
@@ -2876,13 +2952,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             }
             trigger_print_dialog(print_text.c_str());
         }
-        if (get_find_requested()) {
-            tw->search_drawer_open = !tw->search_drawer_open;
-            tw->fpane().terminal.set_search_active(tw->search_drawer_open);
-            if (tw->search_drawer_open) {
-                tw->fpane().terminal.set_search_query(tw->search_input_text);
-            }
-        }
+        if (get_find_requested()) toggle_search(tw);
         if (get_crt_mode_requested()) {
             // Route this through the same path the Settings toggle uses
             // rather than flipping the active window's flag directly.

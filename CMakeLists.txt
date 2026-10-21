@@ -186,6 +186,7 @@ set(SOURCES
     src/sink_demo.cpp
     src/config.cpp
     src/themes.cpp
+    src/keybindings.cpp
     src/toml_edit.cpp
     src/config_store.cpp
     src/system_fonts.cpp
@@ -312,6 +313,7 @@ add_executable(config_tests
     tests/test_config.cpp
     src/config.cpp
     src/themes.cpp
+    src/keybindings.cpp
 )
 target_include_directories(config_tests PRIVATE src vendor/tomlplusplus)
 target_compile_definitions(config_tests PRIVATE SINK_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
@@ -325,12 +327,21 @@ add_executable(toml_edit_tests
 target_include_directories(toml_edit_tests PRIVATE src vendor/tomlplusplus)
 add_test(NAME toml_edit COMMAND toml_edit_tests)
 
+# [keybindings]: reading keys, resolving the user's over the defaults.
+add_executable(keybindings_tests
+    tests/test_keybindings.cpp
+    src/keybindings.cpp
+)
+target_include_directories(keybindings_tests PRIVATE src)
+add_test(NAME keybindings COMMAND keybindings_tests)
+
 # The sink.toml file on disk: migration, saving, errors, outside changes.
 add_executable(config_store_tests
     tests/test_config_store.cpp
     src/config_store.cpp
     src/config.cpp
     src/themes.cpp
+    src/keybindings.cpp
     src/toml_edit.cpp
 )
 target_include_directories(config_store_tests PRIVATE src vendor/tomlplusplus)

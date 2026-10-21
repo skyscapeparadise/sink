@@ -321,6 +321,22 @@ static void test_shell_settings() {
     CHECK(config::global_table(defaults, "shell.env").empty());
 }
 
+static void test_keybindings_config() {
+    config::Config c = read_ok(
+        "[keybindings]\n"
+        "\"cmd+shift+e\" = \"split_right\"\n"
+        "\"cmd+k\" = \"none\"\n"
+        "\"cmd+u\" = { text = \"\\u0015\" }\n"
+        "\"cmd+l\" = \"make_coffee\"\n"       // line 5
+        "\"cmd+j\" = 3\n");                     // line 6
+    config::StringMap kb = config::global_table(c, "keybindings");
+    CHECK(kb.size() == 3);
+    CHECK(kb.size() == 3 && kb[2].first == "cmd+u" && kb[2].second == std::string(1, config::kKeybindingText) + "\x15");
+    CHECK(has_warning(c, "\"make_coffee\" isn't an action", 5));
+    CHECK(has_warning(c, "should be an action's name", 6));
+    CHECK(config::effective_toml(c).find("\"cmd+u\" = { text = \"\\u0015\" }") != std::string::npos);
+}
+
 static std::string read_source_file(const std::string& relative) {
     std::string path = std::string(SINK_SOURCE_DIR) + "/" + relative;
     FILE* f = std::fopen(path.c_str(), "rb");
@@ -376,6 +392,7 @@ int main() {
     test_reference_is_a_valid_config();
     test_background_kinds();
     test_shell_settings();
+    test_keybindings_config();
     test_published_schema_and_readme_are_current();
     std::printf("%d/%d checks passed\n", checks_run - checks_failed, checks_run);
     return checks_failed == 0 ? 0 : 1;

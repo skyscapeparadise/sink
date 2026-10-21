@@ -179,6 +179,21 @@ exposure and hue shift work on all of them, not just videos.
 
 `pool` is built in, so you can't rename or delete it. change something while it's active and sink saves your changes as `pool copy`.
 
+### keybindings
+
+every shortcut is an action you can move, free up, or swap for a key that types something:
+
+```toml
+[keybindings]
+"cmd+shift+e" = "split_right"         # moves split right off cmd+d
+"cmd+k" = "none"                       # frees cmd+k
+"cmd+u" = { text = "\u0015" }          # sends ctrl+u
+"ctrl+alt+l" = { text = "ls -la\n" }
+"⌥⌘←" = "previous_pane"               # keys can be written the way menus show them
+```
+
+moving an action frees its old key, since a menu can only show one shortcut (bind the old key too to keep both). the menus always show what the keys really do. `sink --show-config --default` lists every action with its default key. macOS keeps a few for itself (⌘Q, ⌘H, ⌘M, ⌘\`), so those can't be changed.
+
 you can split your config across files. `include` reads other files first, as a base that the next one, and finally `sink.toml`, override setting by setting. handy for themes you share between machines, or keeping one machine's tweaks out of a dotfiles repo:
 
 ```toml

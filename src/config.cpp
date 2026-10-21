@@ -1,5 +1,6 @@
 #include "config.hpp"
 #include "themes.hpp"
+#include "keybindings.hpp"
 
 // toml++ v3.4.0 still uses the pre-C++23 whitespace-before-literal-suffix
 // syntax internally; silence that rather than let a third-party header's
@@ -57,6 +58,10 @@ const std::vector<KeyInfo>& keys() {
         { "shell.env", Scope::Global, KeyType::Table, StringMap{}, 0, 0, {},
           "Environment variables to set for it, as a table: [shell.env] then "
           "NAME = \"value\" lines." },
+        { "keybindings", Scope::Global, KeyType::Keybindings, StringMap{}, 0, 0, {},
+          "Keys and what they do. Move an action to a key, free a key with "
+          "\"none\", or make a key send text. Keys are written \"cmd+shift+d\" "
+          "or as menus show them, \"\u2318\u21e7D\"." },
         { "keyboard.option_as_meta", Scope::Global, KeyType::BoolOrChoice, false, 0, 0, {"left", "right"},
           "Make Option act as Meta, sending ESC before the key (for emacs and "
           "readline shortcuts) instead of typing special characters. true for "
@@ -176,6 +181,7 @@ std::string type_name(KeyType t) {
         case KeyType::ColorList: return "a list of colors like [\"#1a1b26\", ...]";
         case KeyType::Strings: return "a list of strings";
         case KeyType::Table: return "a table of strings";
+        case KeyType::Keybindings: return "a table of keys";
     }
     return "a value";
 }
@@ -312,6 +318,39 @@ std::optional<Value> convert(const KeyInfo& k, const std::string& where, const t
                 items.push_back(s->get());
             }
             return Value(items);
+        }
+        case KeyType::Keybindings: {
+            const auto* t = n.as_table();
+            if (!t) return wrong_type();
+            StringMap entries;
+            std::vector<keybindings::UserEntry> check;
+            for (auto&& [key, value] : *t) {
+                keybindings::UserEntry e;
+                e.key = std::string(key.str());
+                e.line = line_of(value);
+                if (const auto* s = value.as_string()) {
+                    e.action = s->get();
+                } else if (const auto* tt = value.as_table(); tt && (*tt)["text"].as_string()) {
+                    e.text = (*tt)["text"].as_string()->get();
+                    e.has_text = true;
+                } else {
+                    warnings.push_back({ e.line, "keybindings: \"" + e.key + "\" should be an action's name, "
+                                                 "\"none\", or { text = \"...\" }; skipping it" });
+                    continue;
+                }
+                check.push_back(e);
+            }
+            // Only the entries that resolve cleanly are kept.
+            std::vector<keybindings::Problem> problems;
+            keybindings::resolve(check, &problems);
+            for (const keybindings::UserEntry& e : check) {
+                const bool bad = std::any_of(problems.begin(), problems.end(),
+                                             [&](const keybindings::Problem& p) { return p.line == e.line; });
+                if (bad) continue;
+                entries.push_back({ e.key, e.has_text ? std::string(1, kKeybindingText) + e.text : e.action });
+            }
+            for (const keybindings::Problem& p : problems) warnings.push_back({ p.line, p.message });
+            return Value(entries);
         }
         case KeyType::Table: {
             const auto* t = n.as_table();
@@ -981,6 +1020,18 @@ void emit_reference_scope(std::ostringstream& o, Scope scope, const std::string&
         for (const KeyInfo& k : keys()) {
             if (k.scope != scope || table_and_key(k.path).first != table) continue;
             if (documented) o << comment_block(doc_with_range(k));
+            if (documented && k.type == KeyType::Keybindings) {
+                // The actions and their default keys, as the reference for them.
+                o << "#\n#   \"cmd+shift+e\" = \"split_right\"     moves split_right there\n"
+                  << "#   \"cmd+k\" = \"none\"                  frees cmd+k\n"
+                  << "#   \"cmd+u\" = { text = \"\\u0015\" }    sends ^U\n#\n";
+                for (const keybindings::Action& a : keybindings::actions()) {
+                    char line[160];
+                    std::snprintf(line, sizeof(line), "#   %-18s %-18s %s\n", a.name,
+                                  *a.default_key ? a.default_key : "(none)", a.doc);
+                    o << line;
+                }
+            }
             o << toml_key(table_and_key(k.path).second) << " = " << to_toml(value_of(k)) << "\n";
             if (documented) o << "\n";
         }
@@ -1068,6 +1119,13 @@ std::string key_schema(const KeyInfo& k, const std::string& pad) {
         case KeyType::Table:
             out += pad + "\"type\": \"object\",\n" + pad + "\"additionalProperties\": { \"type\": \"string\" },\n";
             break;
+        case KeyType::Keybindings: {
+            out += pad + "\"type\": \"object\",\n" + pad + "\"additionalProperties\": { \"anyOf\": [{ \"enum\": [\"none\"";
+            for (const keybindings::Action& a : keybindings::actions()) out += ", " + json_string(a.name);
+            out += "] }, { \"type\": \"object\", \"properties\": { \"text\": { \"type\": \"string\" } }, "
+                   "\"required\": [\"text\"], \"additionalProperties\": false }] },\n";
+            break;
+        }
         case KeyType::ColorList:
             out += pad + "\"type\": \"array\",\n" + pad + "\"maxItems\": " + pretty_number(k.max) + ",\n" +
                    pad + "\"items\": { \"type\": \"string\", \"pattern\": \"^(#[0-9a-fA-F]{6}|#[0-9a-fA-F]{3})$\" },\n";
@@ -1237,7 +1295,12 @@ std::string to_toml(const Value& v) {
         // An inline table: only the reference and --show-config write one.
         std::string out = "{";
         const StringMap& m = std::get<StringMap>(v);
-        for (size_t i = 0; i < m.size(); ++i) out += std::string(i ? ", " : " ") + toml_key(m[i].first) + " = " + quote(m[i].second);
+        for (size_t i = 0; i < m.size(); ++i) {
+            const std::string& v = m[i].second;
+            const std::string value = (!v.empty() && v[0] == kKeybindingText) ? "{ text = " + quote(v.substr(1)) + " }"
+                                                                              : quote(v);
+            out += std::string(i ? ", " : " ") + toml_key(m[i].first) + " = " + value;
+        }
         return out + (m.empty() ? "}" : " }");
     }
     const StringList& list = std::get<StringList>(v);

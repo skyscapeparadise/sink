@@ -24,6 +24,7 @@
 #include "terminal_grid.hpp"
 #include "video_engine.hpp"
 #include "key_bindings.hpp"
+#include "keybindings.hpp"
 
 // One shell session: grid + PTY + parser and all the per-session input and
 // pacing state that used to live directly on TerminalWindow. A window shows
@@ -261,6 +262,8 @@ struct AppState {
     ColorScheme color_scheme;
     std::string theme_name = "sink";
     std::string background = "pool";    // the active preset's, as written
+    std::vector<keybindings::Binding> bindings;  // [keybindings] over the defaults
+    bool menus_ready = false;
 
     std::string video_path;
     std::string font_path;
