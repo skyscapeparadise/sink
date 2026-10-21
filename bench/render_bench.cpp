@@ -55,10 +55,26 @@ int main(int argc, char** argv) {
     }
     SDL_Window* win = SDL_CreateWindow("sink render bench", 1600, 900, SDL_WINDOW_HIDDEN);
     if (!win) { std::fprintf(stderr, "CreateWindow: %s\n", SDL_GetError()); return 1; }
-    SDL_Renderer* ren = SDL_CreateRenderer(win, nullptr);
+    // SINK_BENCH_GPU=1 uses the renderer the app does (SDL's "gpu" backend);
+    // SINK_BENCH_HDR=1 that one with the linear output HDR text uses, where SDL
+    // converts every vertex color to linear. Neither set: SDL's default, as
+    // the numbers in bench/README.md were measured.
+    const bool hdr = std::getenv("SINK_BENCH_HDR") != nullptr;
+    const bool gpu = hdr || std::getenv("SINK_BENCH_GPU") != nullptr;
+    SDL_Renderer* ren = nullptr;
+    if (gpu) {
+        SDL_PropertiesID props = SDL_CreateProperties();
+        SDL_SetPointerProperty(props, SDL_PROP_RENDERER_CREATE_WINDOW_POINTER, win);
+        SDL_SetStringProperty(props, SDL_PROP_RENDERER_CREATE_NAME_STRING, SDL_GPU_RENDERER);
+        if (hdr) SDL_SetNumberProperty(props, SDL_PROP_RENDERER_CREATE_OUTPUT_COLORSPACE_NUMBER, SDL_COLORSPACE_SRGB_LINEAR);
+        ren = SDL_CreateRendererWithProperties(props);
+        SDL_DestroyProperties(props);
+    } else {
+        ren = SDL_CreateRenderer(win, nullptr);
+    }
     if (!ren) { std::fprintf(stderr, "CreateRenderer: %s\n", SDL_GetError()); return 1; }
     SDL_SetRenderVSync(ren, 0);
-    std::printf("renderer: %s\n", SDL_GetRendererName(ren));
+    std::printf("renderer: %s%s\n", SDL_GetRendererName(ren), hdr ? " (linear output, as with HDR text)" : "");
 
     FontManager fm;
     if (!fm.initialize() || !fm.load_font(ren, font, 16.0f)) {
@@ -76,6 +92,11 @@ int main(int argc, char** argv) {
         { "distinct CJK screenful",  "distinct_cjk.bin" },
         { "scrollback (deep)",       "plain_text.bin", 4000 },
         { "scrollback + search",     "plain_text.bin", 4000, "e" },
+        // Generated here rather than a workload file: what a full-screen
+        // program (vim, htop, tmux) draws -- every row on a painted background,
+        // a few accent cells, a reversed status line. Cell backgrounds are
+        // drawn as one rectangle per run of a color, which this measures.
+        { "painted backgrounds",     "@painted" },
     };
 
     std::printf("\n%-26s %10s %10s %10s %12s\n",
@@ -86,7 +107,20 @@ int main(int argc, char** argv) {
     for (const Scene& s : scenes) {
         TerminalGrid grid;
         grid.resize(cols, rows);
-        if (s.workload) {
+        if (s.workload && std::string(s.workload) == "@painted") {
+            std::string screen;
+            for (int row = 0; row < rows; ++row) {
+                const std::string bg = row == rows - 1 ? "\x1b[7m" : (row % 3 == 0 ? "\x1b[44m" : "\x1b[48;5;236m");
+                screen += "\x1b[" + std::to_string(row + 1) + ";1H" + bg;
+                for (int c = 0; c < cols; ++c) {
+                    if (c % 17 == 0) screen += "\x1b[41m" + std::string(1, static_cast<char>('a' + c % 26)) + bg;
+                    else screen += static_cast<char>('a' + c % 26);
+                }
+                screen += "\x1b[0m";
+            }
+            ANSIParser p;
+            p.parse(grid, screen.data(), screen.size());
+        } else if (s.workload) {
             std::vector<char> data = read_file(dir + "/" + s.workload);
             if (data.empty()) { std::fprintf(stderr, "missing %s\n", s.workload); continue; }
             // Enough to fill the visible grid several times over, so what's on

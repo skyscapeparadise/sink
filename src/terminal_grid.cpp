@@ -1938,6 +1938,14 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
             return (c >= 0 && c < row_view_cells.len) ? row_view_cells.cells[c] : blank_cell;
         };
 
+        // Neighbouring backgrounds of one color are one rectangle: the run's
+        // quad is widened rather than a quad added per cell. A full-screen
+        // program painting its background (htop, vim, tmux) otherwise sends
+        // a quad for every cell, every frame.
+        int run_base = -1;      // first vertex of the open run's quad
+        int run_end_col = -2;   // the last column it covers
+        SDL_FColor run_color{};
+
         for (int c = 0; c < cols_; ++c) {
             const Cell& cell = cell_of(c);
 
@@ -1978,9 +1986,19 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
                 bg_color = { 0.00f, 0.90f, 1.00f, 0.45f }; // Translucent Electric Cyan Search Highlight
             }
 
-            if (bg_color.a > 0.0f) {
+            const bool extends_run = run_base >= 0 && run_end_col == c - 1 && bg_color.r == run_color.r &&
+                                     bg_color.g == run_color.g && bg_color.b == run_color.b &&
+                                     bg_color.a == run_color.a;
+            if (bg_color.a > 0.0f && extends_run) {
+                bg_vertices_[static_cast<size_t>(run_base) + 1].position.x = x1;
+                bg_vertices_[static_cast<size_t>(run_base) + 3].position.x = x1;
+                run_end_col = c;
+            } else if (bg_color.a > 0.0f) {
                 int base_idx = static_cast<int>(bg_vertices_.size());
-                
+                run_base = base_idx;
+                run_end_col = c;
+                run_color = bg_color;
+
                 bg_vertices_.push_back({ {x0, y0}, bg_color, {0.0f, 0.0f} });
                 bg_vertices_.push_back({ {x1, y0}, bg_color, {0.0f, 0.0f} });
                 bg_vertices_.push_back({ {x0, y1}, bg_color, {0.0f, 0.0f} });
