@@ -86,6 +86,12 @@ cd "${SRC_DIR}"
 # plenty of things), silently adding libX11/libxcb/libXau/libXdmcp -- ~1.3MB of
 # X11 -- to a macOS-only app bundle. Forced off.
 #
+# --disable-everything turns off the hwaccels too -- the glue between FFmpeg's
+# decoders and VideoToolbox -- so until they were named here, every video
+# background decoded in software on the CPU while video_engine.cpp asked for
+# hardware decoding and quietly didn't get it. These are the three codecs it
+# asks VideoToolbox for; the check after the build makes sure they're on.
+#
 # Note the bitstream filters: h264/hevc_mp4toannexb and extract_extradata are
 # what let the VideoToolbox hwaccel path work on MP4-contained H.264/HEVC.
 # Without them --disable-everything produces a build that opens files but
@@ -117,7 +123,15 @@ echo "configuring (LGPL, decode-only)..."
     --enable-parser=h264,hevc,mpeg4video,mpegvideo,mjpeg,vp8,vp9,av1,png \
     --enable-demuxer=mov,matroska,avi,mpegts,mpegps,flv,image2 \
     --enable-protocol=file \
-    --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,extract_extradata,vp9_superframe,av1_frame_split,prores_metadata
+    --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,extract_extradata,vp9_superframe,av1_frame_split,prores_metadata \
+    --enable-hwaccel=h264_videotoolbox,hevc_videotoolbox,prores_videotoolbox
+
+for hw in H264 HEVC PRORES; do
+    if ! grep -q "^#define CONFIG_${hw}_VIDEOTOOLBOX_HWACCEL 1" config_components.h; then
+        echo "ERROR: the ${hw} VideoToolbox hwaccel is off; videos would decode on the CPU"
+        exit 1
+    fi
+done
 
 echo "compiling (this takes a few minutes)..."
 make -j"$(sysctl -n hw.ncpu)"
