@@ -41,6 +41,8 @@ struct UIButton {
     SDL_FColor color;
     SDL_FColor hover_color;
     bool hovered = false;
+    bool toggle = false;  // drawn as a checkbox with its label, `on` its state
+    bool on = false;
 };
 
 struct UISlider {
@@ -106,6 +108,7 @@ public:
     // One line at the bottom of the window about sink.toml, such as a syntax
     // error that is stopping changes from being saved. Empty hides it.
     void set_config_notice(const std::string& text);
+    void set_toggle(int id, bool on);
     // The bundled themes and the one in use, for the theme button and its list.
     void set_themes(const std::vector<std::string>& names, const std::string& active);
 
@@ -172,6 +175,9 @@ private:
     static const std::vector<std::string> kBackgroundKinds;
     std::string background_kind_label() const;
     void draw_list(const DropList& list, float scale);
+    // Where text goes so it sits centered in a row that starts at `y` and is
+    // `h` tall, both in points; returns pixels.
+    float text_y(float y, float h, float scale) const;
     // Handles a click while `list` is open: picks a row, or just closes it.
     void click_list(DropList& list, float mx, float my);
     bool is_builtin(const std::string& name) const;

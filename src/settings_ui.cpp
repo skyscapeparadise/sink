@@ -42,10 +42,10 @@ bool SettingsUI::open(SDL_Window* parent_window) {
 
     parent_ = parent_window;
     
-    // Create settings window (500x517, High-DPI enabled)
+    // Create settings window (500x526, High-DPI enabled)
     window_ = SDL_CreateWindow(
         "sink settings",
-        500, 517,
+        500, 526,
         SDL_WINDOW_HIGH_PIXEL_DENSITY
     );
 
@@ -186,24 +186,20 @@ std::string SettingsUI::background_kind_label() const {
     return "video";
 }
 
+void SettingsUI::set_toggle(int id, bool on) {
+    for (auto& btn : buttons_) {
+        if (btn.id == id) btn.on = on;
+    }
+}
+
 void SettingsUI::set_animated_typing(bool enabled) {
     animated_typing_ = enabled;
-    for (auto& btn : buttons_) {
-        if (btn.id == 5) {
-            btn.label = std::string("typing: ") + (animated_typing_ ? "on" : "off");
-            break;
-        }
-    }
+    set_toggle(5, enabled);
 }
 
 void SettingsUI::set_broadcasting(bool enabled) {
     broadcasting_ = enabled;
-    for (auto& btn : buttons_) {
-        if (btn.id == 6) {
-            btn.label = std::string("broadcast: ") + (broadcasting_ ? "on" : "off");
-            break;
-        }
-    }
+    set_toggle(6, enabled);
 }
 
 void SettingsUI::set_exposure(float exposure) {
@@ -212,7 +208,7 @@ void SettingsUI::set_exposure(float exposure) {
         if (s.id == 1) {
             s.value = std::clamp(exposure_ / 2.0f, 0.0f, 1.0f);
             char buf[32];
-            std::snprintf(buf, sizeof(buf), "Exposure: %.2f", exposure_);
+            std::snprintf(buf, sizeof(buf), "exposure: %.2f", exposure_);
             s.label = buf;
             break;
         }
@@ -237,49 +233,27 @@ void SettingsUI::set_hue_shift(float degrees) {
 
 void SettingsUI::set_vibrancy_enabled(bool enabled) {
     vibrancy_enabled_ = enabled;
-    for (auto& btn : buttons_) {
-        if (btn.id == 7) {
-            btn.label = std::string("title bar: ") + (vibrancy_enabled_ ? "on" : "off");
-            break;
-        }
-    }
+    set_toggle(7, enabled);
 }
 
 void SettingsUI::set_crt_effect_enabled(bool enabled) {
     crt_effect_enabled_ = enabled;
-    for (auto& btn : buttons_) {
-        if (btn.id == 8) {
-            btn.label = std::string("crt shader: ") + (crt_effect_enabled_ ? "on" : "off");
-            break;
-        }
-    }
+    set_toggle(8, enabled);
 }
 
 void SettingsUI::set_ligatures_enabled(bool enabled) {
     ligatures_enabled_ = enabled;
-    for (auto& btn : buttons_) {
-        if (btn.id == 9) {
-            btn.label = std::string("ligatures: ") + (ligatures_enabled_ ? "on" : "off");
-            break;
-        }
-    }
+    set_toggle(9, enabled);
 }
 
 void SettingsUI::set_hdr_console_enabled(bool enabled) {
     hdr_console_enabled_ = enabled;
-    for (auto& btn : buttons_) {
-        if (btn.id == 10) {
-            btn.label = std::string("hdr console: ") + (hdr_console_enabled_ ? "on" : "off");
-            break;
-        }
-    }
+    set_toggle(10, enabled);
 }
 
 void SettingsUI::set_shell_integration_enabled(bool enabled) {
     shell_integration_enabled_ = enabled;
-    for (auto& btn : buttons_) {
-        if (btn.id == 11) btn.label = std::string("shell integration: ") + (enabled ? "on" : "off");
-    }
+    set_toggle(11, enabled);
 }
 
 void SettingsUI::set_preset_names(const std::vector<std::string>& names) {
@@ -297,11 +271,14 @@ void SettingsUI::set_config_notice(const std::string& text) {
 void SettingsUI::set_themes(const std::vector<std::string>& names, const std::string& active) {
     theme_list_.items = names;
     theme_list_.active = active;
-    // Short names fit beside "theme:"; long ones take the whole button.
-    const std::string label = active.size() <= 11 ? "theme: " + active : active;
+    const std::string label = "theme: " + active;
     for (auto& btn : buttons_) {
         if (btn.id == THEME_BTN) btn.label = label;
     }
+}
+
+float SettingsUI::text_y(float y, float h, float scale) const {
+    return (y + h / 2.0f) * scale - font_manager_.get_cell_height() / 2.0f;
 }
 
 void SettingsUI::draw_list(const DropList& list, float scale) {
@@ -473,13 +450,14 @@ std::string SettingsUI::truncate_head(const std::string& text, float max_width) 
 void SettingsUI::init_layout() {
     buttons_.clear();
 
-    theme_list_.x = 264.0f;
-    theme_list_.y = 393.0f;
-    theme_list_.upward = true;
+    theme_list_.x = 24.0f;
+    theme_list_.y = 194.0f;
+    theme_list_.w = 250.0f;
+    theme_list_.upward = false;
     theme_list_.user_code = 17;  // theme picked
     background_list_.items = kBackgroundKinds;
     background_list_.x = 24.0f;
-    background_list_.y = 166.0f;
+    background_list_.y = 158.0f;
     background_list_.w = 180.0f;
     background_list_.user_code = 18;  // background kind picked
     sliders_.clear();
@@ -501,47 +479,42 @@ void SettingsUI::init_layout() {
     buttons_.push_back(btn_preset_rename);
     buttons_.push_back(btn_preset_delete);
 
-    // 2. UI Buttons (shifted down 44pt from their original position to make
-    // room for the preset row above, then another 43pt below the sliders
-    // to make room for the hue shift slider added alongside exposure)
-    UIButton btn_bg_kind = { BG_KIND_BTN, background_kind_label(), {24.0f, 136.0f, 125.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
-    UIButton btn_bg_select = { 1, "select video...", {159.0f, 136.0f, 115.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
-    UIButton btn_font_select = { 3, "select font...", {24.0f, 313.0f, 125.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    // 2. The cards. "look": what's behind the text and the colors over it.
+    // "text": the typeface and how it's drawn. "all windows": settings that
+    // aren't part of a preset. Positions are in points, matching the cards
+    // render() draws; checkboxes sit in three columns, at 24, 184 and 344.
+    auto button = [&](int id, const std::string& label, float x, float y, float w) {
+        buttons_.push_back({ id, label, {x, y, w, 28.0f}, colors_.btn_idle, colors_.btn_hover });
+    };
+    auto toggle = [&](int id, const std::string& label, bool on, float x, float y, float w) {
+        UIButton b{ id, label, {x, y, w, 24.0f}, colors_.btn_idle, colors_.btn_hover };
+        b.toggle = true;
+        b.on = on;
+        buttons_.push_back(b);
+    };
+    button(BG_KIND_BTN, background_kind_label(), 24.0f, 128.0f, 125.0f);
+    button(1, "select video...", 159.0f, 128.0f, 115.0f);
+    button(THEME_BTN, "theme: " + theme_list_.active, 24.0f, 164.0f, 250.0f);
+    toggle(8, "crt shader", crt_effect_enabled_, 24.0f, 280.0f, 150.0f);
+    toggle(7, "title bar", vibrancy_enabled_, 184.0f, 280.0f, 150.0f);
 
-    // Two rows of toggles, packed to their actual label widths instead of
-    // one-per-row -- there's plenty of horizontal room in a 468pt-wide card
-    // for three (then two) of these side by side.
-    UIButton btn_crt_toggle = { 8, std::string("crt shader: ") + (crt_effect_enabled_ ? "on" : "off"), {24.0f, 355.0f, 135.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
-    UIButton btn_vibrancy_toggle = { 7, std::string("title bar: ") + (vibrancy_enabled_ ? "on" : "off"), {169.0f, 355.0f, 140.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
-    UIButton btn_ligatures_toggle = { 9, std::string("ligatures: ") + (ligatures_enabled_ ? "on" : "off"), {319.0f, 355.0f, 145.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
+    button(3, "select font...", 24.0f, 352.0f, 125.0f);
+    toggle(9, "ligatures", ligatures_enabled_, 24.0f, 390.0f, 150.0f);
+    toggle(5, "typing animation", animated_typing_, 184.0f, 390.0f, 150.0f);
+    toggle(10, "hdr text", hdr_console_enabled_, 344.0f, 390.0f, 120.0f);
 
-    UIButton btn_hdr_console_toggle = { 10, std::string("hdr console: ") + (hdr_console_enabled_ ? "on" : "off"), {24.0f, 397.0f, 165.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
-    UIButton btn_broadcast_toggle = { 6, std::string("broadcast: ") + (broadcasting_ ? "on" : "off"), {199.0f, 397.0f, 135.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
-
-    buttons_.push_back(btn_bg_kind);
-    buttons_.push_back(btn_bg_select);
-    buttons_.push_back(btn_font_select);
-    buttons_.push_back(btn_crt_toggle);
-    buttons_.push_back(btn_vibrancy_toggle);
-    buttons_.push_back(btn_ligatures_toggle);
-    buttons_.push_back(btn_hdr_console_toggle);
-    buttons_.push_back(btn_broadcast_toggle);
-    UIButton btn_theme = { THEME_BTN, theme_list_.active.size() <= 11 ? "theme: " + theme_list_.active : theme_list_.active,
-                           {344.0f, 397.0f, 140.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
-    buttons_.push_back(btn_theme);
-    UIButton btn_shell_integration = { 11, std::string("shell integration: ") + (shell_integration_enabled_ ? "on" : "off"),
-                                       {24.0f, 439.0f, 200.0f, 28.0f}, colors_.btn_idle, colors_.btn_hover };
-    buttons_.push_back(btn_shell_integration);
+    toggle(11, "shell integration", shell_integration_enabled_, 24.0f, 462.0f, 150.0f);
+    toggle(6, "broadcast input", broadcasting_, 184.0f, 462.0f, 150.0f);
 
     // 3. UI Sliders
     char exposure_buf[32];
     std::snprintf(exposure_buf, sizeof(exposure_buf), "exposure: %.2f", exposure_);
-    UISlider s_exposure = { 1, exposure_buf, {24.0f, 194.0f, 440.0f, 8.0f}, std::clamp(exposure_ / 2.0f, 0.0f, 1.0f), 0.0f, 2.0f };
+    UISlider s_exposure = { 1, exposure_buf, {24.0f, 222.0f, 440.0f, 8.0f}, std::clamp(exposure_ / 2.0f, 0.0f, 1.0f), 0.0f, 2.0f };
     sliders_.push_back(s_exposure);
 
     char hue_buf[32];
     std::snprintf(hue_buf, sizeof(hue_buf), "hue shift: %.0f deg", hue_shift_);
-    UISlider s_hue = { 2, hue_buf, {24.0f, 238.0f, 440.0f, 8.0f}, std::clamp(hue_shift_ / 360.0f, 0.0f, 1.0f), 0.0f, 360.0f };
+    UISlider s_hue = { 2, hue_buf, {24.0f, 260.0f, 440.0f, 8.0f}, std::clamp(hue_shift_ / 360.0f, 0.0f, 1.0f), 0.0f, 360.0f };
     sliders_.push_back(s_hue);
 }
 
@@ -810,14 +783,16 @@ void SettingsUI::render() {
         SDL_RenderGeometry(renderer_, nullptr, vertices, 4, indices, 6);
     }
 
-    // 2. Draw section cards
-    SDL_FRect bg_card = { 16.0f * scale, 104.0f * scale, 468.0f * scale, 158.0f * scale };
-    draw_rect_filled(bg_card, colors_.card, 10.0f * scale);
-    draw_rect_outline(bg_card, colors_.border, 10.0f * scale);
-
-    SDL_FRect font_card = { 16.0f * scale, 279.0f * scale, 468.0f * scale, 207.0f * scale };
-    draw_rect_filled(font_card, colors_.card, 10.0f * scale);
-    draw_rect_outline(font_card, colors_.border, 10.0f * scale);
+    // 2. Section cards, each with its title.
+    auto card = [&](float y, float h, const char* title) {
+        SDL_FRect r = { 16.0f * scale, y * scale, 468.0f * scale, h * scale };
+        draw_rect_filled(r, colors_.card, 10.0f * scale);
+        draw_rect_outline(r, colors_.border, 10.0f * scale);
+        draw_text(title, 24.0f * scale, text_y(y + 4.0f, 20.0f, scale), colors_.text_secondary);
+    };
+    card(100.0f, 214.0f, "look");
+    card(326.0f, 96.0f, "text");
+    card(434.0f, 62.0f, "all windows - not part of the preset");
 
     // 3. Draw Logos in Header Bar
     if (sink_logo_) {
@@ -852,7 +827,6 @@ void SettingsUI::render() {
     // arbitrarily short prefix.
     float value_right_edge = 476.0f * scale; // card right edge (484) minus a small margin
 
-    draw_text("background", 24.0f * scale, 112.0f * scale, colors_.text_secondary);
     // Beside the buttons: the video file, or what the kind is.
     const std::string kind = background_kind_label();
     std::string bg_disp = kind == "video"        ? bg_path_
@@ -865,9 +839,8 @@ void SettingsUI::render() {
                         : std::string("the desktop, through glass");
     float bg_value_x = 284.0f * scale;
     bg_disp = truncate_head(bg_disp, value_right_edge - bg_value_x);
-    draw_text(bg_disp, bg_value_x, 143.0f * scale, colors_.text_primary);
+    draw_text(bg_disp, bg_value_x, text_y(128.0f, 28.0f, scale), colors_.text_primary);
 
-    draw_text("terminal typeface font", 24.0f * scale, 288.0f * scale, colors_.text_secondary);
     std::string font_disp = font_path_;
     std::string font_lower = font_disp;
     std::transform(font_lower.begin(), font_lower.end(), font_lower.begin(), ::tolower);
@@ -876,7 +849,7 @@ void SettingsUI::render() {
     }
     float font_value_x = 159.0f * scale;
     font_disp = truncate_head(font_disp, value_right_edge - font_value_x);
-    draw_text(font_disp, font_value_x, 320.0f * scale, colors_.text_primary);
+    draw_text(font_disp, font_value_x, text_y(352.0f, 28.0f, scale), colors_.text_primary);
 
     // 4. Draw Buttons (ghost buttons with thin outline borders)
     bool preset_locked = is_builtin(active_preset_);
@@ -899,6 +872,22 @@ void SettingsUI::render() {
             btn.rect.h * scale
         };
 
+        if (btn.toggle) {
+            // A checkbox: filled in the accent color when on, its label beside it.
+            const float box = 14.0f * scale;
+            SDL_FRect b = { phys_rect.x, phys_rect.y + (phys_rect.h - box) / 2.0f, box, box };
+            if (btn.on) {
+                draw_rect_filled(b, SDL_FColor{0.0f, 0.8f, 0.8f, 0.85f}, 3.0f * scale);
+            } else {
+                draw_rect_filled(b, colors_.card, 3.0f * scale);
+            }
+            draw_rect_outline(b, btn.hovered ? SDL_FColor{1.0f, 1.0f, 1.0f, 0.70f}
+                                             : SDL_FColor{1.0f, 1.0f, 1.0f, 0.30f}, 3.0f * scale);
+            draw_text(btn.label, b.x + box + 8.0f * scale, text_y(btn.rect.y, btn.rect.h, scale),
+                      btn.hovered || btn.on ? colors_.text_primary : colors_.text_secondary);
+            continue;
+        }
+
         draw_rect_filled(phys_rect, disabled ? colors_.btn_idle : (btn.hovered ? btn.hover_color : btn.color), 6.0f * scale);
 
         // Draw thin white border outline (0.2 alpha idle, 0.6 alpha hover)
@@ -909,9 +898,7 @@ void SettingsUI::render() {
         float text_w = measure_text_width(btn.label);
 
         float tx = (phys_rect.x + phys_rect.w / 2.0f) - (text_w / 2.0f);
-        float ty = (phys_rect.y + phys_rect.h / 2.0f) - (font_manager_.get_cell_height() / 2.0f);
-
-        draw_text(btn.label, tx, ty, disabled ? colors_.text_secondary : colors_.text_primary);
+        draw_text(btn.label, tx, text_y(btn.rect.y, btn.rect.h, scale), disabled ? colors_.text_secondary : colors_.text_primary);
     }
 
     // 4b. Preset name edit row (new/rename): text field + explicit save/
@@ -1004,7 +991,7 @@ void SettingsUI::render() {
             }
             shown += "...";
         }
-        draw_text(shown, 24.0f * scale, 492.0f * scale, SDL_FColor{1.0f, 0.55f, 0.45f, 1.0f});
+        draw_text(shown, 24.0f * scale, text_y(500.0f, 22.0f, scale), SDL_FColor{1.0f, 0.55f, 0.45f, 1.0f});
     }
 
     // 5. Draw Sliders
