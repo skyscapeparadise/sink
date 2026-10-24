@@ -809,6 +809,32 @@ void setup_macos_menu() {
 @interface SinkWindowObserver : NSObject
 @end
 
+// Makes every layer in the window see-through, so the clear and glass
+// backgrounds show what's behind it. Needed again after full screen: on the
+// way out, SDL repaints its content view's layer black (SDL3_cocoaview's
+// updateLayer, since sink's windows aren't created SDL_WINDOW_TRANSPARENT --
+// that would also take away their shadow), and "clear" then shows black
+// until sink is restarted.
+static void make_window_see_through(NSWindow* nswin) {
+    NSView* contentView = [nswin contentView];
+    if (!contentView) return;
+    NSMutableArray* queue = [NSMutableArray arrayWithObject:contentView];
+    while ([queue count] > 0) {
+        NSView* v = [queue firstObject];
+        [queue removeObjectAtIndex:0];
+        // The frosted and liquid glass views draw themselves; leave them be.
+        if ([v isKindOfClass:[NSVisualEffectView class]] || [v isKindOfClass:[NSGlassEffectView class]]) continue;
+        [v setWantsLayer:YES];
+        if ([v layer]) {
+            [[v layer] setOpaque:NO];
+            [[v layer] setBackgroundColor:[NSColor clearColor].CGColor];
+        }
+        [queue addObjectsFromArray:[v subviews]];
+    }
+    [nswin setOpaque:NO];
+    [nswin setBackgroundColor:[NSColor clearColor]];
+}
+
 @implementation SinkWindowObserver
 + (void)attachToWindow:(NSWindow*)nswin {
     static SinkWindowObserver* observer = nil;
@@ -837,6 +863,10 @@ void setup_macos_menu() {
     [win setStyleMask:([win styleMask] | NSWindowStyleMaskFullSizeContentView)];
     [win setTitlebarAppearsTransparent:YES];
     [self updateLayoutForWindow:win];
+    make_window_see_through(win);
+    // SDL handles the same notification, and in no set order with this one,
+    // and the black repaint can land a run-loop turn later -- so again then.
+    dispatch_async(dispatch_get_main_queue(), ^{ make_window_see_through(win); });
 }
 
 - (void)windowDidEnterFullScreen:(NSNotification*)note {
@@ -880,17 +910,7 @@ void enable_macos_window_vibrancy(SDL_Window* sdl_win, bool enable) {
         NSView* contentView = [nswin contentView];
         if (!contentView) return;
 
-        NSMutableArray* queue = [NSMutableArray arrayWithObject:contentView];
-        while ([queue count] > 0) {
-            NSView* v = [queue firstObject];
-            [queue removeObjectAtIndex:0];
-            [v setWantsLayer:YES];
-            if ([v layer]) {
-                [[v layer] setOpaque:NO];
-                [[v layer] setBackgroundColor:[NSColor clearColor].CGColor];
-            }
-            [queue addObjectsFromArray:[v subviews]];
-        }
+        make_window_see_through(nswin);
 
         NSVisualEffectView* fullEffectView = nil;
         NSVisualEffectView* titlebarEffectView = nil;
@@ -925,8 +945,6 @@ void enable_macos_window_vibrancy(SDL_Window* sdl_win, bool enable) {
             [contentView addSubview:titlebarEffectView positioned:NSWindowAbove relativeTo:nil];
         }
 
-        [nswin setOpaque:NO];
-        [nswin setBackgroundColor:[NSColor clearColor]];
         [nswin setTitlebarAppearsTransparent:YES];
         [nswin setStyleMask:([nswin styleMask] | NSWindowStyleMaskFullSizeContentView)];
 
