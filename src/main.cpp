@@ -1732,7 +1732,8 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
     // Spawn first window
     TerminalWindow* tw = create_terminal_window(state, nullptr);
     if (!tw) {
-        delete state;
+        // SDL_AppQuit frees the state: SDL passes it *appstate either way,
+        // and freeing it here too crashed.
         return SDL_APP_FAILURE;
     }
     state->windows.push_back(tw);
