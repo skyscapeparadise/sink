@@ -974,6 +974,14 @@ void enable_macos_window_vibrancy(SDL_Window* sdl_win, bool enable) {
         [nswin setTitlebarAppearsTransparent:YES];
         [nswin setStyleMask:([nswin styleMask] | NSWindowStyleMaskFullSizeContentView)];
 
+        // The title bar's blur has to sit above SDL's Metal view, which SDL
+        // adds on top of everything when it creates a renderer -- and
+        // toggling HDR text recreates the renderer, which put the new Metal
+        // view over the blur and left the title bar switch only half working.
+        if ([[contentView subviews] lastObject] != titlebarEffectView) {
+            [contentView addSubview:titlebarEffectView positioned:NSWindowAbove relativeTo:nil];
+        }
+
         if (enable) { // title bar: ON (Native Liquid Glass Title Bar over Desktop, Native "sink" Title)
             NSRect b = [contentView bounds];
             [titlebarEffectView setFrame:NSMakeRect(0, b.size.height - titlebar_h, b.size.width, titlebar_h)];
