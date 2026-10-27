@@ -466,6 +466,14 @@ Config read_doc(const toml::table& doc, const std::string& file) {
             }
             continue;
         }
+        if (name == "edits") {
+            if (const auto* t = node.as_table()) {
+                walk(*t, Scope::Preset, "", "edits.", c.edits, c.warnings);
+            } else {
+                c.warnings.push_back({ line_of(node), "edits should be a table; ignoring it" });
+            }
+            continue;
+        }
         if (const KeyInfo* k = find_key(Scope::Global, name)) {
             if (auto v = convert(*k, name, node, c.warnings)) c.global[name] = Setting{ *v, line_of(node) };
         } else if (const auto* sub = node.as_table()) {
@@ -487,6 +495,7 @@ std::string dir_of(const std::string& path) {
 // `over` on top of `base`, key by key; presets merge per key too.
 void merge_into(Config& base, const Config& over) {
     for (const auto& [path, setting] : over.global) base.global[path] = setting;
+    for (const auto& [path, setting] : over.edits) base.edits[path] = setting;
     for (const std::string& name : over.preset_order) {
         auto it = over.presets.find(name);
         if (it == over.presets.end()) continue;
@@ -644,11 +653,30 @@ std::map<std::string, Value> preset_value_map(const Config& c, const std::string
     return v;
 }
 
+PresetValues resolve_values(const std::string& name, std::map<std::string, Value> v);
+
 } // namespace
 
 PresetValues resolve_preset(const Config& c, const std::string& name) {
-    std::map<std::string, Value> v = preset_value_map(c, name);
+    return resolve_values(name, preset_value_map(c, name));
+}
 
+PresetValues resolve_active(const Config& c) {
+    const std::string name = active_preset(c);
+    std::map<std::string, Value> v = preset_value_map(c, name);
+    for (const auto& [path, setting] : c.edits) v[path] = setting.value;
+    return resolve_values(name, std::move(v));
+}
+
+Value preset_value(const Config& c, const std::string& name, const std::string& path) {
+    const std::map<std::string, Value> v = preset_value_map(c, name);
+    auto it = v.find(path);
+    return it == v.end() ? Value(std::string()) : it->second;
+}
+
+namespace {
+
+PresetValues resolve_values(const std::string& name, std::map<std::string, Value> v) {
     auto str = [&](const char* p) { return std::get<std::string>(v[p]); };
     auto num = [&](const char* p) { return std::get<double>(v[p]); };
     auto flag = [&](const char* p) { return std::get<bool>(v[p]); };
@@ -679,6 +707,8 @@ PresetValues resolve_preset(const Config& c, const std::string& name) {
     r.glass_tint = num("glass.tint");
     return r;
 }
+
+} // namespace
 
 // ---- Generating and migrating -----------------------------------------------------
 
@@ -884,6 +914,10 @@ std::string generate(const Config& c) {
         const std::string prefix = "presets." + toml_key(name) + ".";
         o << "\n[presets." << toml_key(name) << "]\n";
         emit_scope(o, Scope::Preset, it->second, prefix, true);
+    }
+    if (!c.edits.empty()) {
+        o << "\n[edits]\n";
+        emit_scope(o, Scope::Preset, c.edits, "edits.", true);
     }
     return o.str();
 }
@@ -1208,6 +1242,11 @@ std::string effective_toml(const Config& c) {
                              is_builtin(name) ? "  # built-in" : "", false,
                              [&](const KeyInfo& k) { return values.at(k.path); });
     }
+    if (!c.edits.empty()) {
+        o << "\n# Changes made in Settings on top of " << active_preset(c) << ", not saved into a preset.\n";
+        o << "[edits]\n";
+        emit_scope(o, Scope::Preset, c.edits, "edits.", true);
+    }
     return o.str();
 }
 
@@ -1226,6 +1265,11 @@ std::string json_schema() {
         "      \"additionalProperties\": {\n" +
         object_schema(Scope::Preset, "", "        ") +
         "      }\n"
+        "    },\n";
+    presets_member +=
+        "    \"edits\": {\n"
+        "      \"description\": \"Changes made in Settings on top of the active preset, kept until saved into a preset or dropped by picking one.\",\n" +
+        object_schema(Scope::Preset, "", "      ") +
         "    },\n";
     std::string out = "{\n"
                       "  \"$schema\": \"http://json-schema.org/draft-07/schema#\",\n"

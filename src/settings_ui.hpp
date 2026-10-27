@@ -10,7 +10,7 @@
 enum PresetButtonId {
     PRESET_BTN_NAME = 20,     // click to open the preset dropdown
     PRESET_BTN_NEW = 21,
-    PRESET_BTN_DUPLICATE = 22,
+    PRESET_BTN_SAVE = 22,
     PRESET_BTN_RENAME = 23,
     PRESET_BTN_DELETE = 24,
     THEME_BTN = 25,           // click to open the theme list
@@ -100,8 +100,12 @@ public:
     // `names` should already be sorted the way it should display ("pool" first).
     void set_preset_names(const std::vector<std::string>& names);
     void set_active_preset(const std::string& name);
-    // Presets that ship with sink: marked in the list, and not renamable or
-    // deletable (changing one's settings makes a copy instead; see main.cpp).
+    // Whether Settings has changes on top of the active preset (sink.toml's
+    // [edits]): shown as "(edited)", and what "save" saves. Picking a preset
+    // from the list, even the active one, drops them.
+    void set_preset_edited(bool edited);
+    // Presets that ship with sink: marked in the list, and not renamable,
+    // deletable or savable into.
     void set_builtin_presets(const std::vector<std::string>& names);
     // Presets that come only from an included file: tagged and locked the same way.
     void set_included_presets(const std::vector<std::string>& names);
@@ -144,6 +148,9 @@ private:
     // Preset row state
     std::vector<std::string> preset_names_ = {"pool"};
     std::string active_preset_ = "pool";
+    bool preset_edited_ = false;
+    bool is_sink_preset(const std::string& name) const;  // ships with sink
+    std::string preset_label(float max_w);
     std::vector<std::string> builtin_presets_ = {"pool"};
     std::vector<std::string> included_presets_;
     bool is_included(const std::string& name) const;

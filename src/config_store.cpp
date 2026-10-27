@@ -297,6 +297,75 @@ void ConfigStore::set_preset(const std::string& preset, const std::string& path,
     edit(e);
 }
 
+void ConfigStore::set_edit(const std::string& path, const config::Value& value) {
+    const config::KeyInfo* k = config::find_key(config::Scope::Preset, path);
+    if (!k) return;
+    config::Value v = value;
+    if (k->type == config::KeyType::Path && std::holds_alternative<std::string>(v) &&
+        config::is_path(std::get<std::string>(v))) {
+        v = config::contract_home(std::get<std::string>(v));
+    }
+    config::Value preset_has = config::preset_value(config_, config::active_preset(config_), path);
+    if (k->type == config::KeyType::Path && std::holds_alternative<std::string>(preset_has) &&
+        config::is_path(std::get<std::string>(preset_has))) {
+        preset_has = config::contract_home(config::expand_home(std::get<std::string>(preset_has)));
+    }
+    auto [table, key] = split(path);
+    toml_edit::Edit e;
+    e.table = { "edits" };
+    e.table.insert(e.table.end(), table.begin(), table.end());
+    e.key = key;
+    if (same_value(v, preset_has)) {
+        if (!config_.edits.count(path)) return;
+        e.kind = toml_edit::Edit::Kind::Remove;
+    } else {
+        if (config_.edits.empty()) {
+            // An [edits] header of its own, even when the first edit is in a
+            // sub-table, so clear_edits() can take the whole table out in place.
+            toml_edit::Edit add;
+            add.kind = toml_edit::Edit::Kind::AddTable;
+            add.table = { "edits" };
+            edit(add);
+        }
+        e.kind = toml_edit::Edit::Kind::Set;
+        e.value_text = config::to_toml(v);
+    }
+    edit(e);
+    if (config_.edits.empty()) clear_edits();  // no empty [edits] left behind
+}
+
+void ConfigStore::clear_edits() {
+    toml_edit::Edit e;
+    e.kind = toml_edit::Edit::Kind::RemoveTable;
+    e.table = { "edits" };
+    edit(e);
+}
+
+bool ConfigStore::save_edits() {
+    const std::string name = config::active_preset(config_);
+    if (config::is_builtin(name)) return false;
+    const config::SettingMap edits = config_.edits;
+    for (const auto& [path, setting] : edits) set_preset(name, path, setting.value);
+    clear_edits();
+    return true;
+}
+
+std::string ConfigStore::save_as_preset(const std::string& base) {
+    const std::string from = config::active_preset(config_);
+    std::vector<std::pair<std::string, config::Value>> overrides;
+    for (const config::BuiltinPreset& b : config::builtin_presets()) {
+        if (from == b.name) overrides = b.overrides;
+    }
+    if (auto it = config_.presets.find(from); it != config_.presets.end()) {
+        for (const auto& [path, setting] : it->second) overrides.push_back({ path, setting.value });
+    }
+    for (const auto& [path, setting] : config_.edits) overrides.push_back({ path, setting.value });
+    const std::string name = create_preset(base, overrides);
+    clear_edits();
+    set_global("preset", config::Value(name));
+    return name;
+}
+
 std::string ConfigStore::unique_name(const std::string& base) const {
     const std::string b = base.empty() ? std::string("preset") : base;
     if (!config::preset_exists(config_, b)) return b;
@@ -315,17 +384,6 @@ std::string ConfigStore::create_preset(const std::string& base,
     edit(e);
     for (const auto& [path, value] : overrides) set_preset(name, path, value);
     return name;
-}
-
-std::string ConfigStore::duplicate_preset(const std::string& name) {
-    std::vector<std::pair<std::string, config::Value>> overrides;
-    for (const config::BuiltinPreset& b : config::builtin_presets()) {
-        if (name == b.name) overrides = b.overrides;
-    }
-    if (auto it = config_.presets.find(name); it != config_.presets.end()) {
-        for (const auto& [path, setting] : it->second) overrides.push_back({ path, setting.value });
-    }
-    return create_preset(name + " copy", overrides);
 }
 
 bool ConfigStore::rename_preset(const std::string& from, const std::string& to) {
@@ -348,6 +406,9 @@ bool ConfigStore::remove_preset(const std::string& name) {
     e.kind = toml_edit::Edit::Kind::RemoveTable;
     e.table = { "presets", name };
     edit(e);
-    if (active) set_global("preset", config::Value(std::string(config::builtin_presets().front().name)));
+    if (active) {
+        set_global("preset", config::Value(std::string(config::builtin_presets().front().name)));
+        clear_edits();  // they were changes to the preset just deleted
+    }
     return true;
 }

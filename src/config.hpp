@@ -93,6 +93,10 @@ struct Config {
     SettingMap global;                          // validated global keys
     std::map<std::string, SettingMap> presets;  // user presets: name -> overrides
     std::vector<std::string> preset_order;      // names as they appear in the file
+    // [edits]: changes made in Settings on top of the active preset, kept
+    // until they're saved into a preset ("save", "new") or dropped by picking
+    // a preset. Same keys as a preset.
+    SettingMap edits;
     std::vector<Diagnostic> warnings;           // unknown keys, out-of-range values
     // Presets sink.toml itself has a table for. The rest come only from
     // included files, which sink never writes, so they can't be renamed or
@@ -182,6 +186,12 @@ std::vector<std::string> preset_names(const Config& c);
 bool preset_exists(const Config& c, const std::string& name);
 
 PresetValues resolve_preset(const Config& c, const std::string& name);
+
+// What windows on the active preset show: it, with [edits] on top.
+PresetValues resolve_active(const Config& c);
+
+// One setting of a preset (preset-scope path), without [edits].
+Value preset_value(const Config& c, const std::string& name, const std::string& path);
 
 // ---- Generating and migrating -------------------------------------------------
 

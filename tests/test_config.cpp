@@ -374,8 +374,25 @@ static void test_published_schema_and_readme_are_current() {
     }
 }
 
+// [edits] sits on top of the active preset only, and survives a generate.
+static void test_edits_table() {
+    const config::Config c = read_ok("version = 1\npreset = \"x\"\n[presets.x]\nexposure = 0.5\n"
+                                   "[edits]\nexposure = 1.5\ncrt = true\nbogus = 1\n[edits.colors]\ncursor = \"#ff0000\"\n");
+    CHECK(c.edits.size() == 3);
+    CHECK(c.warnings.size() == 1);  // bogus
+    const config::PresetValues active = config::resolve_active(c);
+    CHECK(active.name == "x" && active.exposure == 1.5 && active.crt && active.cursor == "#ff0000");
+    CHECK(config::resolve_preset(c, "x").exposure == 0.5);
+    CHECK(!config::resolve_preset(c, "x").crt);
+    config::Diagnostic err;
+    auto again = config::read_text(config::generate(c), err);
+    CHECK(again && again->edits.size() == 3);
+    CHECK(config::read_text(config::effective_toml(c), err).has_value());
+}
+
 int main() {
     setenv("HOME", "/Users/test", 1);
+    test_edits_table();
     test_empty_file_is_all_defaults();
     test_reads_v1();
     test_bad_values_are_reported_not_trusted();

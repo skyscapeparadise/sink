@@ -59,14 +59,25 @@ public:
     void set_global(const std::string& path, const config::Value& value);
     void set_preset(const std::string& preset, const std::string& path, const config::Value& value);
 
+    // Settings' changes go into [edits], on top of the active preset, rather
+    // than into the preset itself. A value equal to the preset's own is
+    // removed, so moving a control back clears its edit.
+    void set_edit(const std::string& path, const config::Value& value);
+    void clear_edits();
+
+    // Moves [edits] into the active preset. False (and nothing changes) for a
+    // built-in, which can't be changed.
+    bool save_edits();
+
+    // A new preset holding the active preset's settings with [edits] applied,
+    // named `base` or `base 2`...; it becomes the active preset and [edits]
+    // is cleared. Returns the name used.
+    std::string save_as_preset(const std::string& base);
+
     // A new preset with `overrides` (preset-scope paths), named `base` or
     // `base 2`, `base 3`... whichever is free. Returns the name used.
     std::string create_preset(const std::string& base,
                               const std::vector<std::pair<std::string, config::Value>>& overrides = {});
-
-    // A copy of any preset, built-in or not, as a new preset named
-    // "<name> copy" (or "<name> copy 2"...). Returns the new name.
-    std::string duplicate_preset(const std::string& name);
 
     // False (and nothing changes) for built-ins, unknown names, and taken or
     // empty new names.

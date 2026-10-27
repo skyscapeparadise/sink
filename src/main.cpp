@@ -473,14 +473,13 @@ std::vector<std::string> current_preset_names() {
     return config::preset_names(static_cast<AppState*>(g_app_state)->config.config());
 }
 
-// Saves what the Settings window changed: each setting of the active preset
-// that differs from what sink.toml says becomes an edit to that one key. A
-// built-in can't be edited, so changing one first makes "<name> copy" and
-// switches to it. Written to disk once the changes stop (ConfigStore).
+// Saves what the Settings window changed: each setting that differs from what
+// sink.toml says goes into [edits], on top of the active preset. The preset
+// itself only changes when "save" is clicked, and "new" makes a preset of the
+// lot. Written to disk once the changes stop (ConfigStore).
 static void save_config(AppState* state) {
     ConfigStore& store = state->config;
-    std::string name = state->active_preset_name;
-    const config::PresetValues saved = config::resolve_preset(store.config(), name);
+    const config::PresetValues saved = config::resolve_active(store.config());
 
     std::vector<std::pair<std::string, config::Value>> changes;
     auto changed_str = [&](const char* key, const std::string& now, const std::string& before) {
@@ -505,17 +504,8 @@ static void save_config(AppState* state) {
     changed_str("theme", state->theme_name, saved.theme);
     if (changes.empty()) return;
 
-    if (config::is_builtin(name)) {
-        const std::string builtin = name;
-        name = store.duplicate_preset(name);
-        store.set_global("preset", config::Value(name));
-        state->active_preset_name = name;
-        for (auto* tw : state->windows) {
-            if (tw->preset_name == builtin) tw->preset_name = name;
-        }
-        refresh_settings_ui_presets(state);
-    }
-    for (const auto& [key, value] : changes) store.set_preset(name, key, value);
+    for (const auto& [key, value] : changes) store.set_edit(key, value);
+    refresh_settings_ui_presets(state);  // "(edited)", and whether "save" can be clicked
 }
 
 // Copies a resolved preset into AppState's live settings (windows are
@@ -596,7 +586,7 @@ static void load_config(AppState* state) {
     }
     apply_global_settings(state);
     const config::Config& c = state->config.config();
-    set_state_from_preset(state, config::resolve_preset(c, config::active_preset(c)));
+    set_state_from_preset(state, config::resolve_active(c));
 }
 
 // Spawn a new terminal window container
@@ -827,7 +817,7 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     {
         config::PresetValues p = preset_override
             ? *preset_override
-            : config::resolve_preset(state->config.config(), state->active_preset_name);
+            : config::resolve_active(state->config.config());
         if (!preset_override) {
             // A video given on the command line overrides the preset's.
             p.background = state->video_path.empty() || backdrop_of(state->background) != Backdrop::Video
@@ -1407,10 +1397,11 @@ static void refresh_settings_ui_presets(AppState* state) {
     }
     state->settings_ui.set_included_presets(included);
     state->settings_ui.set_active_preset(state->active_preset_name);
+    state->settings_ui.set_preset_edited(!state->config.config().edits.empty());
 }
 
 // Re-syncs every settings-window control from AppState, used after a preset
-// switch/create/duplicate/delete replaces the live settings wholesale.
+// switch, new, save or delete replaces the live settings wholesale.
 static void sync_settings_ui_from_state(AppState* state) {
     state->settings_ui.set_paths(background_display(state), state->font_path);
     state->settings_ui.set_animated_typing(state->animated_typing);
@@ -1439,7 +1430,7 @@ static void update_config_notice(AppState* state) {
     if (const auto& err = store.error()) {
         notice = "sink.toml line " + std::to_string(err->line) + ": " + clean(err->message) +
                  " -- changes won't be saved until it's fixed";
-    } else if (const std::string font = config::resolve_preset(store.config(), state->active_preset_name).font;
+    } else if (const std::string font = config::resolve_active(store.config()).font;
                !config::is_path(font) && !is_bundled_font_name(font) && !FontManager::can_open(font)) {
         notice = "font \"" + font + "\" isn't installed; using Monaspace Neon";
     } else if (const auto& warnings = store.config().warnings; !warnings.empty()) {
@@ -1470,11 +1461,11 @@ static void reload_config_if_changed(AppState* state) {
         const std::string previous_active = state->active_preset_name;
         const std::string active = config::active_preset(c);
         apply_global_settings(state);
-        set_state_from_preset(state, config::resolve_preset(c, active));
+        set_state_from_preset(state, config::resolve_active(c));
         for (auto* tw : state->windows) {
             std::string name = tw->preset_name;
             if (name == previous_active || !config::preset_exists(c, name)) name = active;
-            apply_preset_to_window(state, tw, config::resolve_preset(c, name));
+            apply_preset_to_window(state, tw, name == active ? config::resolve_active(c) : config::resolve_preset(c, name));
         }
         sync_settings_ui_from_state(state);
     }
@@ -2542,7 +2533,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             // the built-in video.
             char* path = event->user.code == 3 ? nullptr : (char*)event->user.data1;
             state->background = path ? std::string(path) : std::string("pool");
-            config::PresetValues p = config::resolve_preset(state->config.config(), state->active_preset_name);
+            config::PresetValues p = config::resolve_active(state->config.config());
             p.background = state->background;
             p.theme = state->theme_name;
             state->video_path = resolve_background(state->background);
@@ -2588,26 +2579,27 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             bool broadcast = (bool)(intptr_t)event->user.data1;
             std::cout << "Settings Event: input broadcasting toggled: " << (broadcast ? "ON" : "OFF") << std::endl;
             set_input_broadcasting(state, broadcast);
-        } else if (event->user.code == 10) { // Switch preset
+        } else if (event->user.code == 10) { // Preset picked: it, as saved, dropping any edits
             char* name = (char*)event->user.data1;
             std::cout << "Settings Event: switched to preset '" << name << "'" << std::endl;
+            state->config.clear_edits();
             state->config.set_global("preset", config::Value(std::string(name)));
-            apply_preset_to_state_and_windows(state, config::resolve_preset(state->config.config(), name));
+            apply_preset_to_state_and_windows(state, config::resolve_active(state->config.config()));
             sync_settings_ui_from_state(state);
             free(name);
-        } else if (event->user.code == 11) { // New preset, seeded with baseline defaults
+        } else if (event->user.code == 11) { // New preset: the current look, saved under a name
             char* name = (char*)event->user.data1;
             std::cout << "Settings Event: new preset '" << name << "'" << std::endl;
-            const std::string created = state->config.create_preset(name);  // every setting at its default
-            state->config.set_global("preset", config::Value(created));
-            apply_preset_to_state_and_windows(state, config::resolve_preset(state->config.config(), created));
+            const std::string created = state->config.save_as_preset(name);
+            for (auto* tw : state->windows) {
+                if (tw->preset_name == state->active_preset_name) tw->preset_name = created;
+            }
+            state->active_preset_name = created;  // the look itself is unchanged
             sync_settings_ui_from_state(state);
             free(name);
-        } else if (event->user.code == 12) { // Duplicate active preset
-            std::cout << "Settings Event: duplicating preset '" << state->active_preset_name << "'" << std::endl;
-            const std::string copy = state->config.duplicate_preset(state->active_preset_name);
-            state->config.set_global("preset", config::Value(copy));
-            apply_preset_to_state_and_windows(state, config::resolve_preset(state->config.config(), copy));
+        } else if (event->user.code == 12) { // Save edits into the active preset
+            std::cout << "Settings Event: saving edits into preset '" << state->active_preset_name << "'" << std::endl;
+            state->config.save_edits();  // built-ins refuse
             sync_settings_ui_from_state(state);
         } else if (event->user.code == 13) { // Rename active preset
             char* name = (char*)event->user.data1;
@@ -2624,7 +2616,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             std::cout << "Settings Event: deleting preset '" << state->active_preset_name << "'" << std::endl;
             if (state->config.remove_preset(state->active_preset_name)) {  // built-ins refuse
                 const config::Config& c = state->config.config();
-                apply_preset_to_state_and_windows(state, config::resolve_preset(c, config::active_preset(c)));
+                apply_preset_to_state_and_windows(state, config::resolve_active(c));
             }
             sync_settings_ui_from_state(state);
         } else if (event->user.code == 17) { // Theme picked in Settings
@@ -2633,7 +2625,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             // The active preset's colors under the new theme, keeping its
             // own color overrides, for every window -- as the other Settings
             // controls do.
-            config::PresetValues p = config::resolve_preset(state->config.config(), state->active_preset_name);
+            config::PresetValues p = config::resolve_active(state->config.config());
             p.theme = state->theme_name;
             state->color_scheme = scheme_for(p);
             p.background = state->background;

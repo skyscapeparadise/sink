@@ -336,12 +336,29 @@ void SettingsUI::set_included_presets(const std::vector<std::string>& names) {
 
 void SettingsUI::set_active_preset(const std::string& name) {
     active_preset_ = name.empty() ? "pool" : name;
-    for (auto& btn : buttons_) {
-        if (btn.id == PRESET_BTN_NAME) {
-            btn.label = std::string("preset: ") + active_preset_;
-            break;
+}
+
+void SettingsUI::set_preset_edited(bool edited) {
+    preset_edited_ = edited;
+}
+
+bool SettingsUI::is_sink_preset(const std::string& name) const {
+    return std::find(builtin_presets_.begin(), builtin_presets_.end(), name) != builtin_presets_.end();
+}
+
+// "preset: clouds (edited)", the name shortened to fit `max_w` (pixels) if it
+// has to be -- never the "(edited)", which is the part that matters.
+std::string SettingsUI::preset_label(float max_w) {
+    const std::string suffix = preset_edited_ ? " (edited)" : "";
+    std::string name = active_preset_;
+    if (measure_text_width("preset: " + name + suffix) > max_w) {
+        while (!name.empty() && measure_text_width("preset: " + name + "..." + suffix) > max_w) {
+            do { name.pop_back(); } while (!name.empty() && (static_cast<unsigned char>(name.back()) & 0xC0) == 0x80);
+            if (!name.empty() && (static_cast<unsigned char>(name.back()) & 0xC0) == 0xC0) name.pop_back();
         }
+        name += "...";
     }
+    return "preset: " + name + suffix;
 }
 
 SDL_FRect SettingsUI::dropdown_row_rect(int index) const {
@@ -467,9 +484,10 @@ void SettingsUI::init_layout() {
     // 16..484 bounds as the card outlines below it (rather than the 24pt
     // inset used by content *inside* those cards), so its left/right edges
     // line up with the visible card borders.
-    UIButton btn_preset_name = { PRESET_BTN_NAME, std::string("preset: ") + active_preset_, {16.0f, 66.0f, 178.0f, 24.0f}, colors_.btn_idle, colors_.btn_hover };
-    UIButton btn_preset_new = { PRESET_BTN_NEW, "new", {202.0f, 66.0f, 46.0f, 24.0f}, colors_.btn_idle, colors_.btn_hover };
-    UIButton btn_preset_dup = { PRESET_BTN_DUPLICATE, "duplicate", {256.0f, 66.0f, 88.0f, 24.0f}, colors_.btn_idle, colors_.btn_hover };
+    // The name's label is built as it's drawn (preset_label), to fit.
+    UIButton btn_preset_name = { PRESET_BTN_NAME, "", {16.0f, 66.0f, 220.0f, 24.0f}, colors_.btn_idle, colors_.btn_hover };
+    UIButton btn_preset_new = { PRESET_BTN_NEW, "new", {244.0f, 66.0f, 46.0f, 24.0f}, colors_.btn_idle, colors_.btn_hover };
+    UIButton btn_preset_dup = { PRESET_BTN_SAVE, "save", {298.0f, 66.0f, 46.0f, 24.0f}, colors_.btn_idle, colors_.btn_hover };
     UIButton btn_preset_rename = { PRESET_BTN_RENAME, "rename", {352.0f, 66.0f, 64.0f, 24.0f}, colors_.btn_idle, colors_.btn_hover };
     UIButton btn_preset_delete = { PRESET_BTN_DELETE, "delete", {424.0f, 66.0f, 60.0f, 24.0f}, colors_.btn_danger, colors_.btn_danger_hover };
 
@@ -615,7 +633,9 @@ void SettingsUI::process_event(const SDL_Event& event) {
                     if (mx >= row.x && mx <= row.x + row.w && my >= row.y && my <= row.y + row.h) {
                         preset_dropdown_open_ = false;
                         dropdown_hover_index_ = -1;
-                        if (preset_names_[i] != active_preset_) {
+                        // The active preset too, when it's been edited: that
+                        // puts it back as saved.
+                        if (preset_names_[i] != active_preset_ || preset_edited_) {
                             SDL_Event ev;
                             std::memset(&ev, 0, sizeof(ev));
                             ev.type = SDL_EVENT_USER;
@@ -694,12 +714,14 @@ void SettingsUI::process_event(const SDL_Event& event) {
                         dropdown_hover_index_ = -1;
                     } else if (btn.id == PRESET_BTN_NEW) {
                         begin_edit(PresetEditMode::kNew, "");
-                    } else if (btn.id == PRESET_BTN_DUPLICATE) {
-                        SDL_Event ev;
-                        std::memset(&ev, 0, sizeof(ev));
-                        ev.type = SDL_EVENT_USER;
-                        ev.user.code = 12; // Duplicate active preset
-                        SDL_PushEvent(&ev);
+                    } else if (btn.id == PRESET_BTN_SAVE) {
+                        if (preset_edited_ && !is_sink_preset(active_preset_)) {
+                            SDL_Event ev;
+                            std::memset(&ev, 0, sizeof(ev));
+                            ev.type = SDL_EVENT_USER;
+                            ev.user.code = 12; // Save edits into the active preset
+                            SDL_PushEvent(&ev);
+                        }
                     } else if (btn.id == PRESET_BTN_RENAME) {
                         if (!is_builtin(active_preset_)) {
                             begin_edit(PresetEditMode::kRename, active_preset_);
@@ -858,12 +880,13 @@ void SettingsUI::render() {
         // below) while editing; the action buttons next to it don't apply
         // to anything mid-edit, so skip the whole row.
         if (editing_name_ && (btn.id == PRESET_BTN_NAME || btn.id == PRESET_BTN_NEW ||
-                               btn.id == PRESET_BTN_DUPLICATE || btn.id == PRESET_BTN_RENAME ||
+                               btn.id == PRESET_BTN_SAVE || btn.id == PRESET_BTN_RENAME ||
                                btn.id == PRESET_BTN_DELETE)) {
             continue;
         }
 
-        bool disabled = preset_locked && (btn.id == PRESET_BTN_RENAME || btn.id == PRESET_BTN_DELETE);
+        bool disabled = (preset_locked && (btn.id == PRESET_BTN_RENAME || btn.id == PRESET_BTN_DELETE)) ||
+                        (btn.id == PRESET_BTN_SAVE && (!preset_edited_ || is_sink_preset(active_preset_)));
 
         SDL_FRect phys_rect = {
             btn.rect.x * scale,
@@ -895,10 +918,11 @@ void SettingsUI::render() {
             (btn.hovered ? SDL_FColor{1.0f, 1.0f, 1.0f, 0.60f} : SDL_FColor{1.0f, 1.0f, 1.0f, 0.20f});
         draw_rect_outline(phys_rect, border_color, 6.0f * scale);
 
-        float text_w = measure_text_width(btn.label);
+        const std::string label = btn.id == PRESET_BTN_NAME ? preset_label(phys_rect.w - 16.0f * scale) : btn.label;
+        float text_w = measure_text_width(label);
 
         float tx = (phys_rect.x + phys_rect.w / 2.0f) - (text_w / 2.0f);
-        draw_text(btn.label, tx, text_y(btn.rect.y, btn.rect.h, scale), disabled ? colors_.text_secondary : colors_.text_primary);
+        draw_text(label, tx, text_y(btn.rect.y, btn.rect.h, scale), disabled ? colors_.text_secondary : colors_.text_primary);
     }
 
     // 4b. Preset name edit row (new/rename): text field + explicit save/
@@ -940,43 +964,6 @@ void SettingsUI::render() {
         draw_rect_outline(phys_cancel, cancel_border, 6.0f * scale);
         float cancel_text_w = measure_text_width("cancel");
         draw_text("cancel", phys_cancel.x + phys_cancel.w / 2.0f - cancel_text_w / 2.0f, ty, colors_.text_secondary);
-    }
-
-    // 4c. Preset dropdown overlay, drawn last so it sits above every other card/button
-    if (preset_dropdown_open_) {
-        int count = std::min(static_cast<int>(preset_names_.size()), kMaxDropdownRows);
-        SDL_FRect list_bg = { 16.0f * scale, 92.0f * scale, 220.0f * scale, (count * 22.0f) * scale };
-        draw_rect_filled(list_bg, SDL_FColor{0.06f, 0.08f, 0.10f, 0.98f}, 6.0f * scale);
-        draw_rect_outline(list_bg, colors_.border, 6.0f * scale);
-
-        for (int i = 0; i < count; ++i) {
-            SDL_FRect row = dropdown_row_rect(i);
-            SDL_FRect phys_row = { row.x * scale, row.y * scale, row.w * scale, row.h * scale };
-            bool is_active = (preset_names_[i] == active_preset_);
-            bool is_hovered = (i == dropdown_hover_index_);
-            if (is_hovered || is_active) {
-                // Inset a bit from the row's full bounds so the highlight's
-                // own rounded corners never have to line up with the list's
-                // (a flush, square-cornered fill on the first/last row would
-                // poke out past the container's rounded corners).
-                SDL_FRect highlight = {
-                    phys_row.x + 3.0f * scale,
-                    phys_row.y + 2.0f * scale,
-                    phys_row.w - 6.0f * scale,
-                    phys_row.h - 4.0f * scale
-                };
-                SDL_FColor highlight_color = is_hovered ? SDL_FColor{1.0f, 1.0f, 1.0f, 0.10f} : SDL_FColor{0.0f, 0.8f, 0.8f, 0.15f};
-                draw_rect_filled(highlight, highlight_color, 4.0f * scale);
-            }
-            const float row_text_y = phys_row.y + (phys_row.h / 2.0f) - (font_manager_.get_cell_height() / 2.0f);
-            draw_text(preset_names_[i], phys_row.x + 10.0f * scale, row_text_y,
-                       (is_active || is_hovered) ? colors_.text_primary : colors_.text_secondary);
-            if (is_builtin(preset_names_[i])) {
-                const std::string tag = is_included(preset_names_[i]) ? "included" : "built-in";
-                draw_text(tag, phys_row.x + phys_row.w - measure_text_width(tag) - 10.0f * scale, row_text_y,
-                          colors_.text_secondary);
-            }
-        }
     }
 
     // sink.toml notice, e.g. a syntax error holding back saves.
@@ -1031,6 +1018,44 @@ void SettingsUI::render() {
         };
         draw_rect_filled(phys_knob, colors_.text_primary, 4.0f * scale); // White handle knob
         draw_rect_outline(phys_knob, colors_.border, 4.0f * scale);
+    }
+
+    // The preset list, after everything else (sliders included) so it sits over
+    // every control it opens across.
+    if (preset_dropdown_open_) {
+        int count = std::min(static_cast<int>(preset_names_.size()), kMaxDropdownRows);
+        SDL_FRect list_bg = { 16.0f * scale, 92.0f * scale, 220.0f * scale, (count * 22.0f) * scale };
+        draw_rect_filled(list_bg, SDL_FColor{0.06f, 0.08f, 0.10f, 0.98f}, 6.0f * scale);
+        draw_rect_outline(list_bg, colors_.border, 6.0f * scale);
+
+        for (int i = 0; i < count; ++i) {
+            SDL_FRect row = dropdown_row_rect(i);
+            SDL_FRect phys_row = { row.x * scale, row.y * scale, row.w * scale, row.h * scale };
+            bool is_active = (preset_names_[i] == active_preset_);
+            bool is_hovered = (i == dropdown_hover_index_);
+            if (is_hovered || is_active) {
+                // Inset a bit from the row's full bounds so the highlight's
+                // own rounded corners never have to line up with the list's
+                // (a flush, square-cornered fill on the first/last row would
+                // poke out past the container's rounded corners).
+                SDL_FRect highlight = {
+                    phys_row.x + 3.0f * scale,
+                    phys_row.y + 2.0f * scale,
+                    phys_row.w - 6.0f * scale,
+                    phys_row.h - 4.0f * scale
+                };
+                SDL_FColor highlight_color = is_hovered ? SDL_FColor{1.0f, 1.0f, 1.0f, 0.10f} : SDL_FColor{0.0f, 0.8f, 0.8f, 0.15f};
+                draw_rect_filled(highlight, highlight_color, 4.0f * scale);
+            }
+            const float row_text_y = phys_row.y + (phys_row.h / 2.0f) - (font_manager_.get_cell_height() / 2.0f);
+            draw_text(preset_names_[i], phys_row.x + 10.0f * scale, row_text_y,
+                       (is_active || is_hovered) ? colors_.text_primary : colors_.text_secondary);
+            if (is_builtin(preset_names_[i])) {
+                const std::string tag = is_included(preset_names_[i]) ? "included" : "built-in";
+                draw_text(tag, phys_row.x + phys_row.w - measure_text_width(tag) - 10.0f * scale, row_text_y,
+                          colors_.text_secondary);
+            }
+        }
     }
 
     // Last, so it sits over every other control.

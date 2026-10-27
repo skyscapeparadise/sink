@@ -178,7 +178,14 @@ tint = 0.3                       # how much of the theme's background lies over 
 
 exposure and hue shift work on all of them, not just videos.
 
-`pool` is built in, so you can't rename or delete it. change something while it's active and sink saves your changes as `pool copy`.
+changes you make in the settings window stick, even across restarts, but they don't touch your presets: they're kept in an `[edits]` table on top of the preset you're using, and the preset shows as "(edited)". **save** writes them into the preset, **new** saves the whole look as a new preset, and picking a preset from the list (even the one you're on) puts it back the way it was saved. `pool` is built in, so it can't be saved over, renamed or deleted.
+
+```toml
+preset = "clouds"
+
+[edits]                  # changed in settings, not saved into clouds yet
+exposure = 1.1
+```
 
 ### keybindings
 

@@ -183,26 +183,77 @@ static void test_preset_management() {
     ConfigStore store(dir + "/sink.toml");
     store.load();
 
-    std::string copy = store.duplicate_preset("pool");
-    CHECK(copy == "pool copy");
-    CHECK(store.duplicate_preset("pool") == "pool copy 2");
-    store.set_global("preset", config::Value(copy));
-    store.set_preset(copy, "crt", config::Value(true));
+    // "new" saves the current look -- here pool with crt on -- as a preset.
+    store.set_edit("crt", config::Value(true));
+    std::string mine = store.save_as_preset("mine");
+    CHECK(mine == "mine");
+    CHECK(config::active_preset(store.config()) == "mine");
+    CHECK(store.config().edits.empty());
+    CHECK(config::resolve_preset(store.config(), "mine").crt);
+    CHECK(store.save_as_preset("mine") == "mine 2");
+    store.set_global("preset", config::Value(mine));
     store.set_preset("pool", "crt", config::Value(true));  // built-ins can't be edited
     CHECK(!config::resolve_preset(store.config(), "pool").crt);
 
-    CHECK(!store.rename_preset("pool", "mine"));
-    CHECK(!store.rename_preset(copy, "pool copy 2"));  // taken
-    CHECK(store.rename_preset(copy, "retro"));
+    CHECK(!store.rename_preset("pool", "retro"));
+    CHECK(!store.rename_preset(mine, "mine 2"));  // taken
+    CHECK(store.rename_preset(mine, "retro"));
     CHECK(config::active_preset(store.config()) == "retro");
     CHECK(config::resolve_preset(store.config(), "retro").crt);
 
     CHECK(!store.remove_preset("pool"));
+    store.set_edit("exposure", config::Value(1.5));
     CHECK(store.remove_preset("retro"));
     CHECK(config::active_preset(store.config()) == "pool");
+    CHECK(store.config().edits.empty());  // they were edits to retro
     store.flush();
     std::string text = read(dir + "/sink.toml");
-    CHECK(!contains(text, "retro") && contains(text, "[presets.\"pool copy 2\"]"));
+    CHECK(!contains(text, "retro") && contains(text, "[presets.\"mine 2\"]") && !contains(text, "[edits]"));
+}
+
+// Settings' changes go into [edits] on top of the active preset; "save" moves
+// them into it, and picking a preset drops them.
+static void test_edits() {
+    std::string dir = scratch();
+    write(dir + "/sink.toml", "version = 1\npreset = \"clouds\"\n\n# mine\n[presets.clouds]\nexposure = 1.2\n");
+    ConfigStore store(dir + "/sink.toml");
+    store.load();
+
+    store.set_edit("hue_shift", config::Value(90.0));
+    store.set_edit("exposure", config::Value(1.2));  // what clouds has: no edit
+    CHECK(store.config().edits.size() == 1);
+    CHECK(config::resolve_active(store.config()).hue_shift == 90.0);
+    CHECK(config::resolve_preset(store.config(), "clouds").hue_shift == 0.0);
+    store.flush();
+    CHECK(contains(read(dir + "/sink.toml"), "[edits]\nhue_shift = 90\n"));
+    CHECK(contains(read(dir + "/sink.toml"), "# mine\n"));
+
+    // Moving a control back to the preset's value clears its edit, and the
+    // table with it.
+    store.set_edit("hue_shift", config::Value(0.0));
+    CHECK(store.config().edits.empty());
+    store.flush();
+    CHECK(!contains(read(dir + "/sink.toml"), "edits"));
+
+    // Saving moves them into the preset.
+    store.set_edit("crt", config::Value(true));
+    CHECK(store.save_edits());
+    CHECK(store.config().edits.empty());
+    CHECK(config::resolve_preset(store.config(), "clouds").crt);
+
+    // A built-in can't take them.
+    store.set_global("preset", config::Value(std::string("pool")));
+    store.set_edit("crt", config::Value(true));
+    CHECK(!store.save_edits());
+    CHECK(config::resolve_active(store.config()).crt);
+    CHECK(!config::resolve_preset(store.config(), "pool").crt);
+
+    // Picking a preset is clear_edits() and then `preset`.
+    store.clear_edits();
+    CHECK(!config::resolve_active(store.config()).crt);
+    store.flush();
+    const std::string text = read(dir + "/sink.toml");
+    CHECK(!contains(text, "edits") && contains(text, "# mine\n"));
 }
 
 static void test_regenerating_keeps_a_backup() {
@@ -286,6 +337,7 @@ int main() {
     test_outside_changes_are_noticed();
     test_symlink_and_mode_survive();
     test_preset_management();
+    test_edits();
     test_regenerating_keeps_a_backup();
     test_includes();
     std::printf("%d/%d checks passed\n", checks_run - checks_failed, checks_run);
