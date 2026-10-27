@@ -1,4 +1,5 @@
 #import <Cocoa/Cocoa.h>
+#import <objc/runtime.h>
 #include "macos_menu.h"
 #include <atomic>
 #include <cstring>
@@ -809,15 +810,43 @@ void setup_macos_menu() {
 @interface SinkWindowObserver : NSObject
 @end
 
+// SDL paints its content view's layer black whenever AppKit asks the view
+// to redraw (its updateLayer) -- after zooming, resizing, full screen,
+// switching backgrounds -- unless the window was created
+// SDL_WINDOW_TRANSPARENT, which SDL's GPU renderer refuses. Black there hides
+// the desktop behind the clear and glass backgrounds. So sink's windows get
+// their own subclass of SDL's view, made at runtime, whose updateLayer runs
+// SDL's and then sets the layer back to clear before anything is drawn.
+static void update_layer_then_clear(id self, SEL cmd) {
+    Class sdl_class = class_getSuperclass(object_getClass(self));
+    ((void (*)(id, SEL))class_getMethodImplementation(sdl_class, cmd))(self, cmd);
+    [[self layer] setBackgroundColor:[NSColor clearColor].CGColor];
+}
+
+static void keep_view_clear(NSView* view) {
+    static const char kPrefix[] = "SinkClear_";
+    Class cls = object_getClass(view);
+    if (std::strncmp(class_getName(cls), kPrefix, sizeof(kPrefix) - 1) == 0) return;  // done already
+    const std::string name = std::string(kPrefix) + class_getName(cls);
+    Class sub = objc_getClass(name.c_str());
+    if (!sub) {
+        Method m = class_getInstanceMethod(cls, @selector(updateLayer));
+        if (!m) return;
+        sub = objc_allocateClassPair(cls, name.c_str(), 0);
+        if (!sub) return;
+        class_addMethod(sub, @selector(updateLayer), (IMP)update_layer_then_clear, method_getTypeEncoding(m));
+        objc_registerClassPair(sub);
+    }
+    object_setClass(view, sub);
+}
+
 // Makes every layer in the window see-through, so the clear and glass
-// backgrounds show what's behind it. Needed again after full screen: on the
-// way out, SDL repaints its content view's layer black (SDL3_cocoaview's
-// updateLayer, since sink's windows aren't created SDL_WINDOW_TRANSPARENT --
-// that would also take away their shadow), and "clear" then shows black
-// until sink is restarted.
+// backgrounds show what's behind it, and keeps SDL's view that way (see
+// keep_view_clear).
 static void make_window_see_through(NSWindow* nswin) {
     NSView* contentView = [nswin contentView];
     if (!contentView) return;
+    keep_view_clear(contentView);
     NSMutableArray* queue = [NSMutableArray arrayWithObject:contentView];
     while ([queue count] > 0) {
         NSView* v = [queue firstObject];
@@ -864,9 +893,6 @@ static void make_window_see_through(NSWindow* nswin) {
     [win setTitlebarAppearsTransparent:YES];
     [self updateLayoutForWindow:win];
     make_window_see_through(win);
-    // SDL handles the same notification, and in no set order with this one,
-    // and the black repaint can land a run-loop turn later -- so again then.
-    dispatch_async(dispatch_get_main_queue(), ^{ make_window_see_through(win); });
 }
 
 - (void)windowDidEnterFullScreen:(NSNotification*)note {
