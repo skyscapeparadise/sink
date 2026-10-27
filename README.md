@@ -22,7 +22,7 @@ sink is still in beta, so you might hit a rough edge here and there. if you do, 
 
 **make it yours**
 - image and video backgrounds, HDR video included (mp4, mov, mkv, png, jpg, bmp)
-- exposure and hue shift controls, an optional CRT shader, and HDR text that glows brighter than the rest of your screen on an HDR display
+- exposure and hue shift controls, an optional CRT effect, and HDR text that glows brighter than the rest of your screen on an HDR display
 - presets, so you can switch between whole looks in one go
 - cursor typing animation, ligatures, and whatever font you like
 
@@ -82,7 +82,7 @@ and the editing keys your fingers already know from other Mac terminals:
 
 ## config
 
-most things live in the settings window (⌘,): your background, font, exposure, hue shift, the CRT shader, HDR text, ligatures, the typing animation, shell integration, and presets.
+most things live in the settings window (⌘,): your background, font, exposure, hue shift, the CRT effect, HDR text, ligatures, the typing animation, shell integration, and presets.
 
 under the hood it's all in `~/.config/sink/sink.toml`, and you can edit it by hand too. sink only ever rewrites the lines for settings you change in the settings window, so your comments and layout stay put. save the file and open windows pick up the change within a second.
 

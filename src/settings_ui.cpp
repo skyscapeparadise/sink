@@ -513,7 +513,7 @@ void SettingsUI::init_layout() {
     button(BG_KIND_BTN, background_kind_label(), 24.0f, 128.0f, 125.0f);
     button(1, "select video...", 159.0f, 128.0f, 115.0f);
     button(THEME_BTN, "theme: " + theme_list_.active, 24.0f, 164.0f, 250.0f);
-    toggle(8, "crt shader", crt_effect_enabled_, 24.0f, 280.0f, 150.0f);
+    toggle(8, "crt effect", crt_effect_enabled_, 24.0f, 280.0f, 150.0f);
     toggle(7, "title bar", vibrancy_enabled_, 184.0f, 280.0f, 150.0f);
 
     button(3, "select font...", 24.0f, 352.0f, 125.0f);
