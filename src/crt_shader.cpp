@@ -24,8 +24,9 @@ struct main0_in
 
 struct CRTUniforms
 {
-    float2 resolution;
+    float2 resolution; // the window, in pixels
     float linear_mode; // 0.0 (standard colorspace) or 1.0 (linear/extended, hdr console)
+    float scale;       // pixels per point: 2 on Retina displays, 1 otherwise
 };
 
 // All of this shader's stylized math (glow threshold, scanline/vignette
@@ -39,8 +40,8 @@ struct CRTUniforms
 // picture on screen. These convert samples into that one consistent
 // reference space before the stylized math, then back before output, so
 // the effect looks the same regardless of which colorspace it's running
-// in -- only elsewhere (the earlier per-tap clamp) does anything need to
-// know it's specifically in HDR range.
+// in -- only elsewhere (the per-tap clamp) does anything need to know it's
+// specifically in HDR range.
 float3 toStylizeSpace(float3 c, float linear_mode) {
     return mix(c, pow(max(c, 0.0), float3(1.0 / 2.2)), linear_mode);
 }
@@ -48,26 +49,47 @@ float3 fromStylizeSpace(float3 c, float linear_mode) {
     return mix(c, pow(max(c, 0.0), float3(2.2)), linear_mode);
 }
 
+// Sizes are in points, not pixels, so the tube looks the same on a Retina
+// display as on any other: scanlines measured in pixels were half as tall
+// on Retina, and too fine to see.
+constant float kScanlinePitch = 3.0;  // points from one scanline to the next
+constant float kCurvature = 0.04;     // how much the glass bulges
+
 fragment main0_out main0(main0_in in [[stage_in]],
                           constant CRTUniforms& u [[buffer(0)]],
                           texture2d<float> u_texture [[texture(0)]],
                           sampler u_sampler [[sampler(0)]])
 {
     main0_out out = {};
-    float2 uv = in.in_var_TEXCOORD0;
-    float4 rawBase = u_texture.sample(u_sampler, uv) * in.in_var_COLOR0;
+    const float2 texel = 1.0 / u.resolution;
+    const float scale = max(u.scale, 1.0);
+
+    // Curved glass: the picture bulges out a little from the middle. The
+    // bulge is scaled so the middle of each edge stays put -- nothing at the
+    // window's edges is pushed off it. Only the corners reach past the
+    // picture, and they show it mirrored back at the edge rather than black.
+    float2 cc = in.in_var_TEXCOORD0 - 0.5;
+    float bulge = (1.0 + kCurvature * dot(cc, cc)) / (1.0 + kCurvature * 0.25);
+    float2 uv = 1.0 - abs(1.0 - abs(0.5 + cc * bulge));
+
+    // Convergence: red and blue land slightly apart toward the sides of the
+    // tube, as the beams do on a real one.
+    float spread = 0.6 * scale * (cc.x * 2.0);
+    float4 mid = u_texture.sample(u_sampler, uv) * in.in_var_COLOR0;
+    float red = u_texture.sample(u_sampler, uv + float2(spread, 0.0) * texel).r;
+    float blue = u_texture.sample(u_sampler, uv - float2(spread, 0.0) * texel).b;
+    float4 rawBase = float4(red, mid.g, blue, mid.a);
     float4 base = float4(toStylizeSpace(rawBase.rgb, u.linear_mode), rawBase.a);
 
     // Halation/bloom: a ring of taps around this pixel, weighted toward
     // whichever of them are bright, added back as a soft glow. A cheap
     // single-pass stand-in for a real blur+threshold bloom pipeline --
     // good enough to read as phosphor bleed around bright content.
-    float2 texel = 1.0 / u.resolution;
     float3 glow = float3(0.0);
     const int TAPS = 12;
     for (int i = 0; i < TAPS; i++) {
         float angle = (float(i) / float(TAPS)) * 6.28318530718;
-        float radius = 2.5 + 3.0 * fract(float(i) * 0.61803399);
+        float radius = (1.5 + 2.0 * fract(float(i) * 0.61803399)) * scale;
         float2 offset = float2(cos(angle), sin(angle)) * texel * radius;
         float3 s = toStylizeSpace(u_texture.sample(u_sampler, uv + offset).rgb, u.linear_mode);
         // Clamp before thresholding: with hdr console on, `s` can exceed
@@ -78,27 +100,32 @@ fragment main0_out main0(main0_in in [[stage_in]],
         // itself should read the same regardless of colorspace; only the
         // base color at the very end is allowed to actually go over 1.0.
         float lum = dot(clamp(s, 0.0, 1.0), float3(0.299, 0.587, 0.114));
-        glow += clamp(s, 0.0, 1.0) * smoothstep(0.6, 1.0, lum);
+        glow += clamp(s, 0.0, 1.0) * smoothstep(0.5, 1.0, lum);
     }
     glow /= float(TAPS);
 
     float3 color = base.rgb;
+    float lum = clamp(dot(color, float3(0.299, 0.587, 0.114)), 0.0, 1.0);
+    float2 pt = uv * u.resolution / scale;  // position in points
 
-    // Soft scanlines: shaped so the bright phosphor line itself stays near
-    // full brightness and only a narrower gap between lines dips down --
-    // reads as more pronounced scanline structure without dimming the
-    // image on average the way widening a symmetric sine's amplitude does
-    // (that was darkening every other row instead of making the effect
-    // read as "more").
-    float scan_wave = sin(uv.y * u.resolution.y * 3.14159265) * 0.5 + 0.5; // 0..1
-    float scan = mix(0.75, 1.0, pow(scan_wave, 0.55));
+    // Scanlines: dark gaps between the beam's lines, kScanlinePitch apart.
+    // A bright beam spreads into the gap, as phosphor does, so they're
+    // deepest over dark areas and shallower over text.
+    float beam = sin(pt.y * (6.28318530718 / kScanlinePitch)) * 0.5 + 0.5;
+    float depth = mix(0.55, 0.30, lum);
+    float scan = mix(1.0 - depth, 1.0, pow(beam, 0.6));
     color *= scan;
 
-    // Faint RGB fringe -- a hint of aperture-grille separation without
-    // sharp-edged subpixel stripes.
-    float fringe = sin(uv.x * u.resolution.x * 3.14159265 / 1.5);
-    color.r *= 1.0 + 0.03 * fringe;
-    color.b *= 1.0 - 0.03 * fringe;
+    // Aperture grille: columns of red, green and blue phosphor, a point
+    // each.
+    int stripe = int(fmod(floor(pt.x), 3.0));
+    float3 grille = float3(0.86);
+    grille[stripe] = 1.14;
+    color *= grille;
+
+    // Make up the brightness the scanlines and grille take away, so text
+    // reads as bright as it does without CRT.
+    color *= 1.18;
 
     // Warm phosphor tint, scaled by how bright this pixel already is so
     // true black stays black instead of being lifted into a visible warm
@@ -106,17 +133,24 @@ fragment main0_out main0(main0_in in [[stage_in]],
     // between "black" and "dark" -- it brightens both equally).
     float warmthAmount = dot(color, float3(0.299, 0.587, 0.114));
     color += float3(0.036, 0.020, -0.016) * warmthAmount;
-    float2 centered = uv - 0.5;
-    float vignette = 1.0 - dot(centered, centered) * 0.26;
+    float vignette = 1.0 - dot(cc, cc) * 0.38;
     color *= vignette;
 
     // Glow is added last, *after* the scanline/vignette darkening above,
     // so it actually reads as extra brightness bleeding through instead of
     // being multiplied back down by them.
-    color += glow * 0.75;
+    color += glow * 0.8;
+
+    // With the clear and glass backgrounds the window is partly see-through:
+    // macOS lays these pixels over the desktop as premultiplied color, with
+    // alpha saying how much of the desktop they cover. The scanlines and
+    // vignette darken the whole picture on a real tube, so they darken the
+    // desktop showing through as well -- by covering a little more of it.
+    // (Opaque backgrounds have alpha 1 already, which this leaves alone.)
+    float through = (1.0 - base.a) * scan * vignette;
 
     float3 outColor = fromStylizeSpace(clamp(color, 0.0, 1.0), u.linear_mode);
-    out.out_var_SV_Target = float4(outColor, base.a);
+    out.out_var_SV_Target = float4(outColor, 1.0 - through);
     return out;
 }
 )MSL";
@@ -224,6 +258,11 @@ void CrtShaderEffect::ensure_intermediate(SDL_Renderer* renderer, int w, int h) 
     }
 
     if (intermediate_) {
+        // Drawn over the window replacing what's there rather than blended
+        // with it: the window isn't cleared this frame (the scene was cleared
+        // into this texture instead), so with a see-through background,
+        // blending piled each frame on top of the last.
+        SDL_SetTextureBlendMode(intermediate_, SDL_BLENDMODE_NONE);
         intermediate_w_ = w;
         intermediate_h_ = h;
     } else {
@@ -252,10 +291,13 @@ void CrtShaderEffect::end_scene(SDL_Renderer* renderer) {
 
     SDL_SetRenderTarget(renderer, saved_target_);
 
-    struct { float w, h, linear_mode; } uniforms = {
+    SDL_Window* window = SDL_GetRenderWindow(renderer);
+    const float density = window ? SDL_GetWindowPixelDensity(window) : 1.0f;
+    struct { float w, h, linear_mode, scale; } uniforms = {
         static_cast<float>(intermediate_w_),
         static_cast<float>(intermediate_h_),
-        linear_colorspace_ ? 1.0f : 0.0f
+        linear_colorspace_ ? 1.0f : 0.0f,
+        density > 0.0f ? density : 1.0f
     };
     SDL_SetGPURenderStateFragmentUniforms(state_, 0, &uniforms, sizeof(uniforms));
     SDL_SetGPURenderState(renderer, state_);
