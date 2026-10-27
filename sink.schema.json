@@ -20,8 +20,8 @@
         "additionalProperties": false,
         "properties": {
           "background": {
-            "description": "What's behind the text. A video: \"pool\" (built in) or a path to a video file. Or one of: \"color\", the theme's background color; \"gradient\" and \"gel\" (a slowly churning nebula), in the theme's colors unless [presets.<name>.gradient] or [presets.<name>.gel] say otherwise; \"clear\", \"frosted glass\" and \"liquid glass\", showing the desktop through the window.",
-            "anyOf": [{ "enum": ["pool", "color", "gradient", "gel", "clear", "frosted glass", "liquid glass"] }, { "type": "string", "pattern": "^~|/" }],
+            "description": "What's behind the text. A video: \"pool\" (built in) or a path to a video file. Or one of: \"color\", the theme's background color; \"gradient\" and \"gel\" (a slowly churning nebula), in the theme's colors unless [presets.<name>.gradient] or [presets.<name>.gel] say otherwise; \"clear\", \"frosted glass\" and \"liquid glass\", showing the desktop through the window; \"shader\", your own GLSL shader (see [presets.<name>.shader]).",
+            "anyOf": [{ "enum": ["pool", "color", "gradient", "gel", "clear", "frosted glass", "liquid glass", "shader"] }, { "type": "string", "pattern": "^~|/" }],
             "default": "pool"
           },
           "font": {
@@ -165,6 +165,18 @@
               }
             }
           },
+          "shader": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "file": {
+                "description": "For background = \"shader\": a .frag file written the way Shadertoy shaders are -- void mainImage(out vec4 fragColor, in vec2 fragCoord), with iTime, iResolution, iMouse and the rest. Saving the file reloads it.",
+                "type": "string",
+                "minLength": 1,
+                "default": ""
+              }
+            }
+          },
           "glass": {
             "type": "object",
             "additionalProperties": false,
@@ -187,8 +199,8 @@
       "additionalProperties": false,
       "properties": {
         "background": {
-          "description": "What's behind the text. A video: \"pool\" (built in) or a path to a video file. Or one of: \"color\", the theme's background color; \"gradient\" and \"gel\" (a slowly churning nebula), in the theme's colors unless [presets.<name>.gradient] or [presets.<name>.gel] say otherwise; \"clear\", \"frosted glass\" and \"liquid glass\", showing the desktop through the window.",
-          "anyOf": [{ "enum": ["pool", "color", "gradient", "gel", "clear", "frosted glass", "liquid glass"] }, { "type": "string", "pattern": "^~|/" }],
+          "description": "What's behind the text. A video: \"pool\" (built in) or a path to a video file. Or one of: \"color\", the theme's background color; \"gradient\" and \"gel\" (a slowly churning nebula), in the theme's colors unless [presets.<name>.gradient] or [presets.<name>.gel] say otherwise; \"clear\", \"frosted glass\" and \"liquid glass\", showing the desktop through the window; \"shader\", your own GLSL shader (see [presets.<name>.shader]).",
+          "anyOf": [{ "enum": ["pool", "color", "gradient", "gel", "clear", "frosted glass", "liquid glass", "shader"] }, { "type": "string", "pattern": "^~|/" }],
           "default": "pool"
         },
         "font": {
@@ -329,6 +341,18 @@
               "minimum": 0,
               "maximum": 4,
               "default": 1
+            }
+          }
+        },
+        "shader": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "file": {
+              "description": "For background = \"shader\": a .frag file written the way Shadertoy shaders are -- void mainImage(out vec4 fragColor, in vec2 fragCoord), with iTime, iResolution, iMouse and the rest. Saving the file reloads it.",
+              "type": "string",
+              "minLength": 1,
+              "default": ""
             }
           }
         },

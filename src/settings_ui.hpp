@@ -70,6 +70,12 @@ public:
     SDL_Renderer* get_renderer() const { return renderer_; }
 
     void set_paths(const std::string& bg_path, const std::string& font_path);
+    // The shader background's .frag file (empty when none has been picked),
+    // shown beside the type button when that's the kind.
+    void set_shader_file(const std::string& path);
+    // Opens the file picker for a shader; the choice comes back as user
+    // event 19.
+    void pick_shader_file();
     void set_animated_typing(bool enabled);
     void set_broadcasting(bool enabled);
     bool get_broadcasting() const { return broadcasting_; }
@@ -126,6 +132,7 @@ private:
     std::vector<UISlider> sliders_;
     
     std::string bg_path_ = "None";
+    std::string shader_file_;
     std::string font_path_ = "Default";
     bool animated_typing_ = true;
     bool broadcasting_ = false;

@@ -20,6 +20,17 @@ static void background_dialog_callback(void* userdata, const char* const* fileli
     }
 }
 
+static void shader_dialog_callback(void* userdata, const char* const* filelist, int filter) {
+    if (filelist && *filelist) {
+        SDL_Event ev;
+        std::memset(&ev, 0, sizeof(ev));
+        ev.type = SDL_EVENT_USER;
+        ev.user.code = 19; // Shader file selected
+        ev.user.data1 = strdup(*filelist);
+        SDL_PushEvent(&ev);
+    }
+}
+
 static void font_dialog_callback(void* userdata, const char* const* filelist, int filter) {
     if (filelist && *filelist) {
         SDL_Event ev;
@@ -166,12 +177,23 @@ void SettingsUI::set_paths(const std::string& bg_path, const std::string& font_p
     background_list_.active = kind == "video" ? std::string() : kind;  // a video file isn't in the list
     for (auto& btn : buttons_) {
         if (btn.id == BG_KIND_BTN) btn.label = kind;
+        if (btn.id == 1) btn.label = kind == "shader" ? "select shader..." : "select video...";
     }
+}
+
+void SettingsUI::set_shader_file(const std::string& path) {
+    shader_file_ = path;
+}
+
+void SettingsUI::pick_shader_file() {
+    if (!window_) return;
+    SDL_DialogFileFilter filters[] = { {"GLSL shaders", "frag;glsl;fs"} };
+    SDL_ShowOpenFileDialog(shader_dialog_callback, nullptr, window_, filters, 1, nullptr, false);
 }
 
 // The background kinds the list offers. "pool" is the built-in video.
 const std::vector<std::string> SettingsUI::kBackgroundKinds = {
-    "pool", "color", "gradient", "gel", "clear", "frosted glass", "liquid glass",
+    "pool", "color", "gradient", "gel", "clear", "frosted glass", "liquid glass", "shader",
 };
 
 // What the type button says: the kind, "pool" for the built-in video, or
@@ -511,7 +533,7 @@ void SettingsUI::init_layout() {
         buttons_.push_back(b);
     };
     button(BG_KIND_BTN, background_kind_label(), 24.0f, 128.0f, 125.0f);
-    button(1, "select video...", 159.0f, 128.0f, 115.0f);
+    button(1, background_kind_label() == "shader" ? "select shader..." : "select video...", 159.0f, 128.0f, 115.0f);
     button(THEME_BTN, "theme: " + theme_list_.active, 24.0f, 164.0f, 250.0f);
     toggle(8, "crt effect", crt_effect_enabled_, 24.0f, 280.0f, 150.0f);
     toggle(7, "title bar", vibrancy_enabled_, 184.0f, 280.0f, 150.0f);
@@ -667,7 +689,9 @@ void SettingsUI::process_event(const SDL_Event& event) {
                 if (mx >= btn.rect.x && mx <= btn.rect.x + btn.rect.w &&
                     my >= btn.rect.y && my <= btn.rect.y + btn.rect.h) {
                     
-                    if (btn.id == 1) { // Select Background
+                    if (btn.id == 1 && background_kind_label() == "shader") {
+                        pick_shader_file();
+                    } else if (btn.id == 1) { // Select Background
                         SDL_DialogFileFilter filters[] = { {"Media files", "mp4;mov;mkv;png;jpg;jpeg;bmp"} };
                         SDL_ShowOpenFileDialog(background_dialog_callback, nullptr, window_, filters, 1, nullptr, false);
                     } else if (btn.id == 3) { // Select Font
@@ -858,6 +882,7 @@ void SettingsUI::render() {
                         : kind == "gel"          ? std::string("a churning nebula")
                         : kind == "clear"        ? std::string("the desktop, clear")
                         : kind == "frosted glass" ? std::string("the desktop, frosted")
+                        : kind == "shader"       ? (shader_file_.empty() ? std::string("no shader picked yet") : shader_file_)
                         : std::string("the desktop, through glass");
     float bg_value_x = 284.0f * scale;
     bg_disp = truncate_head(bg_disp, value_right_edge - bg_value_x);

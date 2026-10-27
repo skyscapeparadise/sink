@@ -129,6 +129,7 @@ struct PresetValues {
     StringList gel_colors;
     double gel_speed = 1;
     double glass_tint = 0.3;
+    std::string shader_file;   // a path, for background = "shader"
 };
 
 struct BuiltinPreset {

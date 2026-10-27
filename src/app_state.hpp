@@ -15,6 +15,7 @@
 
 #include "ansi_parser.hpp"
 #include "background_shader.hpp"
+#include "shader_background.hpp"
 #include "config_store.hpp"
 #include "crt_shader.hpp"
 #include "font_manager.hpp"
@@ -157,10 +158,13 @@ struct TerminalWindow {
     ColorScheme color_scheme;
 
     // What's behind the text (`background` in sink.toml); see apply_background.
-    enum class Backdrop { Video, Color, Gradient, Gel, Clear, Frosted, LiquidGlass };
+    enum class Backdrop { Video, Color, Gradient, Gel, Clear, Frosted, LiquidGlass, Shader };
     Backdrop backdrop = Backdrop::Video;
     std::string background;              // the setting, as written
     BackgroundShader background_shader;  // gradient and gel
+    ShaderBackground user_shader;        // the user's own (background = "shader")
+    float user_shader_time = 0.0f;
+    int user_shader_frame = 0;
     BackgroundShader::Params backdrop_params;
     SDL_FColor backdrop_color{0, 0, 0, 1};  // solid, and the tint over glass
     float glass_tint = 0.3f;
@@ -285,6 +289,7 @@ struct AppState {
     bool vibrancy_enabled = true;
     bool crt_mode_enabled = false;
     bool ligatures_enabled = true;
+    std::string shader_file;  // background = "shader": the .frag, as a full path
     bool hdr_console_enabled = false;
     int scrollback_lines = 10000;
 };

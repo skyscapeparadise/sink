@@ -140,6 +140,8 @@ copy_license "vendor/sdl3_image/LICENSE.txt"    "SDL3_image-LICENSE.txt"
 copy_license "vendor/sdl3/LICENSE.txt"              "SDL3-LICENSE.txt"
 copy_license "vendor/textstack/FreeType-LICENSE.txt" "FreeType-LICENSE.txt"
 copy_license "vendor/textstack/libpng-LICENSE"       "libpng-LICENSE"
+copy_license "vendor/shaderc/glslang-LICENSE.txt"    "glslang-LICENSE.txt"
+copy_license "vendor/shaderc/SPIRV-Cross-LICENSE"    "SPIRV-Cross-LICENSE"
 # The bundled fonts are under the SIL Open Font License, which requires its
 # text to travel with them.
 copy_license "fonts/MonaspaceNeon-OFL.txt"           "MonaspaceNeon-OFL.txt"

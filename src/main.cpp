@@ -368,6 +368,7 @@ static Backdrop backdrop_of(const std::string& background) {
         { "color", Backdrop::Color },           { "gradient", Backdrop::Gradient },
         { "gel", Backdrop::Gel },               { "clear", Backdrop::Clear },
         { "frosted glass", Backdrop::Frosted }, { "liquid glass", Backdrop::LiquidGlass },
+        { "shader", Backdrop::Shader },
     };
     if (config::is_path(background)) return Backdrop::Video;
     for (const auto& [name, kind] : kinds) {
@@ -412,6 +413,20 @@ static void apply_background(AppState* state, TerminalWindow* tw, const config::
             tw->fade_state = TerminalWindow::FADE_HOLD_BLACK;
             tw->fade_opacity = 1.0f;
         }
+    }
+
+    if (tw->backdrop == Backdrop::Shader) {
+        if (p.shader_file.empty()) {
+            tw->user_shader.cleanup();
+        } else if (tw->user_shader.path() != p.shader_file || !tw->user_shader.is_ready()) {
+            if (!tw->user_shader.load(tw->renderer, p.shader_file, tw->hdr_console_enabled)) {
+                std::cerr << "Shader background: " << tw->user_shader.error() << std::endl;
+            }
+            tw->user_shader_time = 0.0f;
+            tw->user_shader_frame = 0;
+        }
+    } else {
+        tw->user_shader.cleanup();  // nothing compiled or held while it isn't shown
     }
 
     const ColorScheme& scheme = tw->color_scheme;
@@ -492,6 +507,7 @@ static void save_config(AppState* state) {
         if (now != before) changes.push_back({ key, config::Value(now) });
     };
     changed_str("background", state->background, saved.background);
+    changed_str("shader.file", config::contract_home(state->shader_file), config::contract_home(saved.shader_file));
     changed_str("font", font_setting(state->font_path),
                 config::is_path(saved.font) ? saved.font : font_setting(resolve_font(saved.font)));
     changed_num("exposure", state->exposure, saved.exposure);
@@ -514,6 +530,7 @@ static void set_state_from_preset(AppState* state, const config::PresetValues& p
     state->active_preset_name = p.name;
     state->background = p.background;
     state->video_path = backdrop_of(p.background) == Backdrop::Video ? resolve_background(p.background) : std::string();
+    state->shader_file = p.shader_file;
     state->font_path = resolve_font(p.font);
     state->base_font_size = static_cast<float>(p.font_size);
     state->line_height = static_cast<float>(p.line_height);
@@ -867,6 +884,7 @@ static void destroy_terminal_window(TerminalWindow* tw) {
     tw->hue_shift.cleanup(); // must run before destroying the renderer it was created against
     tw->crt_shader.cleanup();
     tw->background_shader.cleanup();
+    tw->user_shader.cleanup();
     // Same rule for the panes' image textures. Their destructors run below as
     // part of `delete tw`, which is after the renderer is gone -- they would
     // otherwise be destroying textures against a dead device.
@@ -1252,6 +1270,7 @@ static bool recreate_renderer_for_hdr_console(AppState* state, TerminalWindow* t
     tw->hue_shift.cleanup();
     tw->crt_shader.cleanup();
     tw->background_shader.cleanup();
+    tw->user_shader.cleanup();
     tw->font_manager.cleanup();
     // Inline images hold textures too. Only the textures go: the decoded
     // pixels stay, so every image re-uploads against the new renderer the
@@ -1302,6 +1321,9 @@ static bool recreate_renderer_for_hdr_console(AppState* state, TerminalWindow* t
     tw->hue_shift.init(tw->renderer, want_linear_colorspace);
     tw->background_shader.init(tw->renderer, want_linear_colorspace);
     tw->crt_shader.init(tw->renderer, want_linear_colorspace);
+    if (tw->backdrop == Backdrop::Shader && !tw->user_shader.path().empty()) {
+        tw->user_shader.load(tw->renderer, tw->user_shader.path(), want_linear_colorspace);
+    }
 
     float font_size_px = tw->font_size * tw->display_scale;
     const std::string& font = tw->font_path.empty() ? state->font_path : tw->font_path;
@@ -1404,6 +1426,7 @@ static void refresh_settings_ui_presets(AppState* state) {
 // switch, new, save or delete replaces the live settings wholesale.
 static void sync_settings_ui_from_state(AppState* state) {
     state->settings_ui.set_paths(background_display(state), state->font_path);
+    state->settings_ui.set_shader_file(state->shader_file);
     state->settings_ui.set_animated_typing(state->animated_typing);
     state->settings_ui.set_exposure(state->exposure);
     state->settings_ui.set_hue_shift(state->hue_shift);
@@ -1433,6 +1456,9 @@ static void update_config_notice(AppState* state) {
     } else if (const std::string font = config::resolve_active(store.config()).font;
                !config::is_path(font) && !is_bundled_font_name(font) && !FontManager::can_open(font)) {
         notice = "font \"" + font + "\" isn't installed; using Monaspace Neon";
+    } else if (const TerminalWindow* tw = state->active_window;
+               tw && tw->backdrop == Backdrop::Shader && !tw->user_shader.error().empty()) {
+        notice = clean(tw->user_shader.error());
     } else if (const auto& warnings = store.config().warnings; !warnings.empty()) {
         const config::Diagnostic& w = warnings.front();
         const std::string file = w.file.empty() ? std::string("sink.toml") : w.file.substr(w.file.rfind('/') + 1);
@@ -1615,6 +1641,7 @@ static keybindings::Chord chord_of(const SDL_KeyboardEvent& key) {
 static void open_settings_window(AppState* state, TerminalWindow* tw) {
     if (!tw || !state->settings_ui.open(tw->window)) return;
     state->settings_ui.set_paths(background_display(state), state->font_path);
+    state->settings_ui.set_shader_file(state->shader_file);
     state->settings_ui.set_animated_typing(tw->animated_typing);
     state->settings_ui.set_exposure(tw->exposure);
     state->settings_ui.set_hue_shift(tw->hue_shift_degrees);
@@ -2537,9 +2564,28 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             config::PresetValues p = config::resolve_active(state->config.config());
             p.background = state->background;
             p.theme = state->theme_name;
+            p.shader_file = state->shader_file;
             state->video_path = resolve_background(state->background);
             for (auto* tw : state->windows) apply_background(state, tw, p);
             state->settings_ui.set_paths(background_display(state), state->font_path);
+            save_config(state);
+            // The shader kind with no file yet: ask for one.
+            if (backdrop_of(state->background) == Backdrop::Shader && state->shader_file.empty()) {
+                state->settings_ui.pick_shader_file();
+            }
+            free(path);
+        } else if (event->user.code == 19) { // A .frag picked for the shader background
+            char* path = (char*)event->user.data1;
+            state->shader_file = path;
+            state->background = "shader";
+            config::PresetValues p = config::resolve_active(state->config.config());
+            p.background = state->background;
+            p.theme = state->theme_name;
+            p.shader_file = state->shader_file;
+            state->video_path.clear();
+            for (auto* tw : state->windows) apply_background(state, tw, p);
+            state->settings_ui.set_paths(background_display(state), state->font_path);
+            state->settings_ui.set_shader_file(state->shader_file);
             save_config(state);
             free(path);
         } else if (event->user.code == 2) { // Font selected
@@ -3430,6 +3476,12 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             case Backdrop::Video:
                 SDL_SetRenderDrawColor(tw->renderer, 0, 0, 0, 255);
                 break;
+            case Backdrop::Shader:
+                // The theme's background, dimmed as the video would be, until
+                // the shader draws over it -- or instead of it, when the file
+                // doesn't compile.
+                SDL_SetRenderDrawColorFloat(tw->renderer, bc.r * lit, bc.g * lit, bc.b * lit, 1.0f);
+                break;
         }
         SDL_RenderClear(tw->renderer);
         if (tw->backdrop == Backdrop::Gradient || tw->backdrop == Backdrop::Gel) {
@@ -3444,6 +3496,25 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             } else {
                 SDL_SetRenderDrawColorFloat(tw->renderer, bc.r * lit, bc.g * lit, bc.b * lit, 1.0f);
                 SDL_RenderClear(tw->renderer);
+            }
+        }
+        if (tw->backdrop == Backdrop::Shader) {
+            tw->user_shader.reload_if_changed(tw->renderer);  // saving the file shows the change
+            if (tw->user_shader.is_ready()) {
+                ShaderBackground::Frame f;
+                tw->user_shader_time += dt;
+                f.time = tw->user_shader_time;
+                f.time_delta = dt;
+                f.frame = tw->user_shader_frame++;
+                float mx = 0.0f, my = 0.0f;
+                if (SDL_GetMouseFocus() == tw->window) {
+                    SDL_GetMouseState(&mx, &my);
+                    f.mouse_x = mx * tw->display_scale;
+                    f.mouse_y = static_cast<float>(draw_h) - my * tw->display_scale;  // from the bottom
+                }
+                f.exposure = tw->exposure;
+                f.hue_degrees = tw->hue_shift_degrees;
+                tw->user_shader.draw(tw->renderer, f);
             }
         }
 

@@ -121,6 +121,23 @@ else()
 endif()
 find_package(SDL3_image REQUIRED)
 
+# The GLSL -> Metal compiler behind shader backgrounds (glslang and SPIRV-Cross,
+# built static by vendor/build_shader_compiler.sh). Required: there's no system
+# copy to fall back to.
+set(SINK_SHADERC "${CMAKE_CURRENT_SOURCE_DIR}/vendor/shaderc")
+if(NOT EXISTS "${SINK_SHADERC}/lib/libglslang.a" OR NOT EXISTS "${SINK_SHADERC}/lib/libspirv-cross-msl.a")
+    message(FATAL_ERROR "The vendored shader compiler isn't built. Run ./build.sh, or vendor/build_shader_compiler.sh.")
+endif()
+add_library(sink_shader_compiler STATIC src/user_shader.cpp)
+target_include_directories(sink_shader_compiler PUBLIC src)
+target_include_directories(sink_shader_compiler SYSTEM PRIVATE "${SINK_SHADERC}/include" "${SINK_SHADERC}/include/spirv_cross")
+foreach(lib glslang MachineIndependent GenericCodeGen OSDependent SPIRV glslang-default-resource-limits
+            spirv-cross-msl spirv-cross-glsl spirv-cross-core)
+    if(EXISTS "${SINK_SHADERC}/lib/lib${lib}.a")
+        target_link_libraries(sink_shader_compiler PRIVATE "${SINK_SHADERC}/lib/lib${lib}.a")
+    endif()
+endforeach()
+
 # Prefer the vendored LGPL decode-only FFmpeg (built by vendor/build_ffmpeg.sh).
 # Homebrew's ffmpeg is configured --enable-gpl --enable-version3, so bundling it
 # into sink.app would relicense the app as GPLv3 and drag in ~33MB of encoders
@@ -194,6 +211,7 @@ set(SOURCES
     src/hue_shift.cpp
     src/crt_shader.cpp
     src/background_shader.cpp
+    src/shader_background.cpp
 )
 
 # macOS Cocoa Menu Integration
@@ -208,6 +226,7 @@ target_include_directories(sink PRIVATE ${CMAKE_BINARY_DIR}/generated)
 target_include_directories(sink PRIVATE src vendor/tomlplusplus)
 
 target_link_libraries(sink PRIVATE
+    sink_shader_compiler
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
     SDL3_image::SDL3_image
@@ -336,6 +355,11 @@ add_executable(keybindings_tests
 )
 target_include_directories(keybindings_tests PRIVATE src)
 add_test(NAME keybindings COMMAND keybindings_tests)
+
+# Shader backgrounds: Shadertoy-style .frag files compiled to Metal.
+add_executable(user_shader_tests tests/test_user_shader.cpp)
+target_link_libraries(user_shader_tests PRIVATE sink_shader_compiler)
+add_test(NAME user_shader COMMAND user_shader_tests)
 
 # The sink.toml file on disk: migration, saving, errors, outside changes.
 add_executable(config_store_tests

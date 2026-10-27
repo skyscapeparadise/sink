@@ -45,6 +45,7 @@ vendor/.build/
 vendor/sdl3/
 vendor/sdl3_image/
 vendor/textstack/
+vendor/shaderc/
 vendor/sparkle/
 
 # Generated benchmark workloads (~32MB, recreate with bench/gen_workloads.py)

@@ -120,7 +120,7 @@ a preset can set:
 
 | key | default | |
 |---|---|---|
-| `background` | `"pool"` | a video (`"pool"` or a path), or `"color"`, `"gradient"`, `"gel"`, `"clear"`, `"frosted glass"`, `"liquid glass"` (see below) |
+| `background` | `"pool"` | a video (`"pool"` or a path), or `"color"`, `"gradient"`, `"gel"`, `"clear"`, `"frosted glass"`, `"liquid glass"`, `"shader"` (see below) |
 | `font` | `"Monaspace Neon"` | an installed font by name (`"Menlo"`, `"Menlo Bold"`), the bundled font, or a path to a font file |
 | `font_size` | `15` | in points. view > bigger and smaller change one window, default size comes back to this |
 | `line_height` | `1` | row height as a multiple of the font size. `1.15` gives monaspace neon its roomier spacing |
@@ -153,6 +153,7 @@ backgrounds don't have to be videos. pick one from the type button in settings, 
 - `gradient` blends from the theme's background toward its blue, or your own colors
 - `gel` is a slowly churning nebula. with sink's own theme it's the original deep purple; with another theme it takes that theme's colors
 - `clear`, `frosted glass` and `liquid glass` show your desktop through the window, as is, blurred, or through macOS's liquid glass
+- `shader` runs your own GLSL shader (see below)
 
 ```toml
 [presets.nebula]
@@ -177,6 +178,27 @@ tint = 0.3                       # how much of the theme's background lies over 
 ```
 
 exposure and hue shift work on all of them, not just videos.
+
+### shader backgrounds
+
+pick `shader` as the background and choose a `.frag` file. sink runs it the way [shadertoy](https://www.shadertoy.com) does, so most shaders from there work if you paste them into a file:
+
+```glsl
+void mainImage(out vec4 fragColor, in vec2 fragCoord) {
+    vec2 uv = fragCoord / iResolution.xy;
+    fragColor = vec4(0.5 + 0.5 * cos(iTime + uv.xyx + vec3(0, 2, 4)), 1.0);
+}
+```
+
+`fragCoord` is in pixels from the bottom left, and you get `iResolution`, `iTime`, `iTimeDelta`, `iFrameRate`, `iFrame`, `iMouse` (where the mouse is over the window) and `iDate`. shadertoy's textures (`iChannel0` and friends) aren't there, so shaders that read them won't load. save the file while sink is open and the background picks up the change; if it doesn't compile, settings shows the error and its line.
+
+```toml
+[presets.trippy]
+background = "shader"
+
+[presets.trippy.shader]
+file = "~/shaders/plasma.frag"
+```
 
 changes you make in the settings window stick, even across restarts, but they don't touch your presets: they're kept in an `[edits]` table on top of the preset you're using, and the preset shows as "(edited)". **save** writes them into the preset, **new** saves the whole look as a new preset, and picking a preset from the list (even the one you're on) puts it back the way it was saved. `pool` is built in, so it can't be saved over, renamed or deleted.
 

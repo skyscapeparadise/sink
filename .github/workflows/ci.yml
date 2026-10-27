@@ -26,7 +26,7 @@ jobs:
       - name: Install dependencies
         run: brew install cmake pkg-config
 
-      # The vendored FFmpeg, SDL3, SDL3_image and text stack take a while to build.
+      # The vendored FFmpeg, SDL3, SDL3_image, text stack and shader compiler take a while to build.
       # Each build script stamps its output with its own hash and rebuilds when
       # that changes, so keying the cache on the scripts keeps the two in step.
       - name: Cache vendored dependencies
@@ -37,6 +37,7 @@ jobs:
             vendor/sdl3
             vendor/sdl3_image
             vendor/textstack
+            vendor/shaderc
             vendor/.cache
           key: vendor-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vendor/build_*.sh', 'vendor/patches/*') }}
           restore-keys: vendor-${{ runner.os }}-${{ runner.arch }}-

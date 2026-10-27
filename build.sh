@@ -27,6 +27,9 @@ echo "  checking vendored SDL3_image..."
 echo "  checking vendored text stack (libpng, freetype, harfbuzz, SDL3_ttf)..."
 ./vendor/build_text_stack.sh
 
+echo "  checking vendored shader compiler (glslang, SPIRV-Cross)..."
+./vendor/build_shader_compiler.sh
+
 # 2. Configure. This runs every time rather than only when build/ is missing.
 # CMake is a no-op when nothing has changed, and skipping it meant an existing
 # build/ kept whatever sysroot it was first configured with -- so the one case

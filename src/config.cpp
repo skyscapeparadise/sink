@@ -69,13 +69,14 @@ const std::vector<KeyInfo>& keys() {
 
         // Preset
         { "background", Scope::Preset, KeyType::Path, std::string("pool"),
-          0, 0, { "pool", "color", "gradient", "gel", "clear", "frosted glass", "liquid glass" },
+          0, 0, { "pool", "color", "gradient", "gel", "clear", "frosted glass", "liquid glass", "shader" },
           "What's behind the text. A video: \"pool\" (built in) or a path to "
           "a video file. Or one of: \"color\", the theme's background color; "
           "\"gradient\" and \"gel\" (a slowly churning nebula), in the theme's "
           "colors unless [presets.<name>.gradient] or [presets.<name>.gel] say "
           "otherwise; \"clear\", \"frosted glass\" and \"liquid glass\", "
-          "showing the desktop through the window." },
+          "showing the desktop through the window; \"shader\", your own GLSL "
+          "shader (see [presets.<name>.shader])." },
         { "font", Scope::Preset, KeyType::Path, std::string("Monaspace Neon"), 0, 0, {},
           "The typeface: the name of an installed font (\"Menlo\", \"JetBrains "
           "Mono\", or a specific face such as \"Menlo Bold\"), \"Monaspace Neon\" "
@@ -132,6 +133,11 @@ const std::vector<KeyInfo>& keys() {
           "the original purple)." },
         { "gel.speed", Scope::Preset, KeyType::Float, 1.0, 0, 4, {},
           "How fast the gel churns. 0 holds it still." },
+        { "shader.file", Scope::Preset, KeyType::Path, std::string(""), 0, 0, {},
+          "For background = \"shader\": a .frag file written the way Shadertoy "
+          "shaders are -- void mainImage(out vec4 fragColor, in vec2 fragCoord), "
+          "with iTime, iResolution, iMouse and the rest. Saving the file "
+          "reloads it." },
         { "glass.tint", Scope::Preset, KeyType::Float, 0.3, 0, 1, {},
           "For the clear and glass backgrounds: how much of the theme's "
           "background color is laid over them, so text stays readable. 0 is "
@@ -250,7 +256,11 @@ std::optional<Value> convert(const KeyInfo& k, const std::string& where, const t
             return wrong_type();
         case KeyType::Path:
             if (const auto* s = n.as_string()) {
-                if (s->get().empty()) return wrong_type();
+                if (s->get().empty()) {
+                    // "" is "none" for a path that has no default (shader.file).
+                    const auto* d = std::get_if<std::string>(&k.default_value);
+                    return d && d->empty() ? std::optional<Value>(Value(std::string())) : wrong_type();
+                }
                 if (k.choices.empty() || is_path(s->get())) return Value(s->get());
                 for (const std::string& c : k.choices) {
                     if (strcasecmp(c.c_str(), s->get().c_str()) == 0) return Value(c);
@@ -705,6 +715,7 @@ PresetValues resolve_values(const std::string& name, std::map<std::string, Value
     r.gel_colors = std::get<StringList>(v["gel.colors"]);
     r.gel_speed = num("gel.speed");
     r.glass_tint = num("glass.tint");
+    r.shader_file = str("shader.file").empty() ? std::string() : expand_home(str("shader.file"));
     return r;
 }
 
