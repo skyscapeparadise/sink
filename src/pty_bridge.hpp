@@ -15,7 +15,9 @@ public:
     // `cwd` is where the shell should start. Empty means inherit sink's own,
     // which is what a first window gets; a new tab or split passes the
     // directory the pane it came from reported through OSC 7.
-    bool spawn(int cols, int rows, const std::string& cwd = std::string());
+    // The cell size in pixels goes in the size the shell is told too, so a
+    // program can tell how big a picture will look (see sinkview).
+    bool spawn(int cols, int rows, const std::string& cwd = std::string(), int cell_px_w = 0, int cell_px_h = 0);
     void shutdown();
 
     // Send resize dimensions to the OS pseudo-terminal. The pixel sizes fill

@@ -212,6 +212,8 @@ set(SOURCES
     src/crt_shader.cpp
     src/background_shader.cpp
     src/shader_background.cpp
+    src/sinkview.cpp
+    src/picture.cpp
 )
 
 # macOS Cocoa Menu Integration
@@ -239,7 +241,7 @@ target_link_libraries(sink PRIVATE
 
 # macOS Frameworks
 if(APPLE)
-    target_link_libraries(sink PRIVATE "-framework Cocoa" "-framework CoreText")
+    target_link_libraries(sink PRIVATE "-framework Cocoa" "-framework CoreText" "-framework ImageIO")
 endif()
 
 # Linux compatibility: link against libutil for forkpty
@@ -256,6 +258,8 @@ enable_testing()
 add_executable(sink_tests
     tests/test_ansi_parser.cpp
     src/sync_output.cpp
+    src/sinkview.cpp
+    src/picture.cpp
     src/pty_bridge.cpp
     src/private_files.cpp
     src/shell_integration.cpp
@@ -267,6 +271,9 @@ add_executable(sink_tests
     src/font_manager.cpp
 )
 target_include_directories(sink_tests PRIVATE src ${CMAKE_BINARY_DIR}/generated)
+if(APPLE)
+    target_link_libraries(sink_tests PRIVATE "-framework CoreFoundation" "-framework CoreGraphics" "-framework ImageIO")
+endif()
 target_link_libraries(sink_tests PRIVATE
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf

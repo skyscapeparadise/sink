@@ -46,6 +46,10 @@ struct ImagePlacement {
     // place a crop of an image; sixel always places the whole thing.
     int src_x = 0, src_y = 0, src_w = 0, src_h = 0;
     int z = 0;                 // draw order; negative sits behind text
+    // The size it's drawn at, in cells -- fractional, since a picture rarely
+    // divides evenly into them. cols/rows are this rounded up, the cells it
+    // covers. 0 draws it filling those cells.
+    float draw_cols = 0, draw_rows = 0;
 };
 
 // Decodes a sixel payload -- everything after the DCS introducer's 'q' -- into

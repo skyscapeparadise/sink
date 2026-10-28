@@ -13,7 +13,10 @@
 #include <sys/stat.h>
 #include <cerrno>
 
+#include <climits>
+#include <cstdlib>
 #if defined(__APPLE__)
+#include <mach-o/dyld.h>
 #include <util.h>
 #else
 #include <pty.h>
@@ -36,6 +39,32 @@ namespace {
 // being prepended, so the directory is verified after creation and the whole
 // feature is dropped (empty return) if it does not check out. Computed once:
 // the result is reused by every later spawn.
+// This program's own path, symlinks resolved.
+std::string own_executable() {
+#if defined(__APPLE__)
+    char buf[PATH_MAX];
+    uint32_t size = sizeof(buf);
+    if (_NSGetExecutablePath(buf, &size) != 0) return {};
+    char real[PATH_MAX];
+    return realpath(buf, real) ? std::string(real) : std::string(buf);
+#else
+    char buf[PATH_MAX];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    return n > 0 ? std::string(buf, static_cast<size_t>(n)) : std::string();
+#endif
+}
+
+// `s` as one sh word: single-quoted, any single quote in it closed and
+// escaped, so a path with spaces or quotes stays one argument.
+std::string shell_quote(const std::string& s) {
+    std::string out = "'";
+    for (char c : s) {
+        if (c == '\'') out += "'\\''";
+        else out += c;
+    }
+    return out + "'";
+}
+
 const std::string& stub_bin_dir() {
     static const std::string dir = [] () -> std::string {
         std::string root = private_files::config_root();
@@ -45,6 +74,13 @@ const std::string& stub_bin_dir() {
         static const char kStub[] = "#!/bin/sh\nexit 0\n";
         if (!private_files::write_file(path + "/sinkdemo", kStub, 0700)) return {};
         if (!private_files::write_file(path + "/sinksing", kStub, 0700)) return {};
+        // sinkview runs this sink as `sink --view` (sinkview.hpp). Rewritten
+        // every launch, so it follows sink.app when it moves or updates.
+        const std::string self = own_executable();
+        if (!self.empty()) {
+            const std::string view = "#!/bin/sh\nexec " + shell_quote(self) + " --view \"$@\"\n";
+            private_files::write_file(path + "/sinkview", view, 0700);
+        }
         return path;
     }();
     return dir;
@@ -109,12 +145,12 @@ PTYBridge::~PTYBridge() {
     shutdown();
 }
 
-bool PTYBridge::spawn(int cols, int rows, const std::string& cwd) {
+bool PTYBridge::spawn(int cols, int rows, const std::string& cwd, int cell_px_w, int cell_px_h) {
     struct winsize ws;
     ws.ws_row = static_cast<unsigned short>(rows);
     ws.ws_col = static_cast<unsigned short>(cols);
-    ws.ws_xpixel = 0;
-    ws.ws_ypixel = 0;
+    ws.ws_xpixel = static_cast<unsigned short>(cols * cell_px_w);
+    ws.ws_ypixel = static_cast<unsigned short>(rows * cell_px_h);
 
     // Resolved before the fork: this touches the filesystem and allocates,
     // neither of which is safe to do between fork() and exec() in a process

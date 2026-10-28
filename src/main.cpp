@@ -29,6 +29,8 @@
 #include "keybindings.hpp"
 #include "hue_shift.hpp"
 #include "crt_shader.hpp"
+#include "sinkview.hpp"
+#include "picture.hpp"
 
 #if defined(__APPLE__)
 #include "macos_menu.h"
@@ -824,7 +826,10 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     }
 
     // Start Pseudo-Terminal process connection
-    if (!tw->fpane().pty.spawn(cols, rows, inherit_cwd)) {
+    const int cell_px_w = static_cast<int>(std::lround(tw->cell_w * tw->display_scale));
+    const int cell_px_h = static_cast<int>(std::lround(tw->cell_h * tw->display_scale));
+    tw->fpane().terminal.set_cell_pixel_size(cell_px_w, cell_px_h);
+    if (!tw->fpane().pty.spawn(cols, rows, inherit_cwd, cell_px_w, cell_px_h)) {
         std::cerr << "Failed to initialize PTY shell context" << std::endl;
     }
 
@@ -923,6 +928,8 @@ static void layout_pane_node(AppState* state, TerminalWindow* tw, PaneNode* node
         // want real pixels, so scale back up.
         int cell_px_w = static_cast<int>(std::lround(tw->cell_w * tw->display_scale));
         int cell_px_h = static_cast<int>(std::lround(tw->cell_h * tw->display_scale));
+        const bool cell_size_changed = cell_px_w != pane->terminal.get_cell_pixel_width() ||
+                                       cell_px_h != pane->terminal.get_cell_pixel_height();
         pane->terminal.set_cell_pixel_size(cell_px_w, cell_px_h);
 
         // How many cells the display this window is on would hold, for the
@@ -964,6 +971,11 @@ static void layout_pane_node(AppState* state, TerminalWindow* tw, PaneNode* node
                 pane->pty_resize_pending = false;
                 pane->pty.resize_pty(cols, rows, cell_px_w, cell_px_h);
             }
+        } else if (cell_size_changed && !pane->pty_resize_pending) {
+            // Same rows and columns, different cells (another font, a
+            // display with another scale): the shell needn't redraw, but
+            // programs sizing pictures need the new pixel size.
+            pane->pty.resize_pty(cols, rows, cell_px_w, cell_px_h);
         }
         return;
     }
@@ -1049,7 +1061,10 @@ static void split_focused_pane(AppState* state, TerminalWindow* tw, bool vertica
                                     : leaf->pane->terminal.get_rows() / 2);
     new_pane->terminal.resize(cols, rows);
     new_pane->terminal.clear_screen();
-    if (!new_pane->pty.spawn(cols, rows, inherit_cwd)) {
+    const int cell_px_w = static_cast<int>(std::lround(tw->cell_w * tw->display_scale));
+    const int cell_px_h = static_cast<int>(std::lround(tw->cell_h * tw->display_scale));
+    new_pane->terminal.set_cell_pixel_size(cell_px_w, cell_px_h);
+    if (!new_pane->pty.spawn(cols, rows, inherit_cwd, cell_px_w, cell_px_h)) {
         std::cerr << "split: failed to spawn PTY for new pane" << std::endl;
         return;
     }
@@ -1513,6 +1528,7 @@ static void print_usage(std::ostream& out) {
            "  --show-config --default print every setting at its default, documented\n"
            "  --check-config          report problems in sink.toml; exits 1 if there are any\n"
            "  --print-schema          print the JSON schema for sink.toml\n"
+           "  --view <picture>...     show pictures in the terminal (what sinkview runs)\n"
            "  --version               print sink's version\n"
            "  --help                  print this\n"
            "\n"
@@ -1552,6 +1568,10 @@ static std::optional<config::Config> read_config_for_command_line(const std::str
 // instead of starting, nullopt to start normally.
 static std::optional<int> run_command_line(int argc, char* argv[]) {
     std::vector<std::string> args(argv + 1, argv + argc);
+    // sinkview (sinkview.hpp): everything after --view is its own.
+    if (!args.empty() && args[0] == "--view") {
+        return sinkview::run(std::vector<std::string>(args.begin() + 1, args.end()));
+    }
     auto has = [&](const char* flag) { return std::find(args.begin(), args.end(), flag) != args.end(); };
     for (const std::string& a : args) {
         static const char* known[] = { "--show-config", "--default", "--check-config", "--print-schema",

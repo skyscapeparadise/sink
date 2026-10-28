@@ -38,11 +38,22 @@ sink is still in beta, so you might hit a rough edge here and there. if you do, 
 
 **all the modern terminal stuff**
 - splits and tabs
-- inline images with sixel and the kitty graphics protocol
+- inline images with sixel and the kitty graphics protocol, and `sinkview` to show any picture right in your terminal
 - the kitty keyboard protocol, clickable links, clipboard support, and synchronized output
 - emoji, combining characters, and wide characters (CJK) that render properly, with font fallback so nothing shows up blank
 - text that reflows live while you resize
 - tested against tmux's own idea of what the screen should look like
+
+## pictures in the terminal
+
+`sinkview` shows pictures right where you're typing:
+
+```sh
+sinkview photo.jpg screenshot.png
+curl -s https://example.com/cat.png | sinkview
+```
+
+anything macOS can open works (JPEG, PNG, HEIC, GIF, WebP, TIFF), turned the right way up, and shrunk to fit the window if it's bigger. it's there in every shell sink opens. it doesn't work inside tmux yet, which doesn't pass pictures through.
 
 ## demos
 

@@ -8,6 +8,8 @@
 #include "shell_integration.hpp"
 #include "terminal_grid.hpp"
 #include "terminal_images.hpp"
+#include "sinkview.hpp"
+#include "picture.hpp"
 #include "sync_output.hpp"
 #include "key_bindings.hpp"
 
@@ -1835,9 +1837,8 @@ static void test_kitty_graphics() {
         const TerminalImage* img = g.images().find(5);
         CHECK(img->width == 2 && img->height == 2);
         CHECK(img->pixels[0] == (0xFFu << 24 | 0xFFu)); // RGBA32 red
-        // Unlike sixel, the cursor does not move: the app is positioning the
-        // image itself.
-        CHECK(g.get_cursor_row() == 0 && g.get_cursor_col() == 0);
+        // The cursor moves past it: its last row, the column after it.
+        CHECK(g.get_cursor_row() == 0 && g.get_cursor_col() == 1);
         CHECK(g.take_pending_reply() == "\x1b_Gi=5;OK\x1b\\");
     }
 
@@ -2686,6 +2687,126 @@ static void test_synchronized_output_holds_output() {
     CHECK(!g.is_synchronized_output());
 }
 
+// A kitty image given only a width or a height keeps its proportions, as the
+// protocol says; given neither it's drawn at its own size, not stretched to
+// whole cells.
+static void test_kitty_placement_keeps_proportions() {
+    TerminalGrid g; g.resize(80, 24);
+    g.set_cell_pixel_size(10, 20);
+    ANSIParser p;
+    // A 2x1 red picture, raw RGBA.
+    const std::string px = "/wAA//8AAP8=";
+    feed(p, g, "\x1b_Ga=T,f=32,s=2,v=1,c=8,q=2;" + px + "\x1b\\");
+    CHECK(g.images().placements().size() == 1);
+    const ImagePlacement& wide = g.images().placements()[0];
+    CHECK(wide.cols == 8);
+    CHECK(wide.rows == 2);                    // 80 px wide, so 40 tall: two 20 px rows
+    CHECK(std::fabs(wide.draw_cols - 8.0f) < 0.01f && std::fabs(wide.draw_rows - 2.0f) < 0.01f);
+    // The cursor ends past it: its last row, the column after it.
+    CHECK(g.get_cursor_row() == 1 && g.get_cursor_col() == 8);
+
+    // C=1 keeps the cursor where it was.
+    TerminalGrid k; k.resize(80, 24);
+    k.set_cell_pixel_size(10, 20);
+    feed(p, k, "\x1b[3;5H\x1b_Ga=T,f=32,s=2,v=1,c=8,C=1,q=2;" + px + "\x1b\\");
+    CHECK(k.get_cursor_row() == 2 && k.get_cursor_col() == 4);
+
+    // At the bottom, the screen scrolls to fit it, and it scrolls with it.
+    TerminalGrid b; b.resize(80, 5);
+    b.set_cell_pixel_size(10, 20);
+    feed(p, b, "\x1b[5;1Hlast\r\x1b_Ga=T,f=32,s=2,v=1,c=16,q=2;" + px + "\x1b\\\r\nnext");
+    CHECK(b.images().placements().size() == 1);
+    CHECK(b.images().placements()[0].rows == 4);
+    CHECK(row_text(b, 4) == "next");
+    CHECK(row_text(b, 0) == "last");  // the image's first row, scrolled up with it
+
+    TerminalGrid h; h.resize(80, 24);
+    h.set_cell_pixel_size(10, 20);
+    feed(p, h, "\x1b_Ga=T,f=32,s=2,v=1,q=2;" + px + "\x1b\\");
+    const ImagePlacement& natural = h.images().placements()[0];
+    CHECK(natural.cols == 1 && natural.rows == 1);
+    CHECK(std::fabs(natural.draw_cols - 0.2f) < 0.01f && std::fabs(natural.draw_rows - 0.05f) < 0.01f);
+}
+
+// sinkview's sizing, and its escape sequence read back by sink's own parser.
+static void test_sinkview() {
+    // Smaller than the window: its own size.
+    sinkview::Fit f = sinkview::fit(100, 50, 80, 23, 10, 20);
+    CHECK(f.px_w == 100 && f.px_h == 50 && f.cols == 10 && f.rows == 3);
+    // Wider than the window: shrunk to its width.
+    f = sinkview::fit(1600, 400, 80, 23, 10, 20);
+    CHECK(f.px_w == 800 && f.px_h == 200 && f.cols == 80);
+    // Taller than the window: shrunk to its height, proportions kept.
+    f = sinkview::fit(400, 4600, 80, 23, 10, 20);
+    CHECK(f.px_h == 460 && f.px_w == 40 && f.cols == 4);
+
+    // An opaque 30x10 picture, a horizontal ramp, shown 3 cells wide.
+    std::vector<uint8_t> rgba(30 * 10 * 4);
+    for (int y = 0; y < 10; ++y) {
+        for (int x = 0; x < 30; ++x) {
+            uint8_t* q = &rgba[(y * 30 + x) * 4];
+            q[0] = static_cast<uint8_t>(x * 8); q[1] = 40; q[2] = static_cast<uint8_t>(y * 20); q[3] = 255;
+        }
+    }
+    const std::string seq = sinkview::kitty_sequence(rgba, 30, 10, 3);
+    CHECK(seq.find("f=24") != std::string::npos);  // opaque goes as RGB
+    TerminalGrid g; g.resize(80, 24);
+    g.set_cell_pixel_size(10, 20);
+    ANSIParser p;
+    feed(p, g, seq);
+    CHECK(!g.has_pending_reply());
+    CHECK(g.images().placements().size() == 1);
+    const ImagePlacement& pl = g.images().placements()[0];
+    CHECK(pl.cols == 3 && pl.rows == 1);
+    const TerminalImage* img = g.images().find(pl.image_id);
+    CHECK(img && img->width == 30 && img->height == 10);
+    if (img) {
+        const uint32_t at = img->pixels[5 * 30 + 7];  // x 7, y 5
+        CHECK((at & 0xFF) == 56 && ((at >> 8) & 0xFF) == 40 && ((at >> 16) & 0xFF) == 100 && (at >> 24) == 255);
+    }
+
+    // Transparency goes as RGBA, and a big picture in several chunks.
+    std::vector<uint8_t> big(300 * 300 * 4);
+    for (size_t i = 0; i < big.size(); ++i) big[i] = static_cast<uint8_t>((i * 2654435761u) >> 13);
+    const std::string chunked = sinkview::kitty_sequence(big, 300, 300, 10);
+    CHECK(chunked.find("f=32") != std::string::npos && chunked.find("m=1;") != std::string::npos);
+    TerminalGrid c; c.resize(80, 24);
+    c.set_cell_pixel_size(10, 20);
+    feed(p, c, chunked);
+    CHECK(c.images().placements().size() == 1);
+    const TerminalImage* bigimg = c.images().placements().empty() ? nullptr : c.images().find(c.images().placements()[0].image_id);
+    CHECK(bigimg && bigimg->width == 300 && bigimg->pixels[1234] ==
+          (static_cast<uint32_t>(big[1234 * 4]) | (static_cast<uint32_t>(big[1234 * 4 + 1]) << 8) |
+           (static_cast<uint32_t>(big[1234 * 4 + 2]) << 16) | (static_cast<uint32_t>(big[1234 * 4 + 3]) << 24)));
+}
+
+// Pictures through macOS's decoder (picture.cpp), which sinkview and image
+// backgrounds share: a 3x2 PNG with one half-transparent and one clear pixel.
+static void test_picture_decoding() {
+    static const char kPng[] = "\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d\x49\x48\x44\x52\x00\x00\x00\x03\x00\x00\x00\x02\x08\x06\x00\x00\x00\x9d\x74\x66\x1a\x00\x00\x00\x1e\x49\x44\x41\x54\x78\x9c\x63\xf8\xcf\xc0\xf0\x1f\x0c\x19\xfe\x37\x30\x70\x89\xc8\xfd\x3f\x91\x62\x04\xe4\x30\x30\x00\x00\x85\x50\x09\x14\x9a\xf3\x34\xcc\x00\x00\x00\x00\x49\x45\x4e\x44\xae\x42\x60\x82";
+    const std::string png(kPng, sizeof(kPng) - 1);
+    picture::Source src = picture::Source::from_bytes(png);
+    CHECK(src.ok());
+    int w = 0, h = 0;
+    CHECK(src.size(w, h) && w == 3 && h == 2);
+    picture::Pixels px;
+    CHECK(src.decode(64, px) && px.w == 3 && px.h == 2);
+    if (px.rgba.size() == 24) {
+        auto at = [&](int x, int y, int c) { return static_cast<int>(px.rgba[(y * 3 + x) * 4 + c]); };
+        CHECK(at(0, 0, 0) == 255 && at(0, 0, 1) == 0 && at(0, 0, 3) == 255);  // red
+        CHECK(at(1, 1, 0) == 200 && at(1, 1, 1) == 100 && at(1, 1, 2) == 50);
+        CHECK(at(2, 0, 3) == 128 && at(2, 0, 2) >= 250);  // straight alpha: still full blue
+        CHECK(at(2, 1, 3) == 0);
+    }
+    CHECK(!picture::Source::from_bytes("not a picture").ok());
+
+    CHECK(picture::looks_like_picture("~/Pictures/Big Sur.HEIC"));
+    CHECK(picture::looks_like_picture("/a/b.jpeg"));
+    CHECK(!picture::looks_like_picture("/a/pool.mp4"));
+    CHECK(!picture::looks_like_picture("/a.png/movie"));
+    CHECK(!picture::looks_like_picture("image"));
+}
+
 int main() {
     test_plain_text();
     test_crlf_and_scroll();
@@ -2694,6 +2815,9 @@ int main() {
     test_search_column_mapping();
     test_synchronized_output_and_focus_modes();
     test_synchronized_output_holds_output();
+    test_kitty_placement_keeps_proportions();
+    test_sinkview();
+    test_picture_decoding();
     test_wide_characters();
     test_wide_character_wrap();
     test_wide_character_copy();

@@ -1608,6 +1608,10 @@ void TerminalGrid::place_image_at_cursor(uint64_t image_id, int pixel_w, int pix
     placement.src_y = 0;
     placement.src_w = pixel_w;
     placement.src_h = pixel_h;
+    // Its own size, or shrunk to the columns it got if it's wider than that.
+    const float fit = std::min(1.0f, static_cast<float>(span_cols * cw) / pixel_w);
+    placement.draw_cols = pixel_w * fit / cw;
+    placement.draw_rows = pixel_h * fit / ch;
     images_.place(placement);
 
     // The cursor lands at the start of the line below the image, scrolling
@@ -2406,8 +2410,8 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
             SDL_FRect dst = {
                 start_x + p.col * cell_w,
                 start_y + static_cast<float>(top_row) * cell_h + scroll_diff_y,
-                p.cols * cell_w,
-                p.rows * cell_h
+                (p.draw_cols > 0 ? p.draw_cols : static_cast<float>(p.cols)) * cell_w,
+                (p.draw_rows > 0 ? p.draw_rows : static_cast<float>(p.rows)) * cell_h
             };
             const TerminalImage* img = images_.find(p.image_id);
             SDL_FRect src = {

@@ -239,7 +239,7 @@ static std::string base64_decode(const std::string& in);
 // itself it uses the whole image at its natural size.
 static void place_kitty_image(TerminalGrid& grid, uint64_t image_id, uint64_t placement_id,
                               int src_x, int src_y, int src_w, int src_h,
-                              int want_cols, int want_rows, int z) {
+                              int want_cols, int want_rows, int z, bool move_cursor) {
     const TerminalImage* img = grid.images().find(image_id);
     if (!img) return;
 
@@ -251,11 +251,31 @@ static void place_kitty_image(TerminalGrid& grid, uint64_t image_id, uint64_t pl
     src_h = std::max(0, std::min(src_h, img->height - src_y));
     if (src_w == 0 || src_h == 0) return;
 
-    int cell_w = grid.effective_cell_px_w();
-    int cell_h = grid.effective_cell_px_h();
-    int cols = want_cols > 0 ? want_cols : (src_w + cell_w - 1) / cell_w;
-    int rows = want_rows > 0 ? want_rows : (src_h + cell_h - 1) / cell_h;
-    cols = std::min(cols, grid.get_cols() - grid.get_cursor_col());
+    // The size to draw it, in pixels, as the protocol has it: given both c
+    // and r, stretched to fill them; given one, scaled to it with the
+    // picture's proportions kept; given neither, the picture's own size.
+    const float cell_w = static_cast<float>(grid.effective_cell_px_w());
+    const float cell_h = static_cast<float>(grid.effective_cell_px_h());
+    float draw_w = static_cast<float>(src_w), draw_h = static_cast<float>(src_h);
+    if (want_cols > 0 && want_rows > 0) {
+        draw_w = want_cols * cell_w;
+        draw_h = want_rows * cell_h;
+    } else if (want_cols > 0) {
+        draw_w = want_cols * cell_w;
+        draw_h = draw_w * src_h / src_w;
+    } else if (want_rows > 0) {
+        draw_h = want_rows * cell_h;
+        draw_w = draw_h * src_w / src_h;
+    }
+    // Past the right edge it's shrunk to fit rather than drawn over whatever
+    // is beside the pane.
+    const float room = (grid.get_cols() - grid.get_cursor_col()) * cell_w;
+    if (draw_w > room && room > 0) {
+        draw_h *= room / draw_w;
+        draw_w = room;
+    }
+    const int cols = static_cast<int>(std::ceil(draw_w / cell_w - 0.001f));
+    const int rows = static_cast<int>(std::ceil(draw_h / cell_h - 0.001f));
     if (cols <= 0 || rows <= 0) return;
 
     ImagePlacement placement;
@@ -270,11 +290,19 @@ static void place_kitty_image(TerminalGrid& grid, uint64_t image_id, uint64_t pl
     placement.src_w = src_w;
     placement.src_h = src_h;
     placement.z = z;
+    placement.draw_cols = draw_w / cell_w;
+    placement.draw_rows = draw_h / cell_h;
     grid.images().place(placement);
 
-    // Unlike sixel, the kitty protocol leaves the cursor where it was: an
-    // application placing an image is positioning it itself and does not want
-    // the terminal moving the cursor out from under it.
+    // Then the cursor moves past it, as the protocol has it -- to the image's
+    // last row, the column after it -- so whatever's printed next comes after
+    // the picture rather than over it. C=1 asks for it to stay put, for
+    // programs positioning images themselves.
+    if (move_cursor) {
+        grid.clear_wrap_pending();
+        for (int i = 1; i < rows; ++i) grid.index();
+        grid.set_cursor_col(std::min(placement.col + cols, grid.get_cols() - 1));
+    }
 }
 
 // Kitty graphics protocol: ESC _ G <key=value,...> ; <base64 payload> ESC \
@@ -510,7 +538,7 @@ void ANSIParser::dispatch_apc(TerminalGrid& grid) {
                               static_cast<int>(num('x', 0)), static_cast<int>(num('y', 0)),
                               static_cast<int>(num('w', 0)), static_cast<int>(num('h', 0)),
                               static_cast<int>(num('c', 0)), static_cast<int>(num('r', 0)),
-                              static_cast<int>(num('z', 0)));
+                              static_cast<int>(num('z', 0)), num('C', 0) != 1);
         }
         respond("OK", false);
         return;
@@ -525,7 +553,7 @@ void ANSIParser::dispatch_apc(TerminalGrid& grid) {
                               static_cast<int>(num('x', 0)), static_cast<int>(num('y', 0)),
                               static_cast<int>(num('w', 0)), static_cast<int>(num('h', 0)),
                               static_cast<int>(num('c', 0)), static_cast<int>(num('r', 0)),
-                              static_cast<int>(num('z', 0)));
+                              static_cast<int>(num('z', 0)), num('C', 0) != 1);
         respond("OK", false);
         return;
     }
