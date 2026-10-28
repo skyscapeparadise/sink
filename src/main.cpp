@@ -371,9 +371,11 @@ static Backdrop backdrop_of(const std::string& background) {
         { "color", Backdrop::Color },           { "gradient", Backdrop::Gradient },
         { "gel", Backdrop::Gel },               { "clear", Backdrop::Clear },
         { "frosted glass", Backdrop::Frosted }, { "liquid glass", Backdrop::LiquidGlass },
-        { "shader", Backdrop::Shader },
+        { "shader", Backdrop::Shader },           { "image", Backdrop::Image },
     };
-    if (config::is_path(background)) return Backdrop::Video;
+    // A path is a video -- or a picture, by its extension, as a picture
+    // picked as a video used to be saved.
+    if (config::is_path(background)) return picture::looks_like_picture(background) ? Backdrop::Image : Backdrop::Video;
     for (const auto& [name, kind] : kinds) {
         if (strcasecmp(name, background.c_str()) == 0) return kind;
     }
@@ -382,7 +384,73 @@ static Backdrop backdrop_of(const std::string& background) {
 
 // What Settings shows for the background: the kind's name, or the video.
 static std::string background_display(const AppState* state) {
-    return backdrop_of(state->background) == Backdrop::Video ? state->video_path : state->background;
+    const Backdrop kind = backdrop_of(state->background);
+    if (kind == Backdrop::Image) return "image";
+    return kind == Backdrop::Video ? state->video_path : state->background;
+}
+
+// The picture an image background shows: the background itself when it's a
+// path to one, otherwise [image] file.
+static std::string image_path_of(const config::PresetValues& p) {
+    return config::is_path(p.background) ? p.background : p.image_file;
+}
+
+static void release_image_background(TerminalWindow* tw) {
+    if (tw->image_texture) SDL_DestroyTexture(tw->image_texture);
+    tw->image_texture = nullptr;
+    tw->image_path.clear();
+}
+
+// Decodes `path` into this window's image background. Pictures past 8192
+// pixels a side are shrunk to it: no window is bigger, and the GPU's
+// textures stop not far past that.
+static void load_image_background(TerminalWindow* tw, const std::string& path) {
+    release_image_background(tw);
+    tw->image_error.clear();
+    if (path.empty()) return;
+    tw->image_path = path;
+    const std::string name = path.substr(path.rfind('/') == std::string::npos ? 0 : path.rfind('/') + 1);
+    picture::Pixels px;
+    picture::Source src = picture::Source::from_file(path);
+    if (!src.ok()) {
+        tw->image_error = name + " isn't a picture macOS can open";
+        return;
+    }
+    if (!src.decode(8192, px)) {
+        tw->image_error = "couldn't read " + name;
+        return;
+    }
+    tw->image_texture = SDL_CreateTexture(tw->renderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, px.w, px.h);
+    if (!tw->image_texture) {
+        tw->image_error = name + ": " + SDL_GetError();
+        return;
+    }
+    SDL_UpdateTexture(tw->image_texture, nullptr, px.rgba.data(), px.w * 4);
+    SDL_SetTextureBlendMode(tw->image_texture, SDL_BLENDMODE_BLEND);
+}
+
+// Draws a video frame or picture as the window's background, as
+// background_fit says: stretched to the window; filling it in proportion,
+// centered and cropped; or all of it in proportion, centered, with the
+// theme's background (already drawn) showing around it.
+static void draw_fitted_background(TerminalWindow* tw, SDL_Texture* tex, int out_w, int out_h) {
+    float w = 0.0f, h = 0.0f;
+    SDL_GetTextureSize(tex, &w, &h);
+    if (w <= 0.0f || h <= 0.0f || out_w <= 0 || out_h <= 0) return;
+    const float ow = static_cast<float>(out_w), oh = static_cast<float>(out_h);
+    SDL_FRect src{}, dst{};
+    const SDL_FRect* src_p = nullptr;
+    const SDL_FRect* dst_p = nullptr;
+    if (tw->background_fit == "fill") {
+        const float scale = std::max(ow / w, oh / h);
+        src = { (w - ow / scale) / 2.0f, (h - oh / scale) / 2.0f, ow / scale, oh / scale };
+        src_p = &src;
+    } else if (tw->background_fit == "fit") {
+        const float scale = std::min(ow / w, oh / h);
+        dst = { (ow - w * scale) / 2.0f, (oh - h * scale) / 2.0f, w * scale, h * scale };
+        dst_p = &dst;
+    }
+    tw->hue_shift.draw(tw->renderer, tex, tw->hue_shift_degrees, tw->exposure, tw->crt_mode_enabled, src_p, dst_p);
 }
 
 static SDL_FColor mix_color(const SDL_FColor& a, const SDL_FColor& b, float t) {
@@ -431,10 +499,21 @@ static void apply_background(AppState* state, TerminalWindow* tw, const config::
     } else {
         tw->user_shader.cleanup();  // nothing compiled or held while it isn't shown
     }
+    if (tw->backdrop == Backdrop::Image) {
+        const std::string path = image_path_of(p);
+        if (path != tw->image_path || (!tw->image_texture && tw->image_error.empty())) {
+            load_image_background(tw, path);
+            if (!tw->image_error.empty()) std::cerr << "Image background: " << tw->image_error << std::endl;
+        }
+    } else {
+        release_image_background(tw);
+        tw->image_error.clear();
+    }
 
     const ColorScheme& scheme = tw->color_scheme;
     tw->backdrop_color = scheme.background;
     tw->glass_tint = static_cast<float>(p.glass_tint);
+    tw->background_fit = p.background_fit;
     tw->gel_speed = static_cast<float>(p.gel_speed);
 
     BackgroundShader::Params& bp = tw->backdrop_params;
@@ -511,6 +590,8 @@ static void save_config(AppState* state) {
     };
     changed_str("background", state->background, saved.background);
     changed_str("shader.file", config::contract_home(state->shader_file), config::contract_home(saved.shader_file));
+    changed_str("background_fit", state->background_fit, saved.background_fit);
+    changed_str("image.file", config::contract_home(state->image_file), config::contract_home(image_path_of(saved)));
     changed_str("font", font_setting(state->font_path),
                 config::is_path(saved.font) ? saved.font : font_setting(resolve_font(saved.font)));
     changed_num("exposure", state->exposure, saved.exposure);
@@ -534,6 +615,8 @@ static void set_state_from_preset(AppState* state, const config::PresetValues& p
     state->background = p.background;
     state->video_path = backdrop_of(p.background) == Backdrop::Video ? resolve_background(p.background) : std::string();
     state->shader_file = p.shader_file;
+    state->image_file = backdrop_of(p.background) == Backdrop::Image ? image_path_of(p) : p.image_file;
+    state->background_fit = p.background_fit;
     state->font_path = resolve_font(p.font);
     state->base_font_size = static_cast<float>(p.font_size);
     state->line_height = static_cast<float>(p.line_height);
@@ -891,6 +974,7 @@ static void destroy_terminal_window(TerminalWindow* tw) {
     tw->crt_shader.cleanup();
     tw->background_shader.cleanup();
     tw->user_shader.cleanup();
+    release_image_background(tw);
     // Same rule for the panes' image textures. Their destructors run below as
     // part of `delete tw`, which is after the renderer is gone -- they would
     // otherwise be destroying textures against a dead device.
@@ -1287,6 +1371,7 @@ static bool recreate_renderer_for_hdr_console(AppState* state, TerminalWindow* t
     tw->crt_shader.cleanup();
     tw->background_shader.cleanup();
     tw->user_shader.cleanup();
+    release_image_background(tw);
     tw->font_manager.cleanup();
     // Inline images hold textures too. Only the textures go: the decoded
     // pixels stay, so every image re-uploads against the new renderer the
@@ -1340,6 +1425,7 @@ static bool recreate_renderer_for_hdr_console(AppState* state, TerminalWindow* t
     if (tw->backdrop == Backdrop::Shader && !tw->user_shader.path().empty()) {
         tw->user_shader.load(tw->renderer, tw->user_shader.path(), want_linear_colorspace);
     }
+    if (tw->backdrop == Backdrop::Image) load_image_background(tw, state->image_file);
 
     float font_size_px = tw->font_size * tw->display_scale;
     const std::string& font = tw->font_path.empty() ? state->font_path : tw->font_path;
@@ -1443,6 +1529,8 @@ static void refresh_settings_ui_presets(AppState* state) {
 static void sync_settings_ui_from_state(AppState* state) {
     state->settings_ui.set_paths(background_display(state), state->font_path);
     state->settings_ui.set_shader_file(state->shader_file);
+    state->settings_ui.set_image_file(state->image_file);
+    state->settings_ui.set_background_fit(state->background_fit);
     state->settings_ui.set_animated_typing(state->animated_typing);
     state->settings_ui.set_exposure(state->exposure);
     state->settings_ui.set_hue_shift(state->hue_shift);
@@ -1475,6 +1563,9 @@ static void update_config_notice(AppState* state) {
     } else if (const TerminalWindow* tw = state->active_window;
                tw && tw->backdrop == Backdrop::Shader && !tw->user_shader.error().empty()) {
         notice = clean(tw->user_shader.error());
+    } else if (const TerminalWindow* tw = state->active_window;
+               tw && tw->backdrop == Backdrop::Image && !tw->image_error.empty()) {
+        notice = clean(tw->image_error);
     } else if (const auto& warnings = store.config().warnings; !warnings.empty()) {
         const config::Diagnostic& w = warnings.front();
         const std::string file = w.file.empty() ? std::string("sink.toml") : w.file.substr(w.file.rfind('/') + 1);
@@ -1663,6 +1754,8 @@ static void open_settings_window(AppState* state, TerminalWindow* tw) {
     if (!tw || !state->settings_ui.open(tw->window)) return;
     state->settings_ui.set_paths(background_display(state), state->font_path);
     state->settings_ui.set_shader_file(state->shader_file);
+    state->settings_ui.set_image_file(state->image_file);
+    state->settings_ui.set_background_fit(state->background_fit);
     state->settings_ui.set_animated_typing(tw->animated_typing);
     state->settings_ui.set_exposure(tw->exposure);
     state->settings_ui.set_hue_shift(tw->hue_shift_degrees);
@@ -2589,6 +2682,14 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             p.background = state->background;
             p.theme = state->theme_name;
             p.shader_file = state->shader_file;
+            p.image_file = state->image_file;
+            // A picture picked as a video becomes an image background.
+            if (path && config::is_path(state->background) && picture::looks_like_picture(state->background)) {
+                state->image_file = state->background;
+                state->background = "image";
+                p.background = "image";
+                p.image_file = state->image_file;
+            }
             state->video_path = resolve_background(state->background);
             for (auto* tw : state->windows) apply_background(state, tw, p);
             state->settings_ui.set_paths(background_display(state), state->font_path);
@@ -2597,6 +2698,33 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             if (backdrop_of(state->background) == Backdrop::Shader && state->shader_file.empty()) {
                 state->settings_ui.pick_shader_file();
             }
+            if (backdrop_of(state->background) == Backdrop::Image && state->image_file.empty()) {
+                state->settings_ui.pick_image_file();
+            }
+            state->settings_ui.set_image_file(state->image_file);
+    state->settings_ui.set_background_fit(state->background_fit);
+            free(path);
+        } else if (event->user.code == 21) { // Video and image fit, from Settings
+            char* fit = (char*)event->user.data1;
+            state->background_fit = fit;
+            for (auto* tw : state->windows) tw->background_fit = state->background_fit;
+            save_config(state);
+            free(fit);
+        } else if (event->user.code == 20) { // A picture picked for the image background
+            char* path = (char*)event->user.data1;
+            state->image_file = path;
+            state->background = "image";
+            config::PresetValues p = config::resolve_active(state->config.config());
+            p.background = state->background;
+            p.theme = state->theme_name;
+            p.shader_file = state->shader_file;
+            p.image_file = state->image_file;
+            state->video_path.clear();
+            for (auto* tw : state->windows) apply_background(state, tw, p);
+            state->settings_ui.set_paths(background_display(state), state->font_path);
+            state->settings_ui.set_image_file(state->image_file);
+    state->settings_ui.set_background_fit(state->background_fit);
+            save_config(state);
             free(path);
         } else if (event->user.code == 19) { // A .frag picked for the shader background
             char* path = (char*)event->user.data1;
@@ -2606,10 +2734,13 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             p.background = state->background;
             p.theme = state->theme_name;
             p.shader_file = state->shader_file;
+            p.image_file = state->image_file;
             state->video_path.clear();
             for (auto* tw : state->windows) apply_background(state, tw, p);
             state->settings_ui.set_paths(background_display(state), state->font_path);
             state->settings_ui.set_shader_file(state->shader_file);
+    state->settings_ui.set_image_file(state->image_file);
+    state->settings_ui.set_background_fit(state->background_fit);
             save_config(state);
             free(path);
         } else if (event->user.code == 2) { // Font selected
@@ -3497,13 +3628,14 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 break;
             case Backdrop::Gradient:
             case Backdrop::Gel:
-            case Backdrop::Video:
                 SDL_SetRenderDrawColor(tw->renderer, 0, 0, 0, 255);
                 break;
+            case Backdrop::Video:
             case Backdrop::Shader:
-                // The theme's background, dimmed as the video would be, until
-                // the shader draws over it -- or instead of it, when the file
-                // doesn't compile.
+            case Backdrop::Image:
+                // The theme's background, dimmed as the video would be, under
+                // the shader or picture -- or instead of it, when the file
+                // doesn't compile or open.
                 SDL_SetRenderDrawColorFloat(tw->renderer, bc.r * lit, bc.g * lit, bc.b * lit, 1.0f);
                 break;
         }
@@ -3521,6 +3653,9 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 SDL_SetRenderDrawColorFloat(tw->renderer, bc.r * lit, bc.g * lit, bc.b * lit, 1.0f);
                 SDL_RenderClear(tw->renderer);
             }
+        }
+        if (tw->backdrop == Backdrop::Image && tw->image_texture) {
+            draw_fitted_background(tw, tw->image_texture, draw_w, draw_h);
         }
         if (tw->backdrop == Backdrop::Shader) {
             tw->user_shader.reload_if_changed(tw->renderer);  // saving the file shows the change
@@ -3547,7 +3682,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             tw->video_engine.update_frame(tw->renderer, dt);
             SDL_Texture* frame_tex = tw->video_engine.get_texture();
             if (frame_tex) {
-                tw->hue_shift.draw(tw->renderer, frame_tex, tw->hue_shift_degrees, tw->exposure, tw->crt_mode_enabled);
+                draw_fitted_background(tw, frame_tex, draw_w, draw_h);
             }
         }
 

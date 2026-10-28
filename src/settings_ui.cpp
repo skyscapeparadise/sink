@@ -31,6 +31,17 @@ static void shader_dialog_callback(void* userdata, const char* const* filelist, 
     }
 }
 
+static void image_dialog_callback(void* userdata, const char* const* filelist, int filter) {
+    if (filelist && *filelist) {
+        SDL_Event ev;
+        std::memset(&ev, 0, sizeof(ev));
+        ev.type = SDL_EVENT_USER;
+        ev.user.code = 20; // Image file selected
+        ev.user.data1 = strdup(*filelist);
+        SDL_PushEvent(&ev);
+    }
+}
+
 static void font_dialog_callback(void* userdata, const char* const* filelist, int filter) {
     if (filelist && *filelist) {
         SDL_Event ev;
@@ -177,12 +188,41 @@ void SettingsUI::set_paths(const std::string& bg_path, const std::string& font_p
     background_list_.active = kind == "video" ? std::string() : kind;  // a video file isn't in the list
     for (auto& btn : buttons_) {
         if (btn.id == BG_KIND_BTN) btn.label = kind;
-        if (btn.id == 1) btn.label = kind == "shader" ? "select shader..." : "select video...";
+        if (btn.id == 1) btn.label = select_label(kind);
     }
 }
 
 void SettingsUI::set_shader_file(const std::string& path) {
     shader_file_ = path;
+}
+
+void SettingsUI::set_image_file(const std::string& path) {
+    image_file_ = path;
+}
+
+void SettingsUI::set_background_fit(const std::string& fit) {
+    background_fit_ = fit;
+    for (auto& btn : buttons_) {
+        if (btn.id == FIT_BTN) btn.label = "fit: " + background_fit_;
+    }
+}
+
+bool SettingsUI::fit_applies() const {
+    const std::string kind = background_kind_label();
+    return kind == "pool" || kind == "video" || kind == "image";
+}
+
+void SettingsUI::pick_image_file() {
+    if (!window_) return;
+    SDL_DialogFileFilter filters[] = { {"Pictures", "jpg;jpeg;png;heic;heif;webp;tif;tiff;gif;bmp;avif;jxl"} };
+    SDL_ShowOpenFileDialog(image_dialog_callback, nullptr, window_, filters, 1, nullptr, false);
+}
+
+// What the file button beside the type button says, for that kind.
+std::string SettingsUI::select_label(const std::string& kind) {
+    if (kind == "shader") return "select shader...";
+    if (kind == "image") return "select image...";
+    return "select video...";
 }
 
 void SettingsUI::pick_shader_file() {
@@ -193,7 +233,7 @@ void SettingsUI::pick_shader_file() {
 
 // The background kinds the list offers. "pool" is the built-in video.
 const std::vector<std::string> SettingsUI::kBackgroundKinds = {
-    "pool", "color", "gradient", "gel", "clear", "frosted glass", "liquid glass", "shader",
+    "pool", "color", "gradient", "gel", "clear", "frosted glass", "liquid glass", "shader", "image",
 };
 
 // What the type button says: the kind, "pool" for the built-in video, or
@@ -533,8 +573,9 @@ void SettingsUI::init_layout() {
         buttons_.push_back(b);
     };
     button(BG_KIND_BTN, background_kind_label(), 24.0f, 128.0f, 125.0f);
-    button(1, background_kind_label() == "shader" ? "select shader..." : "select video...", 159.0f, 128.0f, 115.0f);
+    button(1, select_label(background_kind_label()), 159.0f, 128.0f, 115.0f);
     button(THEME_BTN, "theme: " + theme_list_.active, 24.0f, 164.0f, 250.0f);
+    button(FIT_BTN, "fit: " + background_fit_, 284.0f, 164.0f, 192.0f);
     toggle(8, "crt effect", crt_effect_enabled_, 24.0f, 280.0f, 150.0f);
     toggle(7, "title bar", vibrancy_enabled_, 184.0f, 280.0f, 150.0f);
 
@@ -691,8 +732,10 @@ void SettingsUI::process_event(const SDL_Event& event) {
                     
                     if (btn.id == 1 && background_kind_label() == "shader") {
                         pick_shader_file();
+                    } else if (btn.id == 1 && background_kind_label() == "image") {
+                        pick_image_file();
                     } else if (btn.id == 1) { // Select Background
-                        SDL_DialogFileFilter filters[] = { {"Media files", "mp4;mov;mkv;png;jpg;jpeg;bmp"} };
+                        SDL_DialogFileFilter filters[] = { {"Videos", "mp4;mov;m4v;mkv;webm;avi"} };
                         SDL_ShowOpenFileDialog(background_dialog_callback, nullptr, window_, filters, 1, nullptr, false);
                     } else if (btn.id == 3) { // Select Font
                         SDL_DialogFileFilter filters[] = { {"Font files", "ttf;otf;ttc"} };
@@ -730,6 +773,19 @@ void SettingsUI::process_event(const SDL_Event& event) {
                     } else if (btn.id == THEME_BTN) {
                         theme_list_.open = true;
                         theme_list_.hover = -1;
+                    } else if (btn.id == FIT_BTN) {
+                        if (fit_applies()) {
+                            const std::string next = background_fit_ == "stretch" ? "fill"
+                                                   : background_fit_ == "fill"    ? "fit"
+                                                                                  : "stretch";
+                            set_background_fit(next);
+                            SDL_Event ev;
+                            std::memset(&ev, 0, sizeof(ev));
+                            ev.type = SDL_EVENT_USER;
+                            ev.user.code = 21; // Background fit changed
+                            ev.user.data1 = strdup(next.c_str());
+                            SDL_PushEvent(&ev);
+                        }
                     } else if (btn.id == BG_KIND_BTN) {
                         background_list_.open = true;
                         background_list_.hover = -1;
@@ -883,6 +939,7 @@ void SettingsUI::render() {
                         : kind == "clear"        ? std::string("the desktop, clear")
                         : kind == "frosted glass" ? std::string("the desktop, frosted")
                         : kind == "shader"       ? (shader_file_.empty() ? std::string("no shader picked yet") : shader_file_)
+                        : kind == "image"        ? (image_file_.empty() ? std::string("no image picked yet") : image_file_)
                         : std::string("the desktop, through glass");
     float bg_value_x = 284.0f * scale;
     bg_disp = truncate_head(bg_disp, value_right_edge - bg_value_x);
@@ -911,7 +968,8 @@ void SettingsUI::render() {
         }
 
         bool disabled = (preset_locked && (btn.id == PRESET_BTN_RENAME || btn.id == PRESET_BTN_DELETE)) ||
-                        (btn.id == PRESET_BTN_SAVE && (!preset_edited_ || is_sink_preset(active_preset_)));
+                        (btn.id == PRESET_BTN_SAVE && (!preset_edited_ || is_sink_preset(active_preset_))) ||
+                        (btn.id == FIT_BTN && !fit_applies());
 
         SDL_FRect phys_rect = {
             btn.rect.x * scale,

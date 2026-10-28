@@ -110,6 +110,7 @@ struct Config {
 struct PresetValues {
     std::string name;
     std::string background;    // a path, or a built-in background's name
+    std::string background_fit;  // "stretch", "fill" or "fit"
     std::string font;          // a path, or a font name
     double font_size = 15;
     double line_height = 1;
@@ -130,6 +131,7 @@ struct PresetValues {
     double gel_speed = 1;
     double glass_tint = 0.3;
     std::string shader_file;   // a path, for background = "shader"
+    std::string image_file;    // a path, for background = "image"
 };
 
 struct BuiltinPreset {

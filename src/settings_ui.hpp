@@ -15,6 +15,7 @@ enum PresetButtonId {
     PRESET_BTN_DELETE = 24,
     THEME_BTN = 25,           // click to open the theme list
     BG_KIND_BTN = 26,         // click to open the background kinds
+    FIT_BTN = 27,             // click to cycle how a video or image fits the window
 };
 
 // What a committed name-edit should do once the user presses Enter.
@@ -76,6 +77,15 @@ public:
     // Opens the file picker for a shader; the choice comes back as user
     // event 19.
     void pick_shader_file();
+    // The same for an image background: shown beside the type button, and a
+    // picker whose choice comes back as user event 20.
+    void set_image_file(const std::string& path);
+    void pick_image_file();
+    static std::string select_label(const std::string& kind);
+    // How a video or image background meets the window: "stretch", "fill"
+    // or "fit". Clicking the button moves to the next; the choice comes back
+    // as user event 21.
+    void set_background_fit(const std::string& fit);
     void set_animated_typing(bool enabled);
     void set_broadcasting(bool enabled);
     bool get_broadcasting() const { return broadcasting_; }
@@ -133,6 +143,9 @@ private:
     
     std::string bg_path_ = "None";
     std::string shader_file_;
+    std::string image_file_;
+    std::string background_fit_ = "stretch";
+    bool fit_applies() const;  // the background is a video or an image
     std::string font_path_ = "Default";
     bool animated_typing_ = true;
     bool broadcasting_ = false;

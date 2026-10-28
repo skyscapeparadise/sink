@@ -69,14 +69,21 @@ const std::vector<KeyInfo>& keys() {
 
         // Preset
         { "background", Scope::Preset, KeyType::Path, std::string("pool"),
-          0, 0, { "pool", "color", "gradient", "gel", "clear", "frosted glass", "liquid glass", "shader" },
+          0, 0, { "pool", "color", "gradient", "gel", "clear", "frosted glass", "liquid glass", "shader", "image" },
           "What's behind the text. A video: \"pool\" (built in) or a path to "
-          "a video file. Or one of: \"color\", the theme's background color; "
+          "a video file. Or one of: \"image\", a picture (see "
+          "[presets.<name>.image]); \"color\", the theme's background color; "
           "\"gradient\" and \"gel\" (a slowly churning nebula), in the theme's "
           "colors unless [presets.<name>.gradient] or [presets.<name>.gel] say "
           "otherwise; \"clear\", \"frosted glass\" and \"liquid glass\", "
           "showing the desktop through the window; \"shader\", your own GLSL "
           "shader (see [presets.<name>.shader])." },
+        { "background_fit", Scope::Preset, KeyType::Choice, std::string("stretch"), 0, 0,
+          { "stretch", "fill", "fit" },
+          "How a video or image background meets the window: \"stretch\" fills it, "
+          "out of proportion if the shapes differ; \"fill\" fills it in "
+          "proportion, cropping what spills over; \"fit\" shows all of it in "
+          "proportion, with the theme's background around it." },
         { "font", Scope::Preset, KeyType::Path, std::string("Monaspace Neon"), 0, 0, {},
           "The typeface: the name of an installed font (\"Menlo\", \"JetBrains "
           "Mono\", or a specific face such as \"Menlo Bold\"), \"Monaspace Neon\" "
@@ -138,6 +145,10 @@ const std::vector<KeyInfo>& keys() {
           "shaders are -- void mainImage(out vec4 fragColor, in vec2 fragCoord), "
           "with iTime, iResolution, iMouse and the rest. Saving the file "
           "reloads it." },
+        { "image.file", Scope::Preset, KeyType::Path, std::string(""), 0, 0, {},
+          "For background = \"image\": the picture -- JPEG, PNG, HEIC, WebP, "
+          "TIFF, GIF or anything else macOS opens. background_fit says how it "
+          "meets the window." },
         { "glass.tint", Scope::Preset, KeyType::Float, 0.3, 0, 1, {},
           "For the clear and glass backgrounds: how much of the theme's "
           "background color is laid over them, so text stays readable. 0 is "
@@ -694,6 +705,7 @@ PresetValues resolve_values(const std::string& name, std::map<std::string, Value
     PresetValues r;
     r.name = name;
     r.background = is_path(str("background")) ? expand_home(str("background")) : str("background");
+    r.background_fit = str("background_fit");
     r.font = is_path(str("font")) ? expand_home(str("font")) : str("font");
     r.font_size = num("font_size");
     r.line_height = num("line_height");
@@ -716,6 +728,7 @@ PresetValues resolve_values(const std::string& name, std::map<std::string, Value
     r.gel_speed = num("gel.speed");
     r.glass_tint = num("glass.tint");
     r.shader_file = str("shader.file").empty() ? std::string() : expand_home(str("shader.file"));
+    r.image_file = str("image.file").empty() ? std::string() : expand_home(str("image.file"));
     return r;
 }
 

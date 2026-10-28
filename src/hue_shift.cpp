@@ -222,11 +222,12 @@ void HueShiftEffect::ensure_intermediate(SDL_Renderer* renderer, int w, int h) {
     }
 }
 
-void HueShiftEffect::draw(SDL_Renderer* renderer, SDL_Texture* source, float hue_degrees, float color_scale, bool ntsc_enabled) {
+void HueShiftEffect::draw(SDL_Renderer* renderer, SDL_Texture* source, float hue_degrees, float color_scale, bool ntsc_enabled,
+                          const SDL_FRect* src, const SDL_FRect* dst) {
     bool need_shader = state_ && (hue_degrees != 0.0f || ntsc_enabled);
     if (!need_shader) {
         SDL_SetRenderColorScale(renderer, color_scale);
-        SDL_RenderTexture(renderer, source, nullptr, nullptr);
+        SDL_RenderTexture(renderer, source, src, dst);
         SDL_SetRenderColorScale(renderer, 1.0f);
         return;
     }
@@ -241,16 +242,22 @@ void HueShiftEffect::draw(SDL_Renderer* renderer, SDL_Texture* source, float hue
         // to a plain draw rather than dropping the frame or (worse) running
         // the shader directly on `source`, which may be a YUV texture.
         SDL_SetRenderColorScale(renderer, color_scale);
-        SDL_RenderTexture(renderer, source, nullptr, nullptr);
+        SDL_RenderTexture(renderer, source, src, dst);
         SDL_SetRenderColorScale(renderer, 1.0f);
         return;
     }
 
     // Pass 1: normal draw (SDL's default path handles YUV -> RGB conversion
-    // if `source` needs it) into the offscreen RGB intermediate.
+    // if `source` needs it) into the offscreen RGB intermediate -- cleared
+    // first, so where a `dst` smaller than the target leaves it uncovered it's
+    // clear rather than whatever an earlier frame left.
     SDL_SetRenderTarget(renderer, intermediate_);
+    if (dst) {
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+        SDL_RenderClear(renderer);
+    }
     SDL_SetRenderColorScale(renderer, color_scale);
-    SDL_RenderTexture(renderer, source, nullptr, nullptr);
+    SDL_RenderTexture(renderer, source, src, dst);
     SDL_SetRenderColorScale(renderer, 1.0f);
 
     // Pass 2: NTSC chroma bleed (if enabled) then hue-rotate the now-RGB

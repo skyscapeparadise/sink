@@ -20,9 +20,14 @@
         "additionalProperties": false,
         "properties": {
           "background": {
-            "description": "What's behind the text. A video: \"pool\" (built in) or a path to a video file. Or one of: \"color\", the theme's background color; \"gradient\" and \"gel\" (a slowly churning nebula), in the theme's colors unless [presets.<name>.gradient] or [presets.<name>.gel] say otherwise; \"clear\", \"frosted glass\" and \"liquid glass\", showing the desktop through the window; \"shader\", your own GLSL shader (see [presets.<name>.shader]).",
-            "anyOf": [{ "enum": ["pool", "color", "gradient", "gel", "clear", "frosted glass", "liquid glass", "shader"] }, { "type": "string", "pattern": "^~|/" }],
+            "description": "What's behind the text. A video: \"pool\" (built in) or a path to a video file. Or one of: \"image\", a picture (see [presets.<name>.image]); \"color\", the theme's background color; \"gradient\" and \"gel\" (a slowly churning nebula), in the theme's colors unless [presets.<name>.gradient] or [presets.<name>.gel] say otherwise; \"clear\", \"frosted glass\" and \"liquid glass\", showing the desktop through the window; \"shader\", your own GLSL shader (see [presets.<name>.shader]).",
+            "anyOf": [{ "enum": ["pool", "color", "gradient", "gel", "clear", "frosted glass", "liquid glass", "shader", "image"] }, { "type": "string", "pattern": "^~|/" }],
             "default": "pool"
+          },
+          "background_fit": {
+            "description": "How a video or image background meets the window: \"stretch\" fills it, out of proportion if the shapes differ; \"fill\" fills it in proportion, cropping what spills over; \"fit\" shows all of it in proportion, with the theme's background around it.",
+            "enum": ["stretch", "fill", "fit"],
+            "default": "stretch"
           },
           "font": {
             "description": "The typeface: the name of an installed font (\"Menlo\", \"JetBrains Mono\", or a specific face such as \"Menlo Bold\"), \"Monaspace Neon\" (bundled), or a path to a font file. Characters the font lacks come from Monaspace Neon, then the system's fonts.",
@@ -177,6 +182,18 @@
               }
             }
           },
+          "image": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "file": {
+                "description": "For background = \"image\": the picture -- JPEG, PNG, HEIC, WebP, TIFF, GIF or anything else macOS opens. background_fit says how it meets the window.",
+                "type": "string",
+                "minLength": 1,
+                "default": ""
+              }
+            }
+          },
           "glass": {
             "type": "object",
             "additionalProperties": false,
@@ -199,9 +216,14 @@
       "additionalProperties": false,
       "properties": {
         "background": {
-          "description": "What's behind the text. A video: \"pool\" (built in) or a path to a video file. Or one of: \"color\", the theme's background color; \"gradient\" and \"gel\" (a slowly churning nebula), in the theme's colors unless [presets.<name>.gradient] or [presets.<name>.gel] say otherwise; \"clear\", \"frosted glass\" and \"liquid glass\", showing the desktop through the window; \"shader\", your own GLSL shader (see [presets.<name>.shader]).",
-          "anyOf": [{ "enum": ["pool", "color", "gradient", "gel", "clear", "frosted glass", "liquid glass", "shader"] }, { "type": "string", "pattern": "^~|/" }],
+          "description": "What's behind the text. A video: \"pool\" (built in) or a path to a video file. Or one of: \"image\", a picture (see [presets.<name>.image]); \"color\", the theme's background color; \"gradient\" and \"gel\" (a slowly churning nebula), in the theme's colors unless [presets.<name>.gradient] or [presets.<name>.gel] say otherwise; \"clear\", \"frosted glass\" and \"liquid glass\", showing the desktop through the window; \"shader\", your own GLSL shader (see [presets.<name>.shader]).",
+          "anyOf": [{ "enum": ["pool", "color", "gradient", "gel", "clear", "frosted glass", "liquid glass", "shader", "image"] }, { "type": "string", "pattern": "^~|/" }],
           "default": "pool"
+        },
+        "background_fit": {
+          "description": "How a video or image background meets the window: \"stretch\" fills it, out of proportion if the shapes differ; \"fill\" fills it in proportion, cropping what spills over; \"fit\" shows all of it in proportion, with the theme's background around it.",
+          "enum": ["stretch", "fill", "fit"],
+          "default": "stretch"
         },
         "font": {
           "description": "The typeface: the name of an installed font (\"Menlo\", \"JetBrains Mono\", or a specific face such as \"Menlo Bold\"), \"Monaspace Neon\" (bundled), or a path to a font file. Characters the font lacks come from Monaspace Neon, then the system's fonts.",
@@ -350,6 +372,18 @@
           "properties": {
             "file": {
               "description": "For background = \"shader\": a .frag file written the way Shadertoy shaders are -- void mainImage(out vec4 fragColor, in vec2 fragCoord), with iTime, iResolution, iMouse and the rest. Saving the file reloads it.",
+              "type": "string",
+              "minLength": 1,
+              "default": ""
+            }
+          }
+        },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "file": {
+              "description": "For background = \"image\": the picture -- JPEG, PNG, HEIC, WebP, TIFF, GIF or anything else macOS opens. background_fit says how it meets the window.",
               "type": "string",
               "minLength": 1,
               "default": ""

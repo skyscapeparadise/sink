@@ -158,11 +158,15 @@ struct TerminalWindow {
     ColorScheme color_scheme;
 
     // What's behind the text (`background` in sink.toml); see apply_background.
-    enum class Backdrop { Video, Color, Gradient, Gel, Clear, Frosted, LiquidGlass, Shader };
+    enum class Backdrop { Video, Color, Gradient, Gel, Clear, Frosted, LiquidGlass, Shader, Image };
     Backdrop backdrop = Backdrop::Video;
     std::string background;              // the setting, as written
     BackgroundShader background_shader;  // gradient and gel
     ShaderBackground user_shader;        // the user's own (background = "shader")
+    // background = "image": the picture, uploaded for this window's renderer.
+    SDL_Texture* image_texture = nullptr;
+    std::string image_path;              // what image_texture holds
+    std::string image_error;             // why it isn't there, when it isn't
     float user_shader_time = 0.0f;
     int user_shader_frame = 0;
     BackgroundShader::Params backdrop_params;
@@ -171,6 +175,7 @@ struct TerminalWindow {
     float gel_speed = 1.0f;
     float exposure = 0.7f;
     float hue_shift_degrees = 0.0f;
+    std::string background_fit = "stretch";  // video and image: "stretch", "fill" or "fit"
     HueShiftEffect hue_shift;
     CrtShaderEffect crt_shader;
     bool animated_typing = true;
@@ -285,10 +290,12 @@ struct AppState {
     key_bindings::OptionAsMeta option_as_meta = key_bindings::OptionAsMeta::None;
     float exposure = 0.7f;
     float hue_shift = 0.0f;
+    std::string background_fit = "stretch";
     bool animated_typing = true;
     bool vibrancy_enabled = true;
     bool crt_mode_enabled = false;
     bool ligatures_enabled = true;
+    std::string image_file;   // background = "image": the picture, as a full path
     std::string shader_file;  // background = "shader": the .frag, as a full path
     bool hdr_console_enabled = false;
     int scrollback_lines = 10000;

@@ -21,7 +21,7 @@ sink is still in beta, so you might hit a rough edge here and there. if you do, 
 ## what's in the water
 
 **make it yours**
-- image and video backgrounds, HDR video included (mp4, mov, mkv, png, jpg, bmp)
+- video backgrounds, HDR video included (mp4, mov, mkv), and pictures (JPEG, PNG, HEIC, WebP and more)
 - exposure and hue shift controls, an optional CRT effect, and HDR text that glows brighter than the rest of your screen on an HDR display
 - presets, so you can switch between whole looks in one go
 - cursor typing animation, ligatures, and whatever font you like
@@ -131,7 +131,8 @@ a preset can set:
 
 | key | default | |
 |---|---|---|
-| `background` | `"pool"` | a video (`"pool"` or a path), or `"color"`, `"gradient"`, `"gel"`, `"clear"`, `"frosted glass"`, `"liquid glass"`, `"shader"` (see below) |
+| `background` | `"pool"` | a video (`"pool"` or a path), or `"color"`, `"gradient"`, `"gel"`, `"clear"`, `"frosted glass"`, `"liquid glass"`, `"shader"`, `"image"` (see below) |
+| `background_fit` | `"stretch"` | how a video or image meets the window: `"stretch"` fills it, `"fill"` fills it in proportion and crops, `"fit"` shows all of it in proportion |
 | `font` | `"Monaspace Neon"` | an installed font by name (`"Menlo"`, `"Menlo Bold"`), the bundled font, or a path to a font file |
 | `font_size` | `15` | in points. view > bigger and smaller change one window, default size comes back to this |
 | `line_height` | `1` | row height as a multiple of the font size. `1.15` gives monaspace neon its roomier spacing |
@@ -165,6 +166,9 @@ backgrounds don't have to be videos. pick one from the type button in settings, 
 - `gel` is a slowly churning nebula. with sink's own theme it's the original deep purple; with another theme it takes that theme's colors
 - `clear`, `frosted glass` and `liquid glass` show your desktop through the window, as is, blurred, or through macOS's liquid glass
 - `shader` runs your own GLSL shader (see below)
+- `image` shows a picture: JPEG, PNG, HEIC, WebP, TIFF, GIF, anything macOS opens
+
+videos and pictures stretch to fill the window by default. the fit button in settings (or `background_fit`) switches to `fill`, which keeps their proportions and crops the edges, or `fit`, which shows all of it with the theme's background around it.
 
 ```toml
 [presets.nebula]
@@ -180,6 +184,12 @@ background = "gradient"
 [presets.dusk.gradient]
 colors = ["#1a1b26", "#414868", "#7aa2f7"]
 angle = 45                       # 0 is left to right, 90 top to bottom
+
+[presets.postcard]
+background = "image"
+
+[presets.postcard.image]
+file = "~/Pictures/big sur.heic"
 
 [presets.see-through]
 background = "frosted glass"

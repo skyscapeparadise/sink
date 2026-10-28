@@ -39,7 +39,10 @@ public:
     // whatever raw plane bytes the texture holds) -- so this renders
     // `source` normally into an offscreen RGB target first, then applies the
     // shader as a second pass on that already-RGB result.
-    void draw(SDL_Renderer* renderer, SDL_Texture* source, float hue_degrees, float color_scale, bool ntsc_enabled);
+    // `src`, when given, is the part of `source` to draw; `dst`, where on
+    // the target to draw it. Without them, all of it fills the target.
+    void draw(SDL_Renderer* renderer, SDL_Texture* source, float hue_degrees, float color_scale, bool ntsc_enabled,
+              const SDL_FRect* src = nullptr, const SDL_FRect* dst = nullptr);
 
 private:
     SDL_GPUDevice* device_ = nullptr; // borrowed from the renderer, not owned
