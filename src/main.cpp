@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <mutex>
 #include <thread>
+#include <functional>
 #include <queue>
 #include <fstream>
 #include <sstream>
@@ -2474,23 +2475,26 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) {
                 const std::string& typed_line = submitted_line;
                 
+                // sinkdemo and sinksing play inside sink, but the shell still
+                // runs the line -- the sinkdemo and sinksing on its PATH do
+                // nothing (see pty_bridge.cpp) -- so it lands in history like
+                // any command. The pane is the demo's from this moment, before
+                // the shell answers, so the prompt it prints back is held
+                // rather than flashing up ahead of the demo; the demo gives
+                // the shell a fresh one when it ends.
+                auto start_demo = [&](std::function<void()> body) {
+                    if (tw->demo_thread.joinable()) tw->demo_thread.join();
+                    tw->demo_pane = tw->focused;
+                    tw->demo_running.store(true);
+                    const char enter = '\r';
+                    tw->fpane().pty.write_to_pty(&enter, 1);
+                    tw->demo_thread = std::thread(std::move(body));
+                };
                 if (SinkDemo::is_demo_command(typed_line) && !SinkDemo::is_demo_running(tw)) {
-                    const char cancel_cmd[] = "\x15\x03";
-                    tw->fpane().pty.write_to_pty(cancel_cmd, 2);
-                    if (tw->demo_thread.joinable()) tw->demo_thread.join();
-                    tw->demo_pane = tw->focused;
-                    tw->demo_thread = std::thread([tw, state]() {
-                        SinkDemo::run_demo(tw, state);
-                    });
+                    start_demo([tw, state]() { SinkDemo::run_demo(tw, state); });
                 } else if (SinkDemo::is_sing_command(typed_line) && !SinkDemo::is_demo_running(tw)) {
-                    const char cancel_cmd[] = "\x15\x03";
-                    tw->fpane().pty.write_to_pty(cancel_cmd, 2);
                     std::string song_name = SinkDemo::sing_argument(typed_line);
-                    if (tw->demo_thread.joinable()) tw->demo_thread.join();
-                    tw->demo_pane = tw->focused;
-                    tw->demo_thread = std::thread([tw, song_name]() {
-                        SinkDemo::run_sing(tw, song_name);
-                    });
+                    start_demo([tw, song_name]() { SinkDemo::run_sing(tw, song_name); });
                 } else if (!SinkDemo::is_demo_command(typed_line) && !SinkDemo::is_sing_command(typed_line)) {
                     const char c = '\r';
                     tw->fpane().pty.write_to_pty(&c, 1);
