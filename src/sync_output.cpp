@@ -51,9 +51,16 @@ size_t parse(ANSIParser& parser, TerminalGrid& grid, Hold& hold,
             }
         } else {
             // Up to and including the next opening sequence, so nothing after
-            // it is parsed before it's held.
-            const size_t open = end_of(rest, kBegin);
-            const size_t take = std::min(kSliceBytes, open > 0 ? open : rest.size());
+            // it is parsed before it's held. Only this slice is searched, plus
+            // the bytes a sequence starting inside it can run over: searching
+            // all of `rest` made every slice rescan everything pending (up to
+            // the pty's 4MB backpressure cap), which on escape-dense output,
+            // where find() can't skip ahead, cost more than parsing did.
+            // Taking the whole sequence when it straddles the slice's end also
+            // means a slice boundary never splits it.
+            const size_t window = std::min(rest.size(), kSliceBytes + kBegin.size() - 1);
+            const size_t open = end_of(rest.substr(0, window), kBegin);
+            const size_t take = open > 0 ? open : std::min(kSliceBytes, rest.size());
             parser.parse(grid, rest.data(), take);
             pos += take;
         }

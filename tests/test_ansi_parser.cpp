@@ -2687,6 +2687,25 @@ static void test_synchronized_output_holds_output() {
     CHECK(!g.is_synchronized_output());
 }
 
+// An opening sequence that straddles the end of a parse slice is still found,
+// and nothing after it is parsed. The scan for it used to search all pending
+// output on every slice (quadratic under backpressure); bounding it to the
+// slice must not lose a sequence that starts inside the slice and ends past it.
+static void test_synchronized_output_open_across_slice() {
+    auto never = []() { return false; };
+    for (size_t back : {1, 4, 7}) {
+        TerminalGrid g; g.resize(80, 5);
+        ANSIParser p;
+        sync_output::Hold hold;
+        // "\x1b[?2026h" starting `back` bytes before the slice ends.
+        std::string bytes(sync_output::kSliceBytes - back, 'x');
+        bytes += "\x1b[?2026h" "held";
+        size_t used = sync_output::parse(p, g, hold, bytes.data(), bytes.size(), 0, never);
+        CHECK(used == bytes.size() - 4);
+        CHECK(g.is_synchronized_output());
+    }
+}
+
 // A kitty image given only a width or a height keeps its proportions, as the
 // protocol says; given neither it's drawn at its own size, not stretched to
 // whole cells.
@@ -2815,6 +2834,7 @@ int main() {
     test_search_column_mapping();
     test_synchronized_output_and_focus_modes();
     test_synchronized_output_holds_output();
+    test_synchronized_output_open_across_slice();
     test_kitty_placement_keeps_proportions();
     test_sinkview();
     test_picture_decoding();
