@@ -384,6 +384,7 @@ add_test(NAME config_store COMMAND config_store_tests)
 # of `ctest` -- it prints a timing table for humans, not pass/fail checks.
 add_executable(sink_bench
     bench/sink_bench.cpp
+    src/sync_output.cpp
     src/ansi_parser.cpp
     src/terminal_grid.cpp
     src/terminal_images.cpp
@@ -415,11 +416,10 @@ target_link_libraries(tmux_replay PRIVATE
     ZLIB::ZLIB
 )
 
-# Frame-time benchmark for the render path, which sink_bench (headless by
-# design) structurally cannot measure. Needs a real renderer and glyph atlas,
-# so it opens a hidden window.
+# End-to-end throughput through a real pty and the app's parse path.
 add_executable(pty_bench
     bench/pty_bench.cpp
+    src/sync_output.cpp
     src/ansi_parser.cpp
     src/terminal_grid.cpp
     src/terminal_images.cpp
@@ -434,17 +434,32 @@ target_link_libraries(pty_bench PRIVATE
     ZLIB::ZLIB
 )
 
+# Frames composed the way main.cpp composes them, so it needs every class a
+# frame can involve: backgrounds, video, the CRT effect and hue shift.
 add_executable(render_bench
     bench/render_bench.cpp
     src/ansi_parser.cpp
     src/terminal_grid.cpp
     src/terminal_images.cpp
     src/font_manager.cpp
+    src/hue_shift.cpp
+    src/crt_shader.cpp
+    src/background_shader.cpp
+    src/shader_background.cpp
+    src/video_engine.cpp
 )
 target_include_directories(render_bench PRIVATE src)
 target_link_libraries(render_bench PRIVATE
+    sink_shader_compiler
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
     SDL3_image::SDL3_image
     ZLIB::ZLIB
+    PkgConfig::AVCODEC
+    PkgConfig::AVFORMAT
+    PkgConfig::AVUTIL
+    PkgConfig::SWSCALE
 )
+if(APPLE)
+    target_link_libraries(render_bench PRIVATE "-framework Cocoa" "-framework CoreText" "-framework ImageIO")
+endif()

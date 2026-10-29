@@ -33,6 +33,12 @@ constexpr uint64_t kMaxUpdateMs = 1000;
 // than held. Real updates are a screenful -- tens of kilobytes.
 constexpr size_t kMaxUpdateBytes = 4u << 20;
 
+// How long one frame may spend parsing before the rest waits for the next
+// frame. Why 8ms, and what it costs in throughput, is in main.cpp beside
+// parse_within_budget(). It lives here so bench/pty_bench drains with the
+// app's number rather than a copy of it.
+constexpr uint64_t kFrameParseBudgetNs = 8ull * 1000000ull;
+
 // Most parsed in one step outside an update, so `out_of_time` is asked often.
 constexpr size_t kSliceBytes = 64u << 10;
 

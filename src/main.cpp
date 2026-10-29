@@ -74,7 +74,7 @@ static const float kHdrConsoleTextBoost = 1.6f;
 // The parse slice (sync_output::kSliceBytes) is large enough that the clock
 // read is noise and small enough that overshoot past the budget is bounded to
 // one slice -- measured at 0.65ms over, on an 8ms budget.
-static constexpr Uint64 kParseBudgetNs = 8ull * 1000000ull;
+static constexpr Uint64 kParseBudgetNs = sync_output::kFrameParseBudgetNs;
 
 // Parses as much of `data` as the budget allows and returns how much that was;
 // the rest waits for the next frame. Splitting a burst across frames is safe

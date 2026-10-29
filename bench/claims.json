@@ -1,0 +1,57 @@
+{
+ "about": "What sink's README and release notes may say about performance. Each claim is a threshold on a metric from bench/run.py, judged on the conservative end of its 95% interval (a '>=' claim must hold for the interval's low end, a '<=' claim for its high end). `bench/run.py claims` re-checks them; `run` checks them after every full run. If a claim fails, the README stops saying it until it passes again. Claims are per machine: a result from a different CPU skips them rather than passing or failing.",
+ "claims": [
+  {
+   "claim": "sink parses plain text at over 150 MB/s",
+   "metric": "parser.plain_text", "op": ">=", "value": 150, "machine": "Apple M1 Max"
+  },
+  {
+   "claim": "sink parses colorized output (ls, ripgrep) at over 100 MB/s",
+   "metric": "parser.colored_text", "op": ">=", "value": 100, "machine": "Apple M1 Max"
+  },
+  {
+   "claim": "sink's parser handles full-screen TUI redraws faster than vte, the parser Alacritty is built on",
+   "ratio": ["parser_core.cursor_heavy", "vte.cursor_heavy"], "op": ">=", "value": 1.0, "machine": "Apple M1 Max"
+  },
+  {
+   "claim": "on plain text, sink's parser is within 25% of vte",
+   "ratio": ["parser_core.plain_text", "vte.plain_text"], "op": ">=", "value": 0.75, "machine": "Apple M1 Max"
+  },
+  {
+   "claim": "a flood of output never takes more than 9ms of a frame: plain text",
+   "metric": "pty_paced.plain_text.worst_frame", "op": "<=", "value": 9.0, "machine": "Apple M1 Max"
+  },
+  {
+   "claim": "a flood of output never takes more than 9ms of a frame: TUI redraws",
+   "metric": "pty_paced.cursor_heavy.worst_frame", "op": "<=", "value": 9.0, "machine": "Apple M1 Max"
+  },
+  {
+   "claim": "a flood of output never takes more than 9ms of a frame: synchronized updates",
+   "metric": "pty_paced.sync_tui.worst_frame", "op": "<=", "value": 9.0, "machine": "Apple M1 Max"
+  },
+  {
+   "claim": "while output pours in, sink still takes in over 50 MB/s",
+   "metric": "pty_paced.plain_text", "op": ">=", "value": 50, "machine": "Apple M1 Max"
+  },
+  {
+   "claim": "a screen of text is finished, GPU included, in under 2ms",
+   "metric": "render.plain.frame", "op": "<=", "value": 2.0, "machine": "Apple M1 Max"
+  },
+  {
+   "claim": "with the gel, the CRT effect, HDR text and four panes all on, a frame still fits in a 120Hz refresh",
+   "metric": "render.everything.frame", "op": "<=", "value": 8.33, "machine": "Apple M1 Max"
+  },
+  {
+   "claim": "a video background costs under 2ms a frame",
+   "metric": "render.video.frame", "op": "<=", "value": 2.0, "machine": "Apple M1 Max"
+  },
+  {
+   "claim": "a find-bar keystroke at the default 10,000 lines of scrollback takes under 5ms",
+   "metric": "findbar.10000", "op": "<=", "value": 5.0, "machine": "Apple M1 Max"
+  },
+  {
+   "claim": "resizing with 10,000 lines of scrollback rewraps within a 60Hz frame",
+   "metric": "reflow.10000", "op": "<=", "value": 16.7, "machine": "Apple M1 Max"
+  }
+ ]
+}

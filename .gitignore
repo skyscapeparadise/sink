@@ -57,3 +57,6 @@ bench/workloads/
 /appcast.xml
 build-asan/
 build-fuzz/
+build-bench/
+build-ab/
+bench/results/*-frames/

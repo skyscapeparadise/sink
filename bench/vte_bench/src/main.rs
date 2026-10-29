@@ -75,6 +75,13 @@ fn char_width(c: char) -> usize {
     1
 }
 
+/// Variation selectors, ZWJ/ZWNJ and the basic combining-mark block: the
+/// zero-width characters the workloads contain.
+#[inline]
+fn is_zero_width(c: char) -> bool {
+    matches!(c as u32, 0x0300..=0x036F | 0x200B..=0x200D | 0xFE00..=0xFE0F)
+}
+
 struct Grid {
     cols: usize,
     rows: usize,
@@ -116,6 +123,14 @@ impl Grid {
     }
 
     fn write_char(&mut self, c: char) {
+        // Zero-width characters attach to the cell before them, as in real
+        // Alacritty (and sink, which composes them into the base). Writing
+        // nothing is cheaper than Alacritty's attach, so this errs in vte's
+        // favour. Without it the UTF-8 workload's U+FE0F took a column of its
+        // own and the two sides ended on different screens.
+        if is_zero_width(c) {
+            return;
+        }
         let w = char_width(c);
         // A double-width glyph cannot straddle a line break.
         if self.cursor_col + w > self.cols {
@@ -258,7 +273,48 @@ fn ansi256(idx: u8) -> (u8, u8, u8) {
     (v, v, v)
 }
 
-fn run_once(data: &[u8], cols: usize, rows: usize) -> f64 {
+/// FNV-1a over the visible screen as plain text, then the cursor. Mirrors
+/// screen_text_hash() in bench/harness.hpp exactly, so the two benchmarks can
+/// be checked for ending in the same state -- i.e. for having done the same
+/// work. A blank cell or the trailing half of a wide character is a space. A
+/// pending wrap leaves this cursor one past the last column where sink's
+/// stays on it with a flag set; that is representation, not a difference in
+/// the result, so the column is clamped.
+fn screen_text_hash(g: &Grid) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    let mut put = |v: u32| {
+        for i in 0..4 {
+            h = (h ^ ((v >> (8 * i)) & 0xff) as u64).wrapping_mul(0x100000001b3);
+        }
+    };
+    for r in 0..g.rows {
+        let start = g.row_start(r);
+        for c in 0..g.cols {
+            let ch = g.cells[start + c].ch as u32;
+            put(if ch == 0 { 32 } else { ch });
+        }
+    }
+    put(g.cursor_col.min(g.cols - 1) as u32);
+    put(g.cursor_row as u32);
+    format!("{:016x}", h)
+}
+
+/// Everything in the grid, colours included. Nothing compares this across
+/// the two sides (the colour models differ); it exists so the colour fields
+/// are read. A field that is written and never read lets the optimizer drop
+/// the writes, which would quietly make this side do less work than sink.
+fn cells_hash(g: &Grid) -> String {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for cell in &g.cells {
+        for b in [cell.fg.0, cell.fg.1, cell.fg.2, cell.bg.0, cell.bg.1, cell.bg.2] {
+            h = (h ^ b as u64).wrapping_mul(0x100000001b3);
+        }
+        h = (h ^ cell.ch as u64).wrapping_mul(0x100000001b3);
+    }
+    format!("{:016x}", h)
+}
+
+fn run_once(data: &[u8], cols: usize, rows: usize) -> (f64, String) {
     let mut grid = Grid::new(cols, rows);
     let mut parser = Parser::new();
 
@@ -266,34 +322,81 @@ fn run_once(data: &[u8], cols: usize, rows: usize) -> f64 {
     for chunk in data.chunks(8192) {
         parser.advance(&mut grid, chunk);
     }
-    start.elapsed().as_secs_f64()
+    let t = start.elapsed().as_secs_f64();
+    (t, format!("{}:{}", screen_text_hash(&grid), cells_hash(&grid)))
 }
 
+fn median(v: &[f64]) -> f64 {
+    let mut s = v.to_vec();
+    s.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let n = s.len();
+    if n % 2 == 1 { s[n / 2] } else { 0.5 * (s[n / 2 - 1] + s[n / 2]) }
+}
+
+// Same flags and JSON shape as the C++ benchmarks (bench/harness.hpp):
+//   vte_bench [--json] [--samples N] [--warmup N] [dir]
 fn main() {
-    let dir = env::args().nth(1).unwrap_or_else(|| "bench/workloads".to_string());
+    let mut json = false;
+    let mut samples = 20usize;
+    let mut warmup = 3usize;
+    let mut dir = "bench/workloads".to_string();
+    let args: Vec<String> = env::args().skip(1).collect();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--json" => json = true,
+            "--samples" => { i += 1; samples = args[i].parse().expect("--samples N"); }
+            "--warmup" => { i += 1; warmup = args[i].parse().expect("--warmup N"); }
+            other => dir = other.to_string(),
+        }
+        i += 1;
+    }
+    // Ids match sink_bench's parser_core.* metrics, the like-for-like ones.
     let workloads = [
-        ("plain_text.bin", "plain text (cat-like)"),
-        ("colored_text.bin", "SGR-heavy (colorized ls-like)"),
-        ("cursor_heavy.bin", "cursor-heavy (TUI redraw-like)"),
-        ("unicode_heavy.bin", "UTF-8 heavy (emoji/CJK/box-drawing)"),
+        ("plain_text.bin", "plain_text", "plain text (cat-like)"),
+        ("colored_text.bin", "colored_text", "SGR-heavy (colorized ls)"),
+        ("cursor_heavy.bin", "cursor_heavy", "cursor-heavy (TUI redraw)"),
+        ("unicode_heavy.bin", "unicode_heavy", "UTF-8 heavy (emoji/CJK/box)"),
     ];
+    let (cols, rows) = (120usize, 50usize);
 
-    println!("{:<32} {:>10} {:>14}", "workload", "MB/s", "best time (s)");
-    println!("{:<32} {:>10} {:>14}", "--------", "----", "-------------");
-
-    for (file, label) in workloads {
+    let mut metrics = Vec::new();
+    for (file, id, label) in workloads {
         let path = format!("{dir}/{file}");
         let data = fs::read(&path).unwrap_or_else(|e| panic!("could not read {path}: {e}"));
         let mb = data.len() as f64 / (1024.0 * 1024.0);
-
-        let mut best = f64::MAX;
-        for _ in 0..5 {
-            let t = run_once(&data, 120, 50);
-            if t < best {
-                best = t;
-            }
+        let (_, screen) = run_once(&data, cols, rows);
+        for _ in 0..warmup {
+            run_once(&data, cols, rows);
         }
+        let mut s = Vec::with_capacity(samples);
+        for _ in 0..samples {
+            s.push(mb / run_once(&data, cols, rows).0);
+        }
+        let (_, again) = run_once(&data, cols, rows);
+        if again != screen {
+            eprintln!("{id}: output differs between runs");
+            std::process::exit(1);
+        }
+        let (screen, cells) = screen.split_once(':').map(|(a, b)| (a.to_string(), b.to_string())).unwrap();
+        metrics.push((id, label, s, screen, cells, data.len()));
+    }
 
-        println!("{:<32} {:>10.1} {:>14.4}", label, mb / best, best);
+    if json {
+        println!("{{\n  \"bench\": \"vte_bench\",\n  \"config\": {{\"cols\": {cols}, \"rows\": {rows}, \"chunk_bytes\": 8192, \"samples\": {samples}, \"warmup\": {warmup}, \"vte\": \"0.15\"}},\n  \"metrics\": [");
+        for (k, (id, label, s, screen, cells, bytes)) in metrics.iter().enumerate() {
+            let list: Vec<String> = s.iter().map(|v| format!("{v:.9}")).collect();
+            println!(
+                "    {{\"id\": \"vte.{id}\", \"label\": \"vte: {label}\", \"unit\": \"MB/s\", \"better\": \"higher\",\n     \"fingerprint\": null,\n     \"info\": {{\"screen_text\": \"{screen}\", \"cells\": \"{cells}\", \"bytes\": {bytes}}},\n     \"samples\": [{}]}}{}",
+                list.join(", "),
+                if k + 1 < metrics.len() { "," } else { "" }
+            );
+        }
+        println!("  ]\n}}");
+    } else {
+        println!("{:<38} {:>12} {:>18}", "workload", "median MB/s", "screen");
+        for (_, label, s, screen, _, _) in &metrics {
+            println!("{:<38} {:>12.1} {:>18}", label, median(s), screen);
+        }
     }
 }
