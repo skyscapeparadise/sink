@@ -69,18 +69,20 @@ const std::vector<KeyInfo>& keys() {
 
         // Preset
         { "background", Scope::Preset, KeyType::Path, std::string("pool"),
-          0, 0, { "pool", "color", "gradient", "gel", "clear", "frosted glass", "liquid glass", "shader", "image" },
-          "What's behind the text. A video: \"pool\" (built in) or a path to "
-          "a video file. Or one of: \"image\", a picture (see "
-          "[presets.<name>.image]); \"color\", the theme's background color; "
-          "\"gradient\" and \"gel\" (a slowly churning nebula), in the theme's "
-          "colors unless [presets.<name>.gradient] or [presets.<name>.gel] say "
-          "otherwise; \"clear\", \"frosted glass\" and \"liquid glass\", "
-          "showing the desktop through the window; \"shader\", your own GLSL "
-          "shader (see [presets.<name>.shader])." },
+          0, 0, { "pool", "gel", "video", "image", "shader", "color", "gradient", "clear", "frosted glass" },
+          "What's behind the text. sink's own scenes: \"pool\", the built-in "
+          "video, and \"gel\", a slowly churning nebula in the theme's colors "
+          "unless [presets.<name>.gel] says otherwise. Your files: \"video\" (see "
+          "[presets.<name>.video]), \"image\" (see [presets.<name>.image]) or "
+          "\"shader\", your own GLSL (see [presets.<name>.shader]); a path to a "
+          "video or picture works too. Colors: \"color\", the "
+          "background color, and \"gradient\" (see [presets.<name>.gradient]). "
+          "The desktop: \"clear\" and \"frosted glass\", showing it through "
+          "the window, as is or blurred." },
         { "background_fit", Scope::Preset, KeyType::Choice, std::string("stretch"), 0, 0,
           { "stretch", "fill", "fit" },
-          "How a video or image background meets the window: \"stretch\" fills it, "
+          "How a video or image background (not pool, which always fills the "
+          "window) meets the window: \"stretch\" fills it, "
           "out of proportion if the shapes differ; \"fill\" fills it in "
           "proportion, cropping what spills over; \"fit\" shows all of it in "
           "proportion, with the theme's background around it." },
@@ -96,9 +98,13 @@ const std::vector<KeyInfo>& keys() {
           "Text size, in points. View > Bigger and Smaller change it for one "
           "window, and Default Size returns to this." },
         { "exposure", Scope::Preset, KeyType::Float, 0.7, 0, 2, {},
-          "Brightness of the background video." },
+          "Brightness of a video, image, shader or gel background. Color and "
+          "gradient backgrounds show exactly the colors picked, and the glass "
+          "kinds the desktop, so it leaves those alone." },
         { "hue_shift", Scope::Preset, KeyType::Float, 0.0, 0, 360, {},
-          "Rotates the background video's colors, in degrees." },
+          "Rotates the colors of a video, image, shader or gel background, in "
+          "degrees. Like exposure, it leaves color, gradient and glass "
+          "backgrounds alone." },
         { "crt", Scope::Preset, KeyType::Bool, false, 0, 0, {},
           "The CRT effect: scanlines, curvature and glow." },
         { "hdr_text", Scope::Preset, KeyType::Bool, false, 0, 0, {},
@@ -145,10 +151,16 @@ const std::vector<KeyInfo>& keys() {
           "shaders are -- void mainImage(out vec4 fragColor, in vec2 fragCoord), "
           "with iTime, iResolution, iMouse and the rest. Saving the file "
           "reloads it." },
+        { "video.file", Scope::Preset, KeyType::Path, std::string(""), 0, 0, {},
+          "For background = \"video\": the video -- MP4, MOV, MKV and the like, "
+          "HDR included. background_fit says how it meets the window." },
         { "image.file", Scope::Preset, KeyType::Path, std::string(""), 0, 0, {},
           "For background = \"image\": the picture -- JPEG, PNG, HEIC, WebP, "
           "TIFF, GIF or anything else macOS opens. background_fit says how it "
           "meets the window." },
+        { "glass.roughness", Scope::Preset, KeyType::Float, 0.5, 0, 1, {},
+          "For frosted glass: how blurred the desktop behind it is, from 0 "
+          "(hardly at all) to 1 (very)." },
         { "glass.tint", Scope::Preset, KeyType::Float, 0.3, 0, 1, {},
           "For the clear and glass backgrounds: how much of the theme's "
           "background color is laid over them, so text stays readable. 0 is "
@@ -273,6 +285,12 @@ std::optional<Value> convert(const KeyInfo& k, const std::string& where, const t
                     return d && d->empty() ? std::optional<Value>(Value(std::string())) : wrong_type();
                 }
                 if (k.choices.empty() || is_path(s->get())) return Value(s->get());
+                // Liquid glass was a background until 0.13; it's frosted
+                // glass now, which has a roughness of its own.
+                if (std::string(k.path) == "background" && strcasecmp(s->get().c_str(), "liquid glass") == 0) {
+                    warnings.push_back({ line, where + " = \"liquid glass\" is gone; showing frosted glass instead" });
+                    return Value(std::string("frosted glass"));
+                }
                 for (const std::string& c : k.choices) {
                     if (strcasecmp(c.c_str(), s->get().c_str()) == 0) return Value(c);
                 }
@@ -727,8 +745,10 @@ PresetValues resolve_values(const std::string& name, std::map<std::string, Value
     r.gel_colors = std::get<StringList>(v["gel.colors"]);
     r.gel_speed = num("gel.speed");
     r.glass_tint = num("glass.tint");
+    r.glass_roughness = num("glass.roughness");
     r.shader_file = str("shader.file").empty() ? std::string() : expand_home(str("shader.file"));
     r.image_file = str("image.file").empty() ? std::string() : expand_home(str("image.file"));
+    r.video_file = str("video.file").empty() ? std::string() : expand_home(str("video.file"));
     return r;
 }
 

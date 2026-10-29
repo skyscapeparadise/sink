@@ -390,8 +390,27 @@ static void test_edits_table() {
     CHECK(config::read_text(config::effective_toml(c), err).has_value());
 }
 
+// Liquid glass was removed in 0.13: a preset still asking for it gets frosted
+// glass, with a note saying so, rather than falling back to the video.
+static void test_liquid_glass_becomes_frosted() {
+    const config::Config c = read_ok("version = 1\npreset = \"g\"\n[presets.g]\nbackground = \"liquid glass\"\n"
+                                     "[presets.g.glass]\nroughness = 0.8\n");
+    const config::PresetValues p = config::resolve_preset(c, "g");
+    CHECK(p.background == "frosted glass");
+    CHECK(p.glass_roughness == 0.8);
+    CHECK(c.warnings.size() == 1 && c.warnings[0].message.find("liquid glass") != std::string::npos);
+}
+
 int main() {
     setenv("HOME", "/Users/test", 1);
+    test_liquid_glass_becomes_frosted();
+    {
+        // background = "video" plays [video] file.
+        const config::Config c = read_ok("version = 1\n[presets.v]\nbackground = \"video\"\n"
+                                         "[presets.v.video]\nfile = \"~/Movies/waves.mov\"\n");
+        const config::PresetValues p = config::resolve_preset(c, "v");
+        CHECK(p.background == "video" && p.video_file == "/Users/test/Movies/waves.mov" && c.warnings.empty());
+    }
     test_edits_table();
     test_empty_file_is_all_defaults();
     test_reads_v1();

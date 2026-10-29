@@ -2,6 +2,9 @@
 #import <objc/runtime.h>
 #include "macos_menu.h"
 #include <atomic>
+#include <dlfcn.h>
+#include <cmath>
+#include <algorithm>
 #include <cstring>
 #include <vector>
 #include <string>
@@ -851,8 +854,8 @@ static void make_window_see_through(NSWindow* nswin) {
     while ([queue count] > 0) {
         NSView* v = [queue firstObject];
         [queue removeObjectAtIndex:0];
-        // The frosted and liquid glass views draw themselves; leave them be.
-        if ([v isKindOfClass:[NSVisualEffectView class]] || [v isKindOfClass:[NSGlassEffectView class]]) continue;
+        // The frosted glass view draws itself; leave it be.
+        if ([v isKindOfClass:[NSVisualEffectView class]]) continue;
         [v setWantsLayer:YES];
         if ([v layer]) {
             [[v layer] setOpaque:NO];
@@ -995,7 +998,20 @@ void enable_macos_window_vibrancy(SDL_Window* sdl_win, bool enable) {
     }
 }
 
-void set_macos_window_backdrop(SDL_Window* sdl_win, int backdrop) {
+// The window server's own background blur, with a radius: what iTerm2, kitty
+// and Ghostty use for theirs. It isn't public API, so it's looked up rather
+// than linked, and frosted glass falls back to AppKit's fixed blur, faded by
+// roughness, if a macOS ever goes without it.
+namespace {
+using CGSConnection = int;
+using MainConnectionFn = CGSConnection (*)();
+using SetBlurFn = int32_t (*)(CGSConnection, NSInteger, int);
+const MainConnectionFn g_main_connection = reinterpret_cast<MainConnectionFn>(dlsym(RTLD_DEFAULT, "CGSMainConnectionID"));
+const SetBlurFn g_set_blur = reinterpret_cast<SetBlurFn>(dlsym(RTLD_DEFAULT, "CGSSetWindowBackgroundBlurRadius"));
+constexpr float kMaxBlurRadius = 48.0f;  // roughness 1
+} // namespace
+
+void set_macos_window_backdrop(SDL_Window* sdl_win, int backdrop, float roughness) {
     @autoreleasepool {
         if (!sdl_win) return;
         SDL_PropertiesID props = SDL_GetWindowProperties(sdl_win);
@@ -1003,23 +1019,19 @@ void set_macos_window_backdrop(SDL_Window* sdl_win, int backdrop) {
         NSView* contentView = nswin ? [nswin contentView] : nil;
         if (!contentView) return;
 
-        NSGlassEffectView* glass = nil;
+        const bool frosted = backdrop == 1;
+        const bool radius_blur = g_main_connection && g_set_blur;
+        if (radius_blur) {
+            const int radius = frosted ? static_cast<int>(std::lround(std::clamp(roughness, 0.0f, 1.0f) * kMaxBlurRadius)) : 0;
+            g_set_blur(g_main_connection(), [nswin windowNumber], radius);
+        }
         for (NSView* subview in [contentView subviews]) {
             // The full-window frosted view; the title bar has its own, short one.
             if ([subview isKindOfClass:[NSVisualEffectView class]] && subview.frame.size.height > 60.0) {
-                [subview setHidden:(backdrop != 1)];
-            } else if ([subview isKindOfClass:[NSGlassEffectView class]]) {
-                glass = (NSGlassEffectView*)subview;
+                [subview setHidden:(!frosted || radius_blur)];
+                [subview setAlphaValue:std::clamp(roughness, 0.0f, 1.0f)];
             }
         }
-        if (backdrop == 2 && !glass) {
-            glass = [[NSGlassEffectView alloc] initWithFrame:[contentView bounds]];
-            [glass setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-            [glass setStyle:NSGlassEffectViewStyleRegular];
-            [glass setCornerRadius:0];
-            [contentView addSubview:glass positioned:NSWindowBelow relativeTo:nil];
-        }
-        if (glass) [glass setHidden:(backdrop != 2)];
     }
 }
 

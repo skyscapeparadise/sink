@@ -20,12 +20,12 @@
         "additionalProperties": false,
         "properties": {
           "background": {
-            "description": "What's behind the text. A video: \"pool\" (built in) or a path to a video file. Or one of: \"image\", a picture (see [presets.<name>.image]); \"color\", the theme's background color; \"gradient\" and \"gel\" (a slowly churning nebula), in the theme's colors unless [presets.<name>.gradient] or [presets.<name>.gel] say otherwise; \"clear\", \"frosted glass\" and \"liquid glass\", showing the desktop through the window; \"shader\", your own GLSL shader (see [presets.<name>.shader]).",
-            "anyOf": [{ "enum": ["pool", "color", "gradient", "gel", "clear", "frosted glass", "liquid glass", "shader", "image"] }, { "type": "string", "pattern": "^~|/" }],
+            "description": "What's behind the text. sink's own scenes: \"pool\", the built-in video, and \"gel\", a slowly churning nebula in the theme's colors unless [presets.<name>.gel] says otherwise. Your files: \"video\" (see [presets.<name>.video]), \"image\" (see [presets.<name>.image]) or \"shader\", your own GLSL (see [presets.<name>.shader]); a path to a video or picture works too. Colors: \"color\", the background color, and \"gradient\" (see [presets.<name>.gradient]). The desktop: \"clear\" and \"frosted glass\", showing it through the window, as is or blurred.",
+            "anyOf": [{ "enum": ["pool", "gel", "video", "image", "shader", "color", "gradient", "clear", "frosted glass"] }, { "type": "string", "pattern": "^~|/" }],
             "default": "pool"
           },
           "background_fit": {
-            "description": "How a video or image background meets the window: \"stretch\" fills it, out of proportion if the shapes differ; \"fill\" fills it in proportion, cropping what spills over; \"fit\" shows all of it in proportion, with the theme's background around it.",
+            "description": "How a video or image background (not pool, which always fills the window) meets the window: \"stretch\" fills it, out of proportion if the shapes differ; \"fill\" fills it in proportion, cropping what spills over; \"fit\" shows all of it in proportion, with the theme's background around it.",
             "enum": ["stretch", "fill", "fit"],
             "default": "stretch"
           },
@@ -50,14 +50,14 @@
             "default": 15
           },
           "exposure": {
-            "description": "Brightness of the background video. 0 to 2.",
+            "description": "Brightness of a video, image, shader or gel background. Color and gradient backgrounds show exactly the colors picked, and the glass kinds the desktop, so it leaves those alone. 0 to 2.",
             "type": "number",
             "minimum": 0,
             "maximum": 2,
             "default": 0.7
           },
           "hue_shift": {
-            "description": "Rotates the background video's colors, in degrees. 0 to 360.",
+            "description": "Rotates the colors of a video, image, shader or gel background, in degrees. Like exposure, it leaves color, gradient and glass backgrounds alone. 0 to 360.",
             "type": "number",
             "minimum": 0,
             "maximum": 360,
@@ -182,6 +182,18 @@
               }
             }
           },
+          "video": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "file": {
+                "description": "For background = \"video\": the video -- MP4, MOV, MKV and the like, HDR included. background_fit says how it meets the window.",
+                "type": "string",
+                "minLength": 1,
+                "default": ""
+              }
+            }
+          },
           "image": {
             "type": "object",
             "additionalProperties": false,
@@ -198,6 +210,13 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
+              "roughness": {
+                "description": "For frosted glass: how blurred the desktop behind it is, from 0 (hardly at all) to 1 (very). 0 to 1.",
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.5
+              },
               "tint": {
                 "description": "For the clear and glass backgrounds: how much of the theme's background color is laid over them, so text stays readable. 0 is none. 0 to 1.",
                 "type": "number",
@@ -216,12 +235,12 @@
       "additionalProperties": false,
       "properties": {
         "background": {
-          "description": "What's behind the text. A video: \"pool\" (built in) or a path to a video file. Or one of: \"image\", a picture (see [presets.<name>.image]); \"color\", the theme's background color; \"gradient\" and \"gel\" (a slowly churning nebula), in the theme's colors unless [presets.<name>.gradient] or [presets.<name>.gel] say otherwise; \"clear\", \"frosted glass\" and \"liquid glass\", showing the desktop through the window; \"shader\", your own GLSL shader (see [presets.<name>.shader]).",
-          "anyOf": [{ "enum": ["pool", "color", "gradient", "gel", "clear", "frosted glass", "liquid glass", "shader", "image"] }, { "type": "string", "pattern": "^~|/" }],
+          "description": "What's behind the text. sink's own scenes: \"pool\", the built-in video, and \"gel\", a slowly churning nebula in the theme's colors unless [presets.<name>.gel] says otherwise. Your files: \"video\" (see [presets.<name>.video]), \"image\" (see [presets.<name>.image]) or \"shader\", your own GLSL (see [presets.<name>.shader]); a path to a video or picture works too. Colors: \"color\", the background color, and \"gradient\" (see [presets.<name>.gradient]). The desktop: \"clear\" and \"frosted glass\", showing it through the window, as is or blurred.",
+          "anyOf": [{ "enum": ["pool", "gel", "video", "image", "shader", "color", "gradient", "clear", "frosted glass"] }, { "type": "string", "pattern": "^~|/" }],
           "default": "pool"
         },
         "background_fit": {
-          "description": "How a video or image background meets the window: \"stretch\" fills it, out of proportion if the shapes differ; \"fill\" fills it in proportion, cropping what spills over; \"fit\" shows all of it in proportion, with the theme's background around it.",
+          "description": "How a video or image background (not pool, which always fills the window) meets the window: \"stretch\" fills it, out of proportion if the shapes differ; \"fill\" fills it in proportion, cropping what spills over; \"fit\" shows all of it in proportion, with the theme's background around it.",
           "enum": ["stretch", "fill", "fit"],
           "default": "stretch"
         },
@@ -246,14 +265,14 @@
           "default": 15
         },
         "exposure": {
-          "description": "Brightness of the background video. 0 to 2.",
+          "description": "Brightness of a video, image, shader or gel background. Color and gradient backgrounds show exactly the colors picked, and the glass kinds the desktop, so it leaves those alone. 0 to 2.",
           "type": "number",
           "minimum": 0,
           "maximum": 2,
           "default": 0.7
         },
         "hue_shift": {
-          "description": "Rotates the background video's colors, in degrees. 0 to 360.",
+          "description": "Rotates the colors of a video, image, shader or gel background, in degrees. Like exposure, it leaves color, gradient and glass backgrounds alone. 0 to 360.",
           "type": "number",
           "minimum": 0,
           "maximum": 360,
@@ -378,6 +397,18 @@
             }
           }
         },
+        "video": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "file": {
+              "description": "For background = \"video\": the video -- MP4, MOV, MKV and the like, HDR included. background_fit says how it meets the window.",
+              "type": "string",
+              "minLength": 1,
+              "default": ""
+            }
+          }
+        },
         "image": {
           "type": "object",
           "additionalProperties": false,
@@ -394,6 +425,13 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "roughness": {
+              "description": "For frosted glass: how blurred the desktop behind it is, from 0 (hardly at all) to 1 (very). 0 to 1.",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "default": 0.5
+            },
             "tint": {
               "description": "For the clear and glass backgrounds: how much of the theme's background color is laid over them, so text stays readable. 0 is none. 0 to 1.",
               "type": "number",

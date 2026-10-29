@@ -16,6 +16,18 @@ enum PresetButtonId {
     THEME_BTN = 25,           // click to open the theme list
     BG_KIND_BTN = 26,         // click to open the background kinds
     FIT_BTN = 27,             // click to cycle how a video or image fits the window
+    // background = "color": its swatch, and putting the theme's color back.
+    COLOR_SWATCH = 30,
+    COLOR_RESET = 31,
+    // background = "gradient": a swatch per stop (GRADIENT_STOP + index),
+    // adding and removing stops, and the angle.
+    GRADIENT_STOP = 40,       // 40..47
+    GRADIENT_REMOVE = 48,
+    GRADIENT_ADD = 49,
+    GRADIENT_ANGLE = 50,
+    // The text's color (colors.foreground): its swatch, and the theme's back.
+    TEXT_SWATCH = 51,
+    TEXT_RESET = 52,
 };
 
 // What a committed name-edit should do once the user presses Enter.
@@ -80,18 +92,37 @@ public:
     // The same for an image background: shown beside the type button, and a
     // picker whose choice comes back as user event 20.
     void set_image_file(const std::string& path);
+    // And for a video background (event 1 brings back the file).
+    void set_video_file(const std::string& path);
+    void pick_video_file();
     void pick_image_file();
     static std::string select_label(const std::string& kind);
     // How a video or image background meets the window: "stretch", "fill"
     // or "fit". Clicking the button moves to the next; the choice comes back
     // as user event 21.
     void set_background_fit(const std::string& fit);
+    // The color background's color, and whether it's the preset's own rather
+    // than the theme's. Its swatch opens the color picker (see ColorPicker);
+    // "use theme's color" is user event 23.
+    void set_color_background(const SDL_FColor& color, bool custom);
+    // The gradient's stops (2 to 8) and angle in degrees. A stop's swatch
+    // opens the color picker for it; - and + are user event 24 (data1 -1 or
+    // +1); the angle, event 25 (data1 the new angle).
+    void set_gradient(const std::vector<SDL_FColor>& stops, int angle_degrees);
+    // The text's color, and whether it's the preset's own. Its swatch opens
+    // the color picker (event 22, tag kTextColorTag); "use theme's color" is
+    // user event 26.
+    void set_text_color(const SDL_FColor& color, bool custom);
+    static constexpr int kTextColorTag = 100;
     void set_animated_typing(bool enabled);
     void set_broadcasting(bool enabled);
     bool get_broadcasting() const { return broadcasting_; }
     
     void set_exposure(float exposure);
     float get_exposure() const { return exposure_; }
+    // Frosted glass's roughness (0..1): a slider of its own, shown for it.
+    void set_glass_roughness(float roughness);
+    float get_glass_roughness() const { return glass_roughness_; }
 
     void set_hue_shift(float degrees);
     float get_hue_shift() const { return hue_shift_; }
@@ -144,12 +175,56 @@ private:
     std::string bg_path_ = "None";
     std::string shader_file_;
     std::string image_file_;
+    std::string video_file_;
     std::string background_fit_ = "stretch";
+    SDL_FColor bg_color_{0, 0, 0, 1};
+    bool bg_color_custom_ = false;
+    std::vector<SDL_FColor> gradient_stops_;
+    SDL_FColor text_color_{1, 1, 1, 1};
+    bool text_color_custom_ = false;
+    int gradient_angle_ = 45;
+    bool shown(int id) const;        // whether a button belongs to the background kind showing
+    void change_angle(int delta);
+
+    // sink's own color picker, drawn over Settings beside the swatch that
+    // opened it -- the same on every platform, rather than each one's own.
+    // A saturation/brightness square, a hue strip and a hex field; every
+    // change is user event 22, with `tag` (0 the color background, 1 + n a
+    // gradient's stop n) in data1 and the color as 0xRRGGBB in data2.
+    struct ColorPicker {
+        bool open = false;
+        int tag = 0;
+        float h = 0, s = 0, v = 0;   // hue 0..360, saturation and value 0..1
+        float x = 0, y = 0;          // top left, in points
+        bool drag_sv = false, drag_hue = false;
+        bool editing_hex = false;
+        std::string hex;             // the field's text while it's being typed in
+    };
+    ColorPicker picker_;
+    static constexpr float kPickerW = 236.0f, kPickerH = 208.0f;
+    // Opens beside `anchor` (a swatch): below it, or above when below would
+    // run off the window.
+    void open_picker(int tag, const SDL_FColor& color, const SDL_FRect& anchor);
+    void close_picker();
+    SDL_FRect picker_rect() const { return { picker_.x, picker_.y, kPickerW, kPickerH }; }
+    SDL_FRect picker_sv_rect() const { return { picker_.x + 10, picker_.y + 10, 182, 150 }; }
+    SDL_FRect picker_hue_rect() const { return { picker_.x + 200, picker_.y + 10, 26, 150 }; }
+    SDL_FRect picker_hex_rect() const { return { picker_.x + 10, picker_.y + 170, 118, 28 }; }
+    SDL_FRect picker_done_rect() const { return { picker_.x + 164, picker_.y + 170, 62, 28 }; }
+    SDL_FColor picker_color() const;
+    void picker_drag(float mx, float my);  // follows a drag in the square or the strip
+    void picker_send();                    // the color as it stands, as event 22
+    bool picker_event(const SDL_Event& event);  // true when the picker took it
+    void draw_picker(float scale);
     bool fit_applies() const;  // the background is a video or an image
+    // Exposure and hue shift: for videos, images, shaders and the gel -- not
+    // for colors picked outright (color, gradient) or the desktop (glass).
+    bool look_sliders_apply() const;
     std::string font_path_ = "Default";
     bool animated_typing_ = true;
     bool broadcasting_ = false;
     float exposure_ = 1.0f;
+    float glass_roughness_ = 0.5f;
     float hue_shift_ = 0.0f;
     bool vibrancy_enabled_ = true;
     bool crt_effect_enabled_ = false;
@@ -222,6 +297,15 @@ private:
     bool edit_cancel_hovered_ = false;
 
     void init_layout();
+    // The background card's second row -- fit, angle, roughness, "use
+    // theme's color" -- is there only for kinds with one; without it,
+    // everything below moves up by kKindRowH and the window is that much
+    // shorter. Y() places something laid out as if the row were there.
+    static constexpr float kKindRowH = 36.0f;
+    static constexpr float kWindowH = 640.0f;
+    float shift_ = 0.0f;
+    bool has_kind_row() const;
+    float Y(float y) const { return y >= 186.0f ? y + shift_ : y; }
     void update_slider_value(int slider_id, float mouse_x);
     void draw_text(const std::string& text, float x, float y, const SDL_FColor& color, bool monospace = false);
     void draw_rect_filled(const SDL_FRect& rect, const SDL_FColor& color, float radius = 0.0f);

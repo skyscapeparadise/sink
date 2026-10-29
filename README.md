@@ -93,7 +93,7 @@ and the editing keys your fingers already know from other Mac terminals:
 
 ## config
 
-most things live in the settings window (⌘,): your background, font, exposure, hue shift, the CRT effect, HDR text, ligatures, the typing animation, shell integration, and presets.
+most things live in the settings window (⌘,): your background, font, text color, exposure, hue shift, the CRT effect, HDR text, ligatures, the typing animation, shell integration, and presets. colors are picked with sink's own color picker: click a swatch.
 
 under the hood it's all in `~/.config/sink/sink.toml`, and you can edit it by hand too. sink only ever rewrites the lines for settings you change in the settings window, so your comments and layout stay put. save the file and open windows pick up the change within a second.
 
@@ -131,13 +131,13 @@ a preset can set:
 
 | key | default | |
 |---|---|---|
-| `background` | `"pool"` | a video (`"pool"` or a path), or `"color"`, `"gradient"`, `"gel"`, `"clear"`, `"frosted glass"`, `"liquid glass"`, `"shader"`, `"image"` (see below) |
+| `background` | `"pool"` | `"pool"`, `"gel"`, `"video"`, `"image"`, `"shader"`, `"color"`, `"gradient"`, `"clear"` or `"frosted glass"` (see below) |
 | `background_fit` | `"stretch"` | how a video or image meets the window: `"stretch"` fills it, `"fill"` fills it in proportion and crops, `"fit"` shows all of it in proportion |
 | `font` | `"Monaspace Neon"` | an installed font by name (`"Menlo"`, `"Menlo Bold"`), the bundled font, or a path to a font file |
 | `font_size` | `15` | in points. view > bigger and smaller change one window, default size comes back to this |
 | `line_height` | `1` | row height as a multiple of the font size. `1.15` gives monaspace neon its roomier spacing |
-| `exposure` | `0.7` | brightness of the background, 0 to 2 |
-| `hue_shift` | `0` | rotates the background's colors, in degrees |
+| `exposure` | `0.7` | brightness of a video, image, shader or gel background, 0 to 2 |
+| `hue_shift` | `0` | rotates a video, image, shader or gel background's colors, in degrees |
 | `crt` | `false` | scanlines, curvature and glow |
 | `hdr_text` | `false` | text brighter than SDR white on HDR displays |
 | `ligatures` | `true` | draws `->`, `!=` and friends as single symbols |
@@ -161,14 +161,16 @@ palette = ["#15161e", "#f7768e"]   # replaces black and red, keeps the rest
 
 backgrounds don't have to be videos. pick one from the type button in settings, or set it in the file:
 
-- `color` fills the window with the theme's background color
-- `gradient` blends from the theme's background toward its blue, or your own colors
+- `pool` is sink's own underwater scene, the default
 - `gel` is a slowly churning nebula. with sink's own theme it's the original deep purple; with another theme it takes that theme's colors
-- `clear`, `frosted glass` and `liquid glass` show your desktop through the window, as is, blurred, or through macOS's liquid glass
-- `shader` runs your own GLSL shader (see below)
+- `video` plays a video of yours: MP4, MOV, MKV, HDR included
 - `image` shows a picture: JPEG, PNG, HEIC, WebP, TIFF, GIF, anything macOS opens
+- `shader` runs your own GLSL shader (see below)
+- `color` fills the window with the theme's background color, or one you pick in settings
+- `gradient` blends from the theme's background toward its blue, or through up to 8 colors of your own at any angle. settings has a swatch for each color (click one for the color picker), - and + to remove and add them, and the angle (click to turn it 45 degrees, scroll over it for finer steps)
+- `clear` and `frosted glass` show your desktop through the window, as is or blurred. how blurred is frosted glass's roughness, a slider in settings
 
-videos and pictures stretch to fill the window by default. the fit button in settings (or `background_fit`) switches to `fill`, which keeps their proportions and crops the edges, or `fit`, which shows all of it with the theme's background around it.
+your videos and pictures stretch to fill the window by default (pool always does). the fit button in settings (or `background_fit`) switches to `fill`, which keeps their proportions and crops the edges, or `fit`, which shows all of it with the theme's background around it.
 
 ```toml
 [presets.nebula]
@@ -185,6 +187,12 @@ background = "gradient"
 colors = ["#1a1b26", "#414868", "#7aa2f7"]
 angle = 45                       # 0 is left to right, 90 top to bottom
 
+[presets.home-movie]
+background = "video"
+
+[presets.home-movie.video]
+file = "~/Movies/waves.mov"
+
 [presets.postcard]
 background = "image"
 
@@ -195,10 +203,11 @@ file = "~/Pictures/big sur.heic"
 background = "frosted glass"
 
 [presets.see-through.glass]
+roughness = 0.5                  # how blurred: 0 hardly, 1 very
 tint = 0.3                       # how much of the theme's background lies over the glass
 ```
 
-exposure and hue shift work on all of them, not just videos.
+exposure and hue shift work on videos, images, shaders and the gel. color and gradient backgrounds show exactly the colors you pick, so the sliders grey out for those (and for the glass ones, which show your desktop).
 
 ### shader backgrounds
 

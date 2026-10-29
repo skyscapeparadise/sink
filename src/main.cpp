@@ -317,6 +317,13 @@ static std::string resolve_background(const std::string& value) {
     return config::is_path(value) ? value : resolve_default_video_path();
 }
 
+// The video a preset plays: [video] file for background = "video" (none
+// picked yet: none), the background itself when it's a path, else pool.
+static std::string video_path_of(const config::PresetValues& p) {
+    if (strcasecmp(p.background.c_str(), "video") == 0) return p.video_file;
+    return resolve_background(p.background);
+}
+
 // The bundled font's name in sink.toml.
 static bool is_bundled_font_name(const std::string& value) {
     return strcasecmp(value.c_str(), "Monaspace Neon") == 0;
@@ -370,8 +377,9 @@ static Backdrop backdrop_of(const std::string& background) {
     static const std::pair<const char*, Backdrop> kinds[] = {
         { "color", Backdrop::Color },           { "gradient", Backdrop::Gradient },
         { "gel", Backdrop::Gel },               { "clear", Backdrop::Clear },
-        { "frosted glass", Backdrop::Frosted }, { "liquid glass", Backdrop::LiquidGlass },
+        { "frosted glass", Backdrop::Frosted },
         { "shader", Backdrop::Shader },           { "image", Backdrop::Image },
+        { "video", Backdrop::Video },
     };
     // A path is a video -- or a picture, by its extension, as a picture
     // picked as a video used to be saved.
@@ -386,7 +394,8 @@ static Backdrop backdrop_of(const std::string& background) {
 static std::string background_display(const AppState* state) {
     const Backdrop kind = backdrop_of(state->background);
     if (kind == Backdrop::Image) return "image";
-    return kind == Backdrop::Video ? state->video_path : state->background;
+    if (kind == Backdrop::Video) return strcasecmp(state->background.c_str(), "pool") == 0 ? "pool" : "video";
+    return state->background;
 }
 
 // The picture an image background shows: the background itself when it's a
@@ -441,7 +450,10 @@ static void draw_fitted_background(TerminalWindow* tw, SDL_Texture* tex, int out
     SDL_FRect src{}, dst{};
     const SDL_FRect* src_p = nullptr;
     const SDL_FRect* dst_p = nullptr;
-    if (tw->background_fit == "fill") {
+    // Pool is a scene, not a picture to frame: it always fills the window.
+    const bool pool = strcasecmp(tw->background.c_str(), "pool") == 0;
+    if (pool) {
+    } else if (tw->background_fit == "fill") {
         const float scale = std::max(ow / w, oh / h);
         src = { (w - ow / scale) / 2.0f, (h - oh / scale) / 2.0f, ow / scale, oh / scale };
         src_p = &src;
@@ -467,12 +479,34 @@ static SDL_FColor hex_color(const std::string& hex) {
 // when it changes), works out the gradient's and gel's colors -- the
 // preset's own, else built from the theme -- and shows the right macOS view
 // behind the window. tw->color_scheme must already be the preset's.
+// The gradient's stops: the preset's, or the theme's background deepening
+// toward its blue.
+static std::vector<SDL_FColor> gradient_stops(const config::PresetValues& p, const ColorScheme& scheme) {
+    std::vector<SDL_FColor> stops;
+    if (p.gradient_colors.size() >= 2) {
+        for (size_t i = 0; i < std::min<size_t>(p.gradient_colors.size(), 8); ++i) {
+            stops.push_back(hex_color(p.gradient_colors[i]));
+        }
+    } else {
+        stops.push_back(scheme.background);
+        stops.push_back(mix_color(scheme.background, scheme.palette[4], 0.5f));
+    }
+    return stops;
+}
+
+static std::string hex_of(const SDL_FColor& c) {
+    auto byte = [](float v) { return static_cast<int>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)); };
+    char buf[8];
+    std::snprintf(buf, sizeof(buf), "#%02x%02x%02x", byte(c.r), byte(c.g), byte(c.b));
+    return buf;
+}
+
 static void apply_background(AppState* state, TerminalWindow* tw, const config::PresetValues& p) {
     (void)state;
     tw->background = p.background;
     tw->backdrop = backdrop_of(p.background);
 
-    const std::string video = tw->backdrop == Backdrop::Video ? resolve_background(p.background) : std::string();
+    const std::string video = tw->backdrop == Backdrop::Video ? video_path_of(p) : std::string();
     if (tw->video_path != video) {
         tw->video_engine.stop();
         tw->video_engine.close_video();
@@ -513,6 +547,7 @@ static void apply_background(AppState* state, TerminalWindow* tw, const config::
     const ColorScheme& scheme = tw->color_scheme;
     tw->backdrop_color = scheme.background;
     tw->glass_tint = static_cast<float>(p.glass_tint);
+    tw->glass_roughness = static_cast<float>(p.glass_roughness);
     tw->background_fit = p.background_fit;
     tw->gel_speed = static_cast<float>(p.gel_speed);
 
@@ -520,15 +555,9 @@ static void apply_background(AppState* state, TerminalWindow* tw, const config::
     if (tw->backdrop == Backdrop::Gradient) {
         bp.mode = BackgroundShader::Mode::Gradient;
         bp.angle_degrees = static_cast<float>(p.gradient_angle);
-        if (p.gradient_colors.size() >= 2) {
-            bp.count = static_cast<int>(std::min<size_t>(p.gradient_colors.size(), 8));
-            for (int i = 0; i < bp.count; ++i) bp.colors[i] = hex_color(p.gradient_colors[i]);
-        } else {
-            // The theme's background, deepening toward its blue.
-            bp.count = 2;
-            bp.colors[0] = scheme.background;
-            bp.colors[1] = mix_color(scheme.background, scheme.palette[4], 0.5f);
-        }
+        const std::vector<SDL_FColor> stops = gradient_stops(p, scheme);
+        bp.count = static_cast<int>(stops.size());
+        for (int i = 0; i < bp.count; ++i) bp.colors[i] = stops[i];
     } else if (tw->backdrop == Backdrop::Gel) {
         bp.mode = BackgroundShader::Mode::Gel;
         if (p.gel_colors.size() == 5) {
@@ -557,10 +586,7 @@ static void apply_background(AppState* state, TerminalWindow* tw, const config::
     }
 
 #if defined(__APPLE__)
-    int behind = 0;
-    if (tw->backdrop == Backdrop::Frosted) behind = 1;
-    if (tw->backdrop == Backdrop::LiquidGlass) behind = 2;
-    set_macos_window_backdrop(tw->window, behind);
+    set_macos_window_backdrop(tw->window, tw->backdrop == Backdrop::Frosted ? 1 : 0, tw->glass_roughness);
 #endif
 }
 
@@ -591,6 +617,16 @@ static void save_config(AppState* state) {
     changed_str("background", state->background, saved.background);
     changed_str("shader.file", config::contract_home(state->shader_file), config::contract_home(saved.shader_file));
     changed_str("background_fit", state->background_fit, saved.background_fit);
+    changed_num("glass.roughness", state->glass_roughness, saved.glass_roughness);
+    changed_str("colors.background", state->background_color, saved.background_color);
+    changed_str("colors.foreground", state->text_color, saved.foreground);
+    if (state->gradient_colors != saved.gradient_colors) {
+        changes.push_back({ "gradient.colors", config::Value(state->gradient_colors) });
+    }
+    changed_num("gradient.angle", state->gradient_angle, saved.gradient_angle);
+    changed_str("video.file", config::contract_home(state->video_file),
+                config::contract_home(config::is_path(saved.background) && backdrop_of(saved.background) == Backdrop::Video
+                                          ? saved.background : saved.video_file));
     changed_str("image.file", config::contract_home(state->image_file), config::contract_home(image_path_of(saved)));
     changed_str("font", font_setting(state->font_path),
                 config::is_path(saved.font) ? saved.font : font_setting(resolve_font(saved.font)));
@@ -613,10 +649,17 @@ static void save_config(AppState* state) {
 static void set_state_from_preset(AppState* state, const config::PresetValues& p) {
     state->active_preset_name = p.name;
     state->background = p.background;
-    state->video_path = backdrop_of(p.background) == Backdrop::Video ? resolve_background(p.background) : std::string();
+    state->video_path = backdrop_of(p.background) == Backdrop::Video ? video_path_of(p) : std::string();
+    state->video_file = backdrop_of(p.background) == Backdrop::Video && config::is_path(p.background) ? p.background
+                                                                                                       : p.video_file;
     state->shader_file = p.shader_file;
     state->image_file = backdrop_of(p.background) == Backdrop::Image ? image_path_of(p) : p.image_file;
     state->background_fit = p.background_fit;
+    state->glass_roughness = static_cast<float>(p.glass_roughness);
+    state->background_color = p.background_color;
+    state->text_color = p.foreground;
+    state->gradient_colors = p.gradient_colors;
+    state->gradient_angle = p.gradient_angle;
     state->font_path = resolve_font(p.font);
     state->base_font_size = static_cast<float>(p.font_size);
     state->line_height = static_cast<float>(p.line_height);
@@ -791,7 +834,7 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
 
     tw->preset_name = preset_override ? preset_override->name : state->active_preset_name;
     if (preset_override) {
-        video_path = resolve_background(preset_override->background);
+        video_path = video_path_of(*preset_override);
         typeface_path = resolve_font(preset_override->font);
         exposure = static_cast<float>(preset_override->exposure);
         hue_shift_degrees = static_cast<float>(preset_override->hue_shift);
@@ -1506,6 +1549,40 @@ static void apply_preset_to_state_and_windows(AppState* state, const config::Pre
     for (auto* tw : state->windows) apply_preset_to_window(state, tw, p);
 }
 
+// The color and gradient as Settings' swatches show them: what's drawn,
+// whether from the preset or the theme.
+static void push_look_to_settings(AppState* state) {
+    const config::PresetValues p = config::resolve_active(state->config.config());
+    state->settings_ui.set_color_background(state->color_scheme.background, !state->background_color.empty());
+    state->settings_ui.set_text_color(state->color_scheme.foreground, !state->text_color.empty());
+    state->settings_ui.set_gradient(gradient_stops(p, state->color_scheme),
+                                    static_cast<int>(std::lround(state->gradient_angle)));
+}
+
+// After a color or gradient change from Settings (already saved by
+// save_config): every window's colors and background, as the active preset
+// now has them, and the swatches.
+static void apply_look_from_config(AppState* state) {
+    const config::PresetValues p = config::resolve_active(state->config.config());
+    state->color_scheme = scheme_for(p);
+    for (auto* tw : state->windows) {
+        tw->color_scheme = state->color_scheme;
+        for (Pane* pane : all_panes(tw)) pane->terminal.set_color_scheme(tw->color_scheme);
+        apply_background(state, tw, p);
+    }
+    push_look_to_settings(state);
+}
+
+// The gradient's stops as Settings last showed them, as hex: what an edit to
+// one starts from, so the theme's stops become the preset's own when one is
+// first changed.
+static config::StringList current_gradient_hex(AppState* state) {
+    const config::PresetValues p = config::resolve_active(state->config.config());
+    config::StringList out;
+    for (const SDL_FColor& c : gradient_stops(p, state->color_scheme)) out.push_back(hex_of(c));
+    return out;
+}
+
 // Pushes the current preset list/selection into the (already-open) settings
 // window so its preset row and dropdown reflect what's on disk.
 static void refresh_settings_ui_presets(AppState* state) {
@@ -1530,7 +1607,9 @@ static void sync_settings_ui_from_state(AppState* state) {
     state->settings_ui.set_paths(background_display(state), state->font_path);
     state->settings_ui.set_shader_file(state->shader_file);
     state->settings_ui.set_image_file(state->image_file);
+    state->settings_ui.set_video_file(state->video_file);
     state->settings_ui.set_background_fit(state->background_fit);
+    state->settings_ui.set_glass_roughness(state->glass_roughness);
     state->settings_ui.set_animated_typing(state->animated_typing);
     state->settings_ui.set_exposure(state->exposure);
     state->settings_ui.set_hue_shift(state->hue_shift);
@@ -1540,6 +1619,7 @@ static void sync_settings_ui_from_state(AppState* state) {
     state->settings_ui.set_hdr_console_enabled(state->hdr_console_enabled);
     state->settings_ui.set_themes(themes::names(), state->theme_name);
     state->settings_ui.set_shell_integration_enabled(config::global_bool(state->config.config(), "shell.integration"));
+    push_look_to_settings(state);
     refresh_settings_ui_presets(state);
 }
 
@@ -1755,7 +1835,9 @@ static void open_settings_window(AppState* state, TerminalWindow* tw) {
     state->settings_ui.set_paths(background_display(state), state->font_path);
     state->settings_ui.set_shader_file(state->shader_file);
     state->settings_ui.set_image_file(state->image_file);
+    state->settings_ui.set_video_file(state->video_file);
     state->settings_ui.set_background_fit(state->background_fit);
+    state->settings_ui.set_glass_roughness(state->glass_roughness);
     state->settings_ui.set_animated_typing(tw->animated_typing);
     state->settings_ui.set_exposure(tw->exposure);
     state->settings_ui.set_hue_shift(tw->hue_shift_degrees);
@@ -1765,6 +1847,7 @@ static void open_settings_window(AppState* state, TerminalWindow* tw) {
     state->settings_ui.set_hdr_console_enabled(tw->hdr_console_enabled);
     state->settings_ui.set_themes(themes::names(), state->theme_name);
     state->settings_ui.set_shell_integration_enabled(config::global_bool(state->config.config(), "shell.integration"));
+    push_look_to_settings(state);
     refresh_settings_ui_presets(state);
 }
 
@@ -2678,19 +2761,20 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             // the built-in video.
             char* path = event->user.code == 3 ? nullptr : (char*)event->user.data1;
             state->background = path ? std::string(path) : std::string("pool");
+            // A file picked for "video" is kept as [video] file. A picture
+            // picked there becomes an image background.
+            if (event->user.code == 1 && path) {
+                const bool picture = picture::looks_like_picture(state->background);
+                (picture ? state->image_file : state->video_file) = state->background;
+                state->background = picture ? "image" : "video";
+            }
             config::PresetValues p = config::resolve_active(state->config.config());
             p.background = state->background;
             p.theme = state->theme_name;
             p.shader_file = state->shader_file;
             p.image_file = state->image_file;
-            // A picture picked as a video becomes an image background.
-            if (path && config::is_path(state->background) && picture::looks_like_picture(state->background)) {
-                state->image_file = state->background;
-                state->background = "image";
-                p.background = "image";
-                p.image_file = state->image_file;
-            }
-            state->video_path = resolve_background(state->background);
+            p.video_file = state->video_file;
+            state->video_path = backdrop_of(state->background) == Backdrop::Video ? video_path_of(p) : std::string();
             for (auto* tw : state->windows) apply_background(state, tw, p);
             state->settings_ui.set_paths(background_display(state), state->font_path);
             save_config(state);
@@ -2701,9 +2785,52 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             if (backdrop_of(state->background) == Backdrop::Image && state->image_file.empty()) {
                 state->settings_ui.pick_image_file();
             }
+            if (strcasecmp(state->background.c_str(), "video") == 0 && state->video_file.empty()) {
+                state->settings_ui.pick_video_file();
+            }
+            state->settings_ui.set_video_file(state->video_file);
             state->settings_ui.set_image_file(state->image_file);
+    state->settings_ui.set_video_file(state->video_file);
     state->settings_ui.set_background_fit(state->background_fit);
+    state->settings_ui.set_glass_roughness(state->glass_roughness);
             free(path);
+        } else if (event->user.code == 22) { // A color from the color picker
+            const int tag = static_cast<int>(reinterpret_cast<intptr_t>(event->user.data1));
+            const uint32_t rgb = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(event->user.data2));
+            const SDL_FColor c = { ((rgb >> 16) & 0xFF) / 255.0f, ((rgb >> 8) & 0xFF) / 255.0f, (rgb & 0xFF) / 255.0f, 1.0f };
+            if (tag == SettingsUI::kTextColorTag) {
+                state->text_color = hex_of(c);
+            } else if (tag == 0) {
+                state->background_color = hex_of(c);
+            } else {
+                config::StringList stops = current_gradient_hex(state);
+                if (tag - 1 < static_cast<int>(stops.size())) {
+                    stops[tag - 1] = hex_of(c);
+                    state->gradient_colors = stops;
+                }
+            }
+            save_config(state);
+            apply_look_from_config(state);
+        } else if (event->user.code == 26) { // The text color back to the theme's
+            state->text_color.clear();
+            save_config(state);
+            apply_look_from_config(state);
+        } else if (event->user.code == 23) { // The color background back to the theme's
+            state->background_color.clear();
+            save_config(state);
+            apply_look_from_config(state);
+        } else if (event->user.code == 24) { // A gradient stop added (+1) or removed (-1)
+            const int delta = static_cast<int>(reinterpret_cast<intptr_t>(event->user.data1));
+            config::StringList stops = current_gradient_hex(state);
+            if (delta > 0 && stops.size() < 8) stops.push_back(stops.back());
+            if (delta < 0 && stops.size() > 2) stops.pop_back();
+            state->gradient_colors = stops;
+            save_config(state);
+            apply_look_from_config(state);
+        } else if (event->user.code == 25) { // The gradient's angle
+            state->gradient_angle = static_cast<double>(reinterpret_cast<intptr_t>(event->user.data1));
+            save_config(state);
+            apply_look_from_config(state);
         } else if (event->user.code == 21) { // Video and image fit, from Settings
             char* fit = (char*)event->user.data1;
             state->background_fit = fit;
@@ -2719,11 +2846,14 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             p.theme = state->theme_name;
             p.shader_file = state->shader_file;
             p.image_file = state->image_file;
+            p.video_file = state->video_file;
             state->video_path.clear();
             for (auto* tw : state->windows) apply_background(state, tw, p);
             state->settings_ui.set_paths(background_display(state), state->font_path);
             state->settings_ui.set_image_file(state->image_file);
+    state->settings_ui.set_video_file(state->video_file);
     state->settings_ui.set_background_fit(state->background_fit);
+    state->settings_ui.set_glass_roughness(state->glass_roughness);
             save_config(state);
             free(path);
         } else if (event->user.code == 19) { // A .frag picked for the shader background
@@ -2735,12 +2865,15 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             p.theme = state->theme_name;
             p.shader_file = state->shader_file;
             p.image_file = state->image_file;
+            p.video_file = state->video_file;
             state->video_path.clear();
             for (auto* tw : state->windows) apply_background(state, tw, p);
             state->settings_ui.set_paths(background_display(state), state->font_path);
             state->settings_ui.set_shader_file(state->shader_file);
     state->settings_ui.set_image_file(state->image_file);
+    state->settings_ui.set_video_file(state->video_file);
     state->settings_ui.set_background_fit(state->background_fit);
+    state->settings_ui.set_glass_roughness(state->glass_roughness);
             save_config(state);
             free(path);
         } else if (event->user.code == 2) { // Font selected
@@ -2838,6 +2971,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             }
             save_config(state);
             state->settings_ui.set_themes(themes::names(), state->theme_name);
+            push_look_to_settings(state);
             free(name);
         } else if (event->user.code == 15) { // File menu: New Window with Preset
             char* name = (char*)event->user.data1;
@@ -3255,6 +3389,18 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
 
     // Sync settings from UI in real-time
     if (state->settings_ui.is_open()) {
+        const float rough = state->settings_ui.get_glass_roughness();
+        if (std::fabs(state->glass_roughness - rough) > 1e-4f) {
+            state->glass_roughness = rough;
+            for (auto* tw : state->windows) {
+                tw->glass_roughness = rough;
+#if defined(__APPLE__)
+                set_macos_window_backdrop(tw->window, tw->backdrop == Backdrop::Frosted ? 1 : 0, rough);
+#endif
+            }
+            save_config(state);
+        }
+
         float exp = state->settings_ui.get_exposure();
         if (state->exposure != exp) {
             state->exposure = exp;
@@ -3619,11 +3765,13 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         const float lit = tw->exposure;
         switch (tw->backdrop) {
             case Backdrop::Color:
-                SDL_SetRenderDrawColorFloat(tw->renderer, bc.r * lit, bc.g * lit, bc.b * lit, 1.0f);
+                // Exactly the color picked: exposure and hue shift are for
+                // videos, pictures, shaders and the gel, not colors chosen
+                // outright.
+                SDL_SetRenderDrawColorFloat(tw->renderer, bc.r, bc.g, bc.b, 1.0f);
                 break;
             case Backdrop::Clear:
             case Backdrop::Frosted:
-            case Backdrop::LiquidGlass:
                 SDL_SetRenderDrawColorFloat(tw->renderer, bc.r, bc.g, bc.b, tw->glass_tint);
                 break;
             case Backdrop::Gradient:
@@ -3643,14 +3791,17 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         if (tw->backdrop == Backdrop::Gradient || tw->backdrop == Backdrop::Gel) {
             if (tw->backdrop == Backdrop::Gel) tw->backdrop_params.time += dt * tw->gel_speed;
             BackgroundShader::Params params = tw->backdrop_params;
-            params.exposure = tw->exposure;
-            params.hue_degrees = tw->hue_shift_degrees;
+            // The gel takes exposure and hue shift; a gradient is shown in
+            // exactly the colors picked for it.
+            const bool gel = tw->backdrop == Backdrop::Gel;
+            params.exposure = gel ? tw->exposure : 1.0f;
+            params.hue_degrees = gel ? tw->hue_shift_degrees : 0.0f;
             params.logical_w = draw_w / tw->display_scale;
             params.logical_h = draw_h / tw->display_scale;
             if (tw->background_shader.is_ready()) {
                 tw->background_shader.draw(tw->renderer, params);
             } else {
-                SDL_SetRenderDrawColorFloat(tw->renderer, bc.r * lit, bc.g * lit, bc.b * lit, 1.0f);
+                SDL_SetRenderDrawColorFloat(tw->renderer, bc.r * params.exposure, bc.g * params.exposure, bc.b * params.exposure, 1.0f);
                 SDL_RenderClear(tw->renderer);
             }
         }

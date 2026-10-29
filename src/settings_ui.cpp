@@ -1,6 +1,10 @@
 #include "settings_ui.hpp"
 #include <iostream>
 #include <cstring>
+#include <cmath>
+#include <cstdio>
+#include <cctype>
+#include <cstdlib>
 #include <algorithm>
 #include <SDL3_image/SDL_image.h>
 
@@ -64,10 +68,10 @@ bool SettingsUI::open(SDL_Window* parent_window) {
 
     parent_ = parent_window;
     
-    // Create settings window (500x526, High-DPI enabled)
+    // Create settings window (500x640, High-DPI enabled)
     window_ = SDL_CreateWindow(
         "sink settings",
-        500, 526,
+        500, static_cast<int>(kWindowH + (has_kind_row() ? 0.0f : -kKindRowH)),
         SDL_WINDOW_HIGH_PIXEL_DENSITY
     );
 
@@ -156,6 +160,7 @@ bool SettingsUI::open(SDL_Window* parent_window) {
 }
 
 void SettingsUI::close() {
+    close_picker();
     if (editing_name_ && window_) {
         SDL_StopTextInput(window_);
     }
@@ -185,15 +190,37 @@ void SettingsUI::set_paths(const std::string& bg_path, const std::string& font_p
     bg_path_ = bg_path.empty() ? "none" : bg_path;
     font_path_ = font_path.empty() ? "default" : font_path;
     const std::string kind = background_kind_label();
-    background_list_.active = kind == "video" ? std::string() : kind;  // a video file isn't in the list
+    background_list_.active = kind;
     for (auto& btn : buttons_) {
         if (btn.id == BG_KIND_BTN) btn.label = kind;
         if (btn.id == 1) btn.label = select_label(kind);
     }
+    // A kind with controls of its own has a row for them; the others don't,
+    // and everything below moves up rather than leave a gap.
+    const float shift = has_kind_row() ? 0.0f : -kKindRowH;
+    if (window_ && shift != shift_) {
+        init_layout();
+        SDL_SetWindowSize(window_, 500, static_cast<int>(kWindowH + shift_));
+    }
+}
+
+bool SettingsUI::has_kind_row() const {
+    const std::string kind = background_kind_label();
+    return kind == "video" || kind == "image" || kind == "color" || kind == "gradient" || kind == "frosted glass";
 }
 
 void SettingsUI::set_shader_file(const std::string& path) {
     shader_file_ = path;
+}
+
+void SettingsUI::set_video_file(const std::string& path) {
+    video_file_ = path;
+}
+
+void SettingsUI::pick_video_file() {
+    if (!window_) return;
+    SDL_DialogFileFilter filters[] = { {"Videos", "mp4;mov;m4v;mkv;webm;avi"} };
+    SDL_ShowOpenFileDialog(background_dialog_callback, nullptr, window_, filters, 1, nullptr, false);
 }
 
 void SettingsUI::set_image_file(const std::string& path) {
@@ -207,9 +234,61 @@ void SettingsUI::set_background_fit(const std::string& fit) {
     }
 }
 
+void SettingsUI::set_color_background(const SDL_FColor& color, bool custom) {
+    bg_color_ = color;
+    bg_color_custom_ = custom;
+}
+
+void SettingsUI::set_text_color(const SDL_FColor& color, bool custom) {
+    text_color_ = color;
+    text_color_custom_ = custom;
+}
+
+void SettingsUI::set_gradient(const std::vector<SDL_FColor>& stops, int angle_degrees) {
+    gradient_stops_ = stops;
+    gradient_angle_ = ((angle_degrees % 360) + 360) % 360;
+    for (auto& btn : buttons_) {
+        if (btn.id == GRADIENT_ANGLE) btn.label = "angle: " + std::to_string(gradient_angle_) + " deg";
+    }
+}
+
+// The controls beside the background's type button depend on the type: the
+// file button for videos, images and shaders, swatches for the color and the
+// gradient.
+bool SettingsUI::shown(int id) const {
+    const std::string kind = background_kind_label();
+    const bool color = kind == "color", gradient = kind == "gradient";
+    // The file button is for kinds that come from a file: videos (pool being
+    // the built-in one), images and shaders.
+    if (id == 1) return kind == "video" || kind == "image" || kind == "shader";
+    if (id == FIT_BTN) return fit_applies();  // only videos and images have a shape to fit
+    if (id == COLOR_SWATCH || id == COLOR_RESET) return color;
+    if (id >= GRADIENT_STOP && id < GRADIENT_STOP + 8) {
+        return gradient && id - GRADIENT_STOP < static_cast<int>(gradient_stops_.size());
+    }
+    if (id == GRADIENT_REMOVE || id == GRADIENT_ADD || id == GRADIENT_ANGLE) return gradient;
+    return true;
+}
+
+void SettingsUI::change_angle(int delta) {
+    const int next = (((gradient_angle_ + delta) % 360) + 360) % 360;
+    set_gradient(gradient_stops_, next);
+    SDL_Event ev;
+    std::memset(&ev, 0, sizeof(ev));
+    ev.type = SDL_EVENT_USER;
+    ev.user.code = 25; // Gradient angle
+    ev.user.data1 = reinterpret_cast<void*>(static_cast<intptr_t>(next));
+    SDL_PushEvent(&ev);
+}
+
+bool SettingsUI::look_sliders_apply() const {
+    const std::string kind = background_kind_label();
+    return kind == "pool" || kind == "video" || kind == "image" || kind == "shader" || kind == "gel";
+}
+
 bool SettingsUI::fit_applies() const {
     const std::string kind = background_kind_label();
-    return kind == "pool" || kind == "video" || kind == "image";
+    return kind == "video" || kind == "image";
 }
 
 void SettingsUI::pick_image_file() {
@@ -231,9 +310,11 @@ void SettingsUI::pick_shader_file() {
     SDL_ShowOpenFileDialog(shader_dialog_callback, nullptr, window_, filters, 1, nullptr, false);
 }
 
-// The background kinds the list offers. "pool" is the built-in video.
+// The background kinds the list offers, grouped by where the picture comes
+// from: sink's own scenes ("pool" is the built-in video), your files, colors
+// you pick, and the desktop.
 const std::vector<std::string> SettingsUI::kBackgroundKinds = {
-    "pool", "color", "gradient", "gel", "clear", "frosted glass", "liquid glass", "shader", "image",
+    "pool", "gel", "video", "image", "shader", "color", "gradient", "clear", "frosted glass",
 };
 
 // What the type button says: the kind, "pool" for the built-in video, or
@@ -273,6 +354,20 @@ void SettingsUI::set_exposure(float exposure) {
             std::snprintf(buf, sizeof(buf), "exposure: %.2f", exposure_);
             s.label = buf;
             break;
+        }
+    }
+}
+
+static std::string roughness_label(float r) {
+    return "roughness: " + std::to_string(static_cast<int>(std::lround(r * 100.0f))) + "%";
+}
+
+void SettingsUI::set_glass_roughness(float roughness) {
+    glass_roughness_ = std::clamp(roughness, 0.0f, 1.0f);
+    for (auto& s : sliders_) {
+        if (s.id == 3) {
+            s.value = glass_roughness_;
+            s.label = roughness_label(glass_roughness_);
         }
     }
 }
@@ -528,9 +623,10 @@ std::string SettingsUI::truncate_head(const std::string& text, float max_width) 
 
 void SettingsUI::init_layout() {
     buttons_.clear();
+    shift_ = has_kind_row() ? 0.0f : -kKindRowH;
 
     theme_list_.x = 24.0f;
-    theme_list_.y = 194.0f;
+    theme_list_.y = Y(356.0f);
     theme_list_.w = 250.0f;
     theme_list_.upward = false;
     theme_list_.user_code = 17;  // theme picked
@@ -559,7 +655,8 @@ void SettingsUI::init_layout() {
     buttons_.push_back(btn_preset_rename);
     buttons_.push_back(btn_preset_delete);
 
-    // 2. The cards. "look": what's behind the text and the colors over it.
+    // 2. The cards: the background, the theme (colors and the window's look),
+    // the text, and what applies to every window.
     // "text": the typeface and how it's drawn. "all windows": settings that
     // aren't part of a preset. Positions are in points, matching the cards
     // render() draws; checkboxes sit in three columns, at 24, 184 and 344.
@@ -574,29 +671,44 @@ void SettingsUI::init_layout() {
     };
     button(BG_KIND_BTN, background_kind_label(), 24.0f, 128.0f, 125.0f);
     button(1, select_label(background_kind_label()), 159.0f, 128.0f, 115.0f);
-    button(THEME_BTN, "theme: " + theme_list_.active, 24.0f, 164.0f, 250.0f);
-    button(FIT_BTN, "fit: " + background_fit_, 284.0f, 164.0f, 192.0f);
-    toggle(8, "crt effect", crt_effect_enabled_, 24.0f, 280.0f, 150.0f);
-    toggle(7, "title bar", vibrancy_enabled_, 184.0f, 280.0f, 150.0f);
+    // The background card's second row: what the kind has to set.
+    button(FIT_BTN, "fit: " + background_fit_, 24.0f, 164.0f, 250.0f);
+    button(COLOR_SWATCH, "", 159.0f, 128.0f, 28.0f);
+    button(COLOR_RESET, "use theme's color", 24.0f, 164.0f, 250.0f);
+    for (int i = 0; i < 8; ++i) button(GRADIENT_STOP + i, "", 159.0f + i * 34.0f, 128.0f, 28.0f);
+    button(GRADIENT_REMOVE, "-", 431.0f, 128.0f, 20.0f);
+    button(GRADIENT_ADD, "+", 456.0f, 128.0f, 20.0f);
+    button(GRADIENT_ANGLE, "angle: " + std::to_string(gradient_angle_) + " deg", 24.0f, 164.0f, 250.0f);
 
-    button(3, "select font...", 24.0f, 352.0f, 125.0f);
-    toggle(9, "ligatures", ligatures_enabled_, 24.0f, 390.0f, 150.0f);
-    toggle(5, "typing animation", animated_typing_, 184.0f, 390.0f, 150.0f);
-    toggle(10, "hdr text", hdr_console_enabled_, 344.0f, 390.0f, 120.0f);
+    // The theme card: the theme, the text's color, and the window's look.
+    button(THEME_BTN, "theme: " + theme_list_.active, 24.0f, Y(326.0f), 250.0f);
+    button(TEXT_SWATCH, "", 108.0f, Y(362.0f), 28.0f);
+    button(TEXT_RESET, "use theme's color", 324.0f, Y(362.0f), 152.0f);
+    toggle(8, "crt effect", crt_effect_enabled_, 24.0f, Y(400.0f), 150.0f);
+    toggle(7, "title bar", vibrancy_enabled_, 184.0f, Y(400.0f), 150.0f);
 
-    toggle(11, "shell integration", shell_integration_enabled_, 24.0f, 462.0f, 150.0f);
-    toggle(6, "broadcast input", broadcasting_, 184.0f, 462.0f, 150.0f);
+    button(3, "select font...", 24.0f, Y(470.0f), 125.0f);
+    toggle(9, "ligatures", ligatures_enabled_, 24.0f, Y(508.0f), 150.0f);
+    toggle(5, "typing animation", animated_typing_, 184.0f, Y(508.0f), 150.0f);
+    toggle(10, "hdr text", hdr_console_enabled_, 344.0f, Y(508.0f), 120.0f);
+
+    toggle(11, "shell integration", shell_integration_enabled_, 24.0f, Y(578.0f), 150.0f);
+    toggle(6, "broadcast input", broadcasting_, 184.0f, Y(578.0f), 150.0f);
 
     // 3. UI Sliders
     char exposure_buf[32];
     std::snprintf(exposure_buf, sizeof(exposure_buf), "exposure: %.2f", exposure_);
-    UISlider s_exposure = { 1, exposure_buf, {24.0f, 222.0f, 440.0f, 8.0f}, std::clamp(exposure_ / 2.0f, 0.0f, 1.0f), 0.0f, 2.0f };
+    UISlider s_exposure = { 1, exposure_buf, {24.0f, Y(222.0f), 440.0f, 8.0f}, std::clamp(exposure_ / 2.0f, 0.0f, 1.0f), 0.0f, 2.0f };
     sliders_.push_back(s_exposure);
 
     char hue_buf[32];
     std::snprintf(hue_buf, sizeof(hue_buf), "hue shift: %.0f deg", hue_shift_);
-    UISlider s_hue = { 2, hue_buf, {24.0f, 260.0f, 440.0f, 8.0f}, std::clamp(hue_shift_ / 360.0f, 0.0f, 1.0f), 0.0f, 360.0f };
+    UISlider s_hue = { 2, hue_buf, {24.0f, Y(260.0f), 440.0f, 8.0f}, std::clamp(hue_shift_ / 360.0f, 0.0f, 1.0f), 0.0f, 360.0f };
     sliders_.push_back(s_hue);
+
+    // Frosted glass's roughness, where the fit button is for videos.
+    UISlider s_rough = { 3, roughness_label(glass_roughness_), {24.0f, 186.0f, 250.0f, 8.0f}, glass_roughness_, 0.0f, 1.0f };
+    sliders_.push_back(s_rough);
 }
 
 void SettingsUI::update_slider_value(int slider_id, float mouse_x) {
@@ -611,6 +723,9 @@ void SettingsUI::update_slider_value(int slider_id, float mouse_x) {
                 char buf[32];
                 std::snprintf(buf, sizeof(buf), "exposure: %.2f", exposure_);
                 s.label = buf;
+            } else if (s.id == 3) { // Frosted glass's roughness
+                glass_roughness_ = pct;
+                s.label = roughness_label(pct);
             } else if (s.id == 2) { // Hue shift
                 hue_shift_ = pct * 360.0f;
                 char buf[32];
@@ -626,6 +741,7 @@ void SettingsUI::process_event(const SDL_Event& event) {
     if (!window_) return;
 
     Uint32 our_win_id = SDL_GetWindowID(window_);
+    if (picker_.open && picker_event(event)) return;
 
     if (event.type == SDL_EVENT_WINDOW_CLOSE_REQUESTED && event.window.windowID == our_win_id) {
         close();
@@ -656,8 +772,16 @@ void SettingsUI::process_event(const SDL_Event& event) {
         } else {
             // Hover checking
             for (auto& btn : buttons_) {
-                btn.hovered = (mx >= btn.rect.x && mx <= btn.rect.x + btn.rect.w &&
-                               my >= btn.rect.y && my <= btn.rect.y + btn.rect.h);
+                btn.hovered = shown(btn.id) && (mx >= btn.rect.x && mx <= btn.rect.x + btn.rect.w &&
+                                                my >= btn.rect.y && my <= btn.rect.y + btn.rect.h);
+            }
+        }
+    } else if (event.type == SDL_EVENT_MOUSE_WHEEL && event.wheel.windowID == our_win_id) {
+        for (const auto& btn : buttons_) {
+            if (btn.id == GRADIENT_ANGLE && shown(btn.id) && event.wheel.mouse_x >= btn.rect.x &&
+                event.wheel.mouse_x <= btn.rect.x + btn.rect.w && event.wheel.mouse_y >= btn.rect.y &&
+                event.wheel.mouse_y <= btn.rect.y + btn.rect.h && event.wheel.y != 0.0f) {
+                change_angle(event.wheel.y > 0 ? 5 : -5);
             }
         }
     } else if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN && event.button.windowID == our_win_id) {
@@ -716,7 +840,8 @@ void SettingsUI::process_event(const SDL_Event& event) {
 
             // Check slider clicks (with target padding height for ease of use)
             for (const auto& s : sliders_) {
-                if (mx >= s.rect.x - 10.0f && mx <= s.rect.x + s.rect.w + 10.0f &&
+                const bool usable = s.id == 3 ? background_kind_label() == "frosted glass" : look_sliders_apply();
+                if (usable && mx >= s.rect.x - 10.0f && mx <= s.rect.x + s.rect.w + 10.0f &&
                     my >= s.rect.y - 8.0f && my <= s.rect.y + s.rect.h + 8.0f) {
                     dragging_ = true;
                     active_slider_id_ = s.id;
@@ -727,16 +852,45 @@ void SettingsUI::process_event(const SDL_Event& event) {
 
             // Check button clicks
             for (auto& btn : buttons_) {
-                if (mx >= btn.rect.x && mx <= btn.rect.x + btn.rect.w &&
+                if (shown(btn.id) && mx >= btn.rect.x && mx <= btn.rect.x + btn.rect.w &&
                     my >= btn.rect.y && my <= btn.rect.y + btn.rect.h) {
-                    
-                    if (btn.id == 1 && background_kind_label() == "shader") {
+
+                    if (btn.id == COLOR_SWATCH) {
+                        open_picker(0, bg_color_, btn.rect);
+                    } else if (btn.id >= GRADIENT_STOP && btn.id < GRADIENT_STOP + 8) {
+                        open_picker(1 + btn.id - GRADIENT_STOP, gradient_stops_[btn.id - GRADIENT_STOP], btn.rect);
+                    } else if (btn.id == TEXT_SWATCH) {
+                        open_picker(kTextColorTag, text_color_, btn.rect);
+                    } else if (btn.id == TEXT_RESET) {
+                        if (text_color_custom_) {
+                            SDL_Event ev;
+                            std::memset(&ev, 0, sizeof(ev));
+                            ev.type = SDL_EVENT_USER;
+                            ev.user.code = 26; // Text color back to the theme's
+                            SDL_PushEvent(&ev);
+                        }
+                    } else if (btn.id == COLOR_RESET || btn.id == GRADIENT_REMOVE || btn.id == GRADIENT_ADD) {
+                        const bool can = btn.id == COLOR_RESET ? bg_color_custom_
+                                       : btn.id == GRADIENT_REMOVE ? gradient_stops_.size() > 2
+                                                                   : gradient_stops_.size() < 8;
+                        if (can) {
+                            SDL_Event ev;
+                            std::memset(&ev, 0, sizeof(ev));
+                            ev.type = SDL_EVENT_USER;
+                            ev.user.code = btn.id == COLOR_RESET ? 23 : 24;
+                            ev.user.data1 = reinterpret_cast<void*>(static_cast<intptr_t>(btn.id == GRADIENT_ADD ? 1 : -1));
+                            SDL_PushEvent(&ev);
+                        }
+                    } else if (btn.id == GRADIENT_ANGLE) {
+                        // A click turns it by 45 degrees (shift-click back);
+                        // the scroll wheel over it, by 5.
+                        change_angle((SDL_GetModState() & SDL_KMOD_SHIFT) ? -45 : 45);
+                    } else if (btn.id == 1 && background_kind_label() == "shader") {
                         pick_shader_file();
                     } else if (btn.id == 1 && background_kind_label() == "image") {
                         pick_image_file();
-                    } else if (btn.id == 1) { // Select Background
-                        SDL_DialogFileFilter filters[] = { {"Videos", "mp4;mov;m4v;mkv;webm;avi"} };
-                        SDL_ShowOpenFileDialog(background_dialog_callback, nullptr, window_, filters, 1, nullptr, false);
+                    } else if (btn.id == 1) { // Select a video
+                        pick_video_file();
                     } else if (btn.id == 3) { // Select Font
                         SDL_DialogFileFilter filters[] = { {"Font files", "ttf;otf;ttc"} };
                         SDL_ShowOpenFileDialog(font_dialog_callback, nullptr, window_, filters, 1, nullptr, false);
@@ -892,9 +1046,10 @@ void SettingsUI::render() {
         draw_rect_outline(r, colors_.border, 10.0f * scale);
         draw_text(title, 24.0f * scale, text_y(y + 4.0f, 20.0f, scale), colors_.text_secondary);
     };
-    card(100.0f, 214.0f, "look");
-    card(326.0f, 96.0f, "text");
-    card(434.0f, 62.0f, "all windows - not part of the preset");
+    card(100.0f, 186.0f + shift_, "background");
+    card(Y(298.0f), 132.0f, "theme");
+    card(Y(442.0f), 96.0f, "text");
+    card(Y(550.0f), 62.0f, "all windows - not part of the preset");
 
     // 3. Draw Logos in Header Bar
     if (sink_logo_) {
@@ -931,8 +1086,8 @@ void SettingsUI::render() {
 
     // Beside the buttons: the video file, or what the kind is.
     const std::string kind = background_kind_label();
-    std::string bg_disp = kind == "video"        ? bg_path_
-                        : kind == "pool"         ? std::string("the built-in video")
+    std::string bg_disp = kind == "video"        ? (video_file_.empty() ? std::string("no video picked yet") : video_file_)
+                        : kind == "pool"         ? std::string("drifting underwater")
                         : kind == "color"        ? std::string("a solid color")
                         : kind == "gradient"     ? std::string("a gradient")
                         : kind == "gel"          ? std::string("a churning nebula")
@@ -941,9 +1096,30 @@ void SettingsUI::render() {
                         : kind == "shader"       ? (shader_file_.empty() ? std::string("no shader picked yet") : shader_file_)
                         : kind == "image"        ? (image_file_.empty() ? std::string("no image picked yet") : image_file_)
                         : std::string("the desktop, through glass");
-    float bg_value_x = 284.0f * scale;
-    bg_disp = truncate_head(bg_disp, value_right_edge - bg_value_x);
-    draw_text(bg_disp, bg_value_x, text_y(128.0f, 28.0f, scale), colors_.text_primary);
+    // Beside the file button when there is one, else in its place.
+    float bg_value_x = (shown(1) ? 284.0f : 159.0f) * scale;
+    if (kind == "color") {
+        // Beside the swatch: its hex, and whose color it is.
+        char hex[8];
+        auto byte = [](float v) { return static_cast<int>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)); };
+        std::snprintf(hex, sizeof(hex), "#%02x%02x%02x", byte(bg_color_.r), byte(bg_color_.g), byte(bg_color_.b));
+        bg_disp = std::string(hex) + (bg_color_custom_ ? "" : "  (the theme's)");
+        bg_value_x = 197.0f * scale;
+    }
+    if (kind != "gradient") {
+        bg_disp = truncate_head(bg_disp, value_right_edge - bg_value_x);
+        draw_text(bg_disp, bg_value_x, text_y(128.0f, 28.0f, scale), colors_.text_primary);
+    }
+
+    // The text's color: label, swatch (a button), and its hex.
+    draw_text("text color", 24.0f * scale, text_y(Y(362.0f), 28.0f, scale), colors_.text_secondary);
+    {
+        char hex[8];
+        auto byte = [](float v) { return static_cast<int>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)); };
+        std::snprintf(hex, sizeof(hex), "#%02x%02x%02x", byte(text_color_.r), byte(text_color_.g), byte(text_color_.b));
+        draw_text(std::string(hex) + (text_color_custom_ ? "" : "  (the theme's)"), 146.0f * scale,
+                  text_y(Y(362.0f), 28.0f, scale), colors_.text_primary);
+    }
 
     std::string font_disp = font_path_;
     std::string font_lower = font_disp;
@@ -953,7 +1129,7 @@ void SettingsUI::render() {
     }
     float font_value_x = 159.0f * scale;
     font_disp = truncate_head(font_disp, value_right_edge - font_value_x);
-    draw_text(font_disp, font_value_x, text_y(352.0f, 28.0f, scale), colors_.text_primary);
+    draw_text(font_disp, font_value_x, text_y(Y(470.0f), 28.0f, scale), colors_.text_primary);
 
     // 4. Draw Buttons (ghost buttons with thin outline borders)
     bool preset_locked = is_builtin(active_preset_);
@@ -967,9 +1143,27 @@ void SettingsUI::render() {
             continue;
         }
 
+        if (!shown(btn.id)) continue;
         bool disabled = (preset_locked && (btn.id == PRESET_BTN_RENAME || btn.id == PRESET_BTN_DELETE)) ||
                         (btn.id == PRESET_BTN_SAVE && (!preset_edited_ || is_sink_preset(active_preset_))) ||
-                        (btn.id == FIT_BTN && !fit_applies());
+                        (btn.id == FIT_BTN && !fit_applies()) ||
+                        (btn.id == COLOR_RESET && !bg_color_custom_) ||
+                        (btn.id == TEXT_RESET && !text_color_custom_) ||
+                        (btn.id == GRADIENT_REMOVE && gradient_stops_.size() <= 2) ||
+                        (btn.id == GRADIENT_ADD && gradient_stops_.size() >= 8);
+
+        // A swatch: the color itself, outlined, brighter when hovered.
+        if (btn.id == COLOR_SWATCH || btn.id == TEXT_SWATCH || (btn.id >= GRADIENT_STOP && btn.id < GRADIENT_STOP + 8)) {
+            SDL_FRect r = { btn.rect.x * scale, btn.rect.y * scale, btn.rect.w * scale, btn.rect.h * scale };
+            SDL_FColor c = btn.id == COLOR_SWATCH ? bg_color_
+                         : btn.id == TEXT_SWATCH  ? text_color_
+                                                  : gradient_stops_[btn.id - GRADIENT_STOP];
+            c.a = 1.0f;
+            draw_rect_filled(r, c, 6.0f * scale);
+            draw_rect_outline(r, btn.hovered ? SDL_FColor{1.0f, 1.0f, 1.0f, 0.85f} : SDL_FColor{1.0f, 1.0f, 1.0f, 0.30f},
+                              6.0f * scale);
+            continue;
+        }
 
         SDL_FRect phys_rect = {
             btn.rect.x * scale,
@@ -1061,13 +1255,25 @@ void SettingsUI::render() {
             }
             shown += "...";
         }
-        draw_text(shown, 24.0f * scale, text_y(500.0f, 22.0f, scale), SDL_FColor{1.0f, 0.55f, 0.45f, 1.0f});
+        draw_text(shown, 24.0f * scale, text_y(Y(616.0f), 22.0f, scale), SDL_FColor{1.0f, 0.55f, 0.45f, 1.0f});
     }
 
-    // 5. Draw Sliders
+    // 5. Draw Sliders. Greyed out, with a note why, for backgrounds they
+    // don't change; left in place so nothing moves when the kind changes.
+    const bool look_on = look_sliders_apply();
+    const bool frosted = background_kind_label() == "frosted glass";
     for (const auto& s : sliders_) {
+        if (s.id == 3 && !frosted) continue;  // roughness is frosted glass's alone
+        const bool sliders_on = s.id == 3 || look_on;
         // Draw Slider Label
-        draw_text(s.label, s.rect.x * scale, (s.rect.y - 18.0f) * scale, colors_.text_secondary);
+        SDL_FColor label_color = colors_.text_secondary;
+        if (!sliders_on) label_color.a *= 0.5f;
+        draw_text(s.label, s.rect.x * scale, (s.rect.y - 18.0f) * scale, label_color);
+        if (!sliders_on && s.id == 1) {
+            const std::string note = "for pool, gel, videos, images and shaders";
+            draw_text(note, (s.rect.x + s.rect.w) * scale - measure_text_width(note), (s.rect.y - 18.0f) * scale,
+                      label_color);
+        }
 
         // Draw Slider Track
         SDL_FRect phys_track = {
@@ -1086,7 +1292,7 @@ void SettingsUI::render() {
             s.rect.w * scale * s.value,
             s.rect.h * scale
         };
-        SDL_FColor slider_accent = {0.0f, 0.8f, 0.8f, 0.80f};
+        SDL_FColor slider_accent = sliders_on ? SDL_FColor{0.0f, 0.8f, 0.8f, 0.80f} : SDL_FColor{0.5f, 0.5f, 0.5f, 0.25f};
         draw_rect_filled(phys_active, slider_accent, 4.0f * scale); // Accent cyan fill
 
         // Draw Handle/Knob
@@ -1099,7 +1305,9 @@ void SettingsUI::render() {
             knob_w * scale,
             knob_h * scale
         };
-        draw_rect_filled(phys_knob, colors_.text_primary, 4.0f * scale); // White handle knob
+        SDL_FColor knob_color = colors_.text_primary;
+        if (!sliders_on) knob_color.a *= 0.35f;
+        draw_rect_filled(phys_knob, knob_color, 4.0f * scale); // White handle knob
         draw_rect_outline(phys_knob, colors_.border, 4.0f * scale);
     }
 
@@ -1144,6 +1352,7 @@ void SettingsUI::render() {
     // Last, so it sits over every other control.
     if (theme_list_.open) draw_list(theme_list_, scale);
     if (background_list_.open) draw_list(background_list_, scale);
+    if (picker_.open) draw_picker(scale);
 
     SDL_RenderPresent(renderer_);
 }
@@ -1298,3 +1507,261 @@ void SettingsUI::draw_text(const std::string& text, float x, float y, const SDL_
     SDL_SetTextureColorMod(atlas, 255, 255, 255);
     SDL_SetTextureAlphaMod(atlas, 255);
 }
+
+// ---- The color picker --------------------------------------------------------
+
+namespace {
+
+void hsv_to_rgb(float h, float s, float v, float& r, float& g, float& b) {
+    h = std::fmod(std::fmod(h, 360.0f) + 360.0f, 360.0f) / 60.0f;
+    const float c = v * s, x = c * (1.0f - std::fabs(std::fmod(h, 2.0f) - 1.0f)), m = v - c;
+    float rr = 0, gg = 0, bb = 0;
+    switch (static_cast<int>(h)) {
+        case 0: rr = c; gg = x; break;
+        case 1: rr = x; gg = c; break;
+        case 2: gg = c; bb = x; break;
+        case 3: gg = x; bb = c; break;
+        case 4: rr = x; bb = c; break;
+        default: rr = c; bb = x; break;
+    }
+    r = rr + m; g = gg + m; b = bb + m;
+}
+
+void rgb_to_hsv(float r, float g, float b, float& h, float& s, float& v) {
+    const float mx = std::max({ r, g, b }), mn = std::min({ r, g, b }), d = mx - mn;
+    v = mx;
+    s = mx > 0 ? d / mx : 0;
+    if (d <= 0) { h = 0; return; }
+    if (mx == r) h = 60.0f * std::fmod((g - b) / d, 6.0f);
+    else if (mx == g) h = 60.0f * ((b - r) / d + 2.0f);
+    else h = 60.0f * ((r - g) / d + 4.0f);
+    if (h < 0) h += 360.0f;
+}
+
+std::string hex_text(const SDL_FColor& c) {
+    auto byte = [](float v) { return static_cast<int>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)); };
+    char buf[8];
+    std::snprintf(buf, sizeof(buf), "#%02x%02x%02x", byte(c.r), byte(c.g), byte(c.b));
+    return buf;
+}
+
+// "#rgb", "#rrggbb", with or without the #; false for anything else.
+bool parse_hex(std::string t, SDL_FColor& out) {
+    if (!t.empty() && t[0] == '#') t.erase(0, 1);
+    if (t.size() == 3) t = std::string{ t[0], t[0], t[1], t[1], t[2], t[2] };
+    if (t.size() != 6 || t.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos) return false;
+    const unsigned long v = std::strtoul(t.c_str(), nullptr, 16);
+    out = { ((v >> 16) & 0xFF) / 255.0f, ((v >> 8) & 0xFF) / 255.0f, (v & 0xFF) / 255.0f, 1.0f };
+    return true;
+}
+
+bool inside(const SDL_FRect& r, float x, float y) {
+    return x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
+}
+
+} // namespace
+
+void SettingsUI::open_picker(int tag, const SDL_FColor& color, const SDL_FRect& anchor) {
+    close_picker();
+    picker_.open = true;
+    picker_.tag = tag;
+    rgb_to_hsv(color.r, color.g, color.b, picker_.h, picker_.s, picker_.v);
+    picker_.x = std::clamp(anchor.x, 16.0f, 484.0f - kPickerW);
+    const float below = anchor.y + anchor.h + 4.0f;
+    picker_.y = below + kPickerH <= Y(634.0f) ? below : anchor.y - 4.0f - kPickerH;
+}
+
+void SettingsUI::close_picker() {
+    if (picker_.editing_hex && window_) SDL_StopTextInput(window_);
+    picker_ = ColorPicker{};
+}
+
+SDL_FColor SettingsUI::picker_color() const {
+    SDL_FColor c{ 0, 0, 0, 1 };
+    hsv_to_rgb(picker_.h, picker_.s, picker_.v, c.r, c.g, c.b);
+    return c;
+}
+
+void SettingsUI::picker_send() {
+    const SDL_FColor c = picker_color();
+    // The swatch follows at once; Settings is told the same again by sink.
+    if (picker_.tag == kTextColorTag) text_color_ = c;
+    else if (picker_.tag == 0) bg_color_ = c;
+    else if (picker_.tag - 1 < static_cast<int>(gradient_stops_.size())) gradient_stops_[picker_.tag - 1] = c;
+    auto byte = [](float v) { return static_cast<uint32_t>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f)); };
+    SDL_Event ev;
+    std::memset(&ev, 0, sizeof(ev));
+    ev.type = SDL_EVENT_USER;
+    ev.user.code = 22;  // A color picked
+    ev.user.data1 = reinterpret_cast<void*>(static_cast<intptr_t>(picker_.tag));
+    ev.user.data2 = reinterpret_cast<void*>(static_cast<uintptr_t>((byte(c.r) << 16) | (byte(c.g) << 8) | byte(c.b)));
+    SDL_PushEvent(&ev);
+}
+
+void SettingsUI::picker_drag(float mx, float my) {
+    if (picker_.drag_sv) {
+        const SDL_FRect r = picker_sv_rect();
+        picker_.s = std::clamp((mx - r.x) / r.w, 0.0f, 1.0f);
+        picker_.v = 1.0f - std::clamp((my - r.y) / r.h, 0.0f, 1.0f);
+    } else if (picker_.drag_hue) {
+        const SDL_FRect r = picker_hue_rect();
+        picker_.h = std::clamp((my - r.y) / r.h, 0.0f, 1.0f) * 360.0f;
+    } else {
+        return;
+    }
+    picker_send();
+}
+
+bool SettingsUI::picker_event(const SDL_Event& event) {
+    const Uint32 win = SDL_GetWindowID(window_);
+    auto stop_hex = [&]() {
+        if (picker_.editing_hex) SDL_StopTextInput(window_);
+        picker_.editing_hex = false;
+    };
+    auto apply_hex = [&]() {
+        SDL_FColor c;
+        if (parse_hex(picker_.hex, c)) {
+            rgb_to_hsv(c.r, c.g, c.b, picker_.h, picker_.s, picker_.v);
+            picker_send();
+        }
+        stop_hex();
+    };
+    switch (event.type) {
+        case SDL_EVENT_MOUSE_BUTTON_DOWN: {
+            if (event.button.windowID != win || event.button.button != SDL_BUTTON_LEFT) return false;
+            const float mx = event.button.x, my = event.button.y;
+            if (!inside(picker_rect(), mx, my)) {
+                // A click away closes it, and does nothing else.
+                if (picker_.editing_hex) apply_hex();
+                close_picker();
+                return true;
+            }
+            if (inside(picker_hex_rect(), mx, my)) {
+                if (!picker_.editing_hex) {
+                    picker_.editing_hex = true;
+                    picker_.hex = hex_text(picker_color());
+                    SDL_StartTextInput(window_);
+                }
+                return true;
+            }
+            if (picker_.editing_hex) apply_hex();
+            if (inside(picker_done_rect(), mx, my)) {
+                close_picker();
+                return true;
+            }
+            const SDL_FRect sv = picker_sv_rect(), hue = picker_hue_rect();
+            if (inside(SDL_FRect{ sv.x - 4, sv.y - 4, sv.w + 8, sv.h + 8 }, mx, my)) picker_.drag_sv = true;
+            else if (inside(SDL_FRect{ hue.x - 4, hue.y - 4, hue.w + 8, hue.h + 8 }, mx, my)) picker_.drag_hue = true;
+            picker_drag(mx, my);
+            return true;
+        }
+        case SDL_EVENT_MOUSE_MOTION:
+            if (event.motion.windowID != win) return false;
+            if (picker_.drag_sv || picker_.drag_hue) {
+                picker_drag(event.motion.x, event.motion.y);
+                return true;
+            }
+            return inside(picker_rect(), event.motion.x, event.motion.y);
+        case SDL_EVENT_MOUSE_BUTTON_UP:
+            if (event.button.windowID != win) return false;
+            picker_.drag_sv = picker_.drag_hue = false;
+            return true;
+        case SDL_EVENT_MOUSE_WHEEL:
+            return event.wheel.windowID == win;
+        case SDL_EVENT_TEXT_INPUT:
+            if (event.text.windowID != win || !picker_.editing_hex) return false;
+            for (const char* p = event.text.text; *p; ++p) {
+                if (std::isxdigit(static_cast<unsigned char>(*p)) || *p == '#') {
+                    if (picker_.hex.size() < 7) picker_.hex += static_cast<char>(std::tolower(static_cast<unsigned char>(*p)));
+                }
+            }
+            return true;
+        case SDL_EVENT_KEY_DOWN: {
+            if (event.key.windowID != win) return false;
+            const SDL_Keycode k = event.key.key;
+            if (picker_.editing_hex) {
+                if (k == SDLK_BACKSPACE && !picker_.hex.empty()) picker_.hex.pop_back();
+                else if (k == SDLK_RETURN || k == SDLK_KP_ENTER) apply_hex();
+                else if (k == SDLK_ESCAPE) stop_hex();
+                else if (k == SDLK_V && (event.key.mod & (SDL_KMOD_GUI | SDL_KMOD_CTRL))) {
+                    if (char* clip = SDL_GetClipboardText()) {
+                        std::string t = clip;
+                        SDL_free(clip);
+                        t.erase(std::remove_if(t.begin(), t.end(), [](unsigned char c) { return std::isspace(c); }), t.end());
+                        picker_.hex = t.substr(0, 7);
+                    }
+                }
+                return true;
+            }
+            if (k == SDLK_ESCAPE || k == SDLK_RETURN || k == SDLK_KP_ENTER) {
+                close_picker();
+                return true;
+            }
+            return false;
+        }
+        default:
+            return false;
+    }
+}
+
+void SettingsUI::draw_picker(float scale) {
+    auto phys = [&](const SDL_FRect& r) { return SDL_FRect{ r.x * scale, r.y * scale, r.w * scale, r.h * scale }; };
+    const SDL_FRect box = phys(picker_rect());
+    draw_rect_filled(box, SDL_FColor{ 0.06f, 0.08f, 0.10f, 1.0f }, 8.0f * scale);
+    draw_rect_outline(box, colors_.border, 8.0f * scale);
+
+    // The square: white to the hue across, everything to black down. Two
+    // quads of vertex colors, which the GPU blends between.
+    const SDL_FRect sv = phys(picker_sv_rect());
+    SDL_FColor pure{ 0, 0, 0, 1 };
+    hsv_to_rgb(picker_.h, 1.0f, 1.0f, pure.r, pure.g, pure.b);
+    const SDL_FColor white{ 1, 1, 1, 1 }, clear{ 0, 0, 0, 0 }, black{ 0, 0, 0, 1 };
+    auto quad = [&](const SDL_FRect& r, SDL_FColor tl, SDL_FColor tr, SDL_FColor br, SDL_FColor bl) {
+        const SDL_Vertex v[4] = {
+            { { r.x, r.y }, tl, { 0, 0 } }, { { r.x + r.w, r.y }, tr, { 0, 0 } },
+            { { r.x + r.w, r.y + r.h }, br, { 0, 0 } }, { { r.x, r.y + r.h }, bl, { 0, 0 } },
+        };
+        const int idx[6] = { 0, 1, 2, 0, 2, 3 };
+        SDL_RenderGeometry(renderer_, nullptr, v, 4, idx, 6);
+    };
+    SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+    quad(sv, white, pure, pure, white);
+    quad(sv, clear, clear, black, black);
+    draw_rect_outline(sv, colors_.border, 0.0f);
+
+    // The hue strip, top to bottom: red, yellow, green, cyan, blue, magenta, red.
+    const SDL_FRect hue = phys(picker_hue_rect());
+    for (int i = 0; i < 6; ++i) {
+        SDL_FColor a{ 0, 0, 0, 1 }, b{ 0, 0, 0, 1 };
+        hsv_to_rgb(i * 60.0f, 1, 1, a.r, a.g, a.b);
+        hsv_to_rgb((i + 1) * 60.0f, 1, 1, b.r, b.g, b.b);
+        const SDL_FRect seg = { hue.x, hue.y + hue.h * i / 6.0f, hue.w, hue.h / 6.0f };
+        quad(seg, a, a, b, b);
+    }
+    draw_rect_outline(hue, colors_.border, 0.0f);
+
+    // Where the color is, in each: a ring in the square, a bar across the strip.
+    const float ring = 10.0f * scale;
+    const SDL_FRect at = { sv.x + picker_.s * sv.w - ring / 2, sv.y + (1.0f - picker_.v) * sv.h - ring / 2, ring, ring };
+    draw_rect_outline(at, picker_.v > 0.5f ? SDL_FColor{ 0, 0, 0, 0.9f } : SDL_FColor{ 1, 1, 1, 0.9f }, ring / 2);
+    const SDL_FRect bar = { hue.x - 2 * scale, hue.y + picker_.h / 360.0f * hue.h - 3 * scale, hue.w + 4 * scale, 6 * scale };
+    draw_rect_outline(bar, SDL_FColor{ 1, 1, 1, 0.95f }, 3.0f * scale);
+
+    // The hex field (typing in it when it's outlined in the accent), the
+    // color as it stands, and done.
+    const SDL_FRect field = phys(picker_hex_rect());
+    draw_rect_filled(field, colors_.card, 6.0f * scale);
+    draw_rect_outline(field, picker_.editing_hex ? SDL_FColor{ 0.0f, 0.8f, 0.8f, 0.8f } : colors_.border, 6.0f * scale);
+    std::string shown = picker_.editing_hex ? picker_.hex : hex_text(picker_color());
+    if (picker_.editing_hex && (SDL_GetTicks() / 500) % 2 == 0) shown += "|";
+    draw_text(shown, field.x + 10.0f * scale, text_y(picker_hex_rect().y, picker_hex_rect().h, scale), colors_.text_primary);
+    const SDL_FRect preview = phys(SDL_FRect{ picker_.x + 134, picker_.y + 170, 24, 28 });
+    draw_rect_filled(preview, picker_color(), 6.0f * scale);
+    draw_rect_outline(preview, colors_.border, 6.0f * scale);
+    const SDL_FRect done = phys(picker_done_rect());
+    draw_rect_filled(done, colors_.btn_idle, 6.0f * scale);
+    draw_rect_outline(done, SDL_FColor{ 1, 1, 1, 0.2f }, 6.0f * scale);
+    const float tw = measure_text_width("done");
+    draw_text("done", done.x + done.w / 2 - tw / 2, text_y(picker_done_rect().y, picker_done_rect().h, scale), colors_.text_primary);
+}
+

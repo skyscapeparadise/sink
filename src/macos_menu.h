@@ -35,6 +35,7 @@ bool is_native_fullscreen(SDL_Window* sdl_win);
 // output) is silently ignored.
 void open_url_if_safe(const char* uri);
 
+
 // Thread-safe flags to request menu commands
 void set_settings_requested(bool requested);
 bool get_settings_requested();
@@ -117,10 +118,10 @@ void set_menu_shortcut(const char* action, const char* key, bool cmd, bool shift
 void enable_macos_window_vibrancy(SDL_Window* sdl_win, bool enable);
 
 // What macOS shows behind a window's (non-opaque) content: 0 nothing (the
-// desktop itself, or an opaque background covering it), 1 frosted glass
-// (the full-window NSVisualEffectView), 2 Liquid Glass (NSGlassEffectView).
-// Call after enable_macos_window_vibrancy, which makes the window non-opaque.
-void set_macos_window_backdrop(SDL_Window* sdl_win, int backdrop);
+// desktop itself, or an opaque background covering it), 1 frosted glass,
+// the desktop blurred by `roughness` (0..1). Call after
+// enable_macos_window_vibrancy, which makes the window non-opaque.
+void set_macos_window_backdrop(SDL_Window* sdl_win, int backdrop, float roughness);
 
 // Classic macOS "zoom" (grow to fill the screen, or restore) with AppKit's
 // own native animation -- the same toggle a double-click on a native title

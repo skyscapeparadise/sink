@@ -158,7 +158,7 @@ struct TerminalWindow {
     ColorScheme color_scheme;
 
     // What's behind the text (`background` in sink.toml); see apply_background.
-    enum class Backdrop { Video, Color, Gradient, Gel, Clear, Frosted, LiquidGlass, Shader, Image };
+    enum class Backdrop { Video, Color, Gradient, Gel, Clear, Frosted, Shader, Image };
     Backdrop backdrop = Backdrop::Video;
     std::string background;              // the setting, as written
     BackgroundShader background_shader;  // gradient and gel
@@ -172,6 +172,7 @@ struct TerminalWindow {
     BackgroundShader::Params backdrop_params;
     SDL_FColor backdrop_color{0, 0, 0, 1};  // solid, and the tint over glass
     float glass_tint = 0.3f;
+    float glass_roughness = 0.5f;  // frosted glass: how blurred, 0..1
     float gel_speed = 1.0f;
     float exposure = 0.7f;
     float hue_shift_degrees = 0.0f;
@@ -290,11 +291,17 @@ struct AppState {
     key_bindings::OptionAsMeta option_as_meta = key_bindings::OptionAsMeta::None;
     float exposure = 0.7f;
     float hue_shift = 0.0f;
+    std::string background_color;              // colors.background: "" for the theme's
+    std::string text_color;                    // colors.foreground: "" for the theme's
+    config::StringList gradient_colors;        // gradient.colors: empty for the theme's
+    double gradient_angle = 45;
+    float glass_roughness = 0.5f;
     std::string background_fit = "stretch";
     bool animated_typing = true;
     bool vibrancy_enabled = true;
     bool crt_mode_enabled = false;
     bool ligatures_enabled = true;
+    std::string video_file;   // background = "video": the video, as a full path
     std::string image_file;   // background = "image": the picture, as a full path
     std::string shader_file;  // background = "shader": the .frag, as a full path
     bool hdr_console_enabled = false;
