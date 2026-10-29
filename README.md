@@ -21,8 +21,9 @@ sink is still in beta, so you might hit a rough edge here and there. if you do, 
 ## what's in the water
 
 **make it yours**
-- video backgrounds, HDR video included (mp4, mov, mkv), and pictures (JPEG, PNG, HEIC, WebP and more)
-- exposure and hue shift controls, an optional CRT effect, and HDR text that glows brighter than the rest of your screen on an HDR display
+- backgrounds: sink's own underwater scene or churning nebula, your videos (HDR included) and pictures (JPEG, PNG, HEIC, WebP and more), your own Shadertoy-style shaders, colors and gradients, or your desktop, clear or frosted
+- 12 color themes, and sink's own color picker for the background, gradients and text
+- exposure and hue shift controls, a CRT effect that looks like a real tube, and HDR text that glows brighter than the rest of your screen on an HDR display
 - presets, so you can switch between whole looks in one go
 - cursor typing animation, ligatures, and whatever font you like
 
@@ -302,7 +303,7 @@ brew install cmake pkg-config sdl3 freetype
 ./build.sh
 ```
 
-the first build downloads and builds LGPL-only versions of FFmpeg, SDL3_image, HarfBuzz, and SDL3_ttf, so it takes a little while. after that, `./build/sink` runs it, and `./releases/package.sh` wraps it up into `sink.app`.
+the first build downloads and builds the libraries sink uses (SDL3, SDL3_image, SDL3_ttf, FreeType, HarfBuzz, libpng, an LGPL-only FFmpeg, and the glslang and SPIRV-Cross shader compilers), so it takes a little while. after that, `./build/sink` runs it, and `./releases/package.sh` wraps it up into `sink.app`.
 
 to run the tests:
 
@@ -321,6 +322,6 @@ the integration tests drive real shells (and tmux, if you have it installed), an
 
 ## license
 
-**sink** is free software released under the [GNU Lesser General Public License v2.1](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.en.html) or later. the libraries it bundles (FFmpeg, SDL3, SDL3_image, SDL3_ttf, FreeType, HarfBuzz, and libpng) keep their own licenses, and so do its fonts, Monaspace Neon and Mona Sans (both under the SIL Open Font License). copies of all of them ship inside the app.
+**sink** is free software released under the [GNU Lesser General Public License v2.1](https://www.gnu.org/licenses/old-licenses/lgpl-2.1.en.html) or later. the libraries it bundles (FFmpeg, SDL3, SDL3_image, SDL3_ttf, FreeType, HarfBuzz, libpng, glslang, and SPIRV-Cross) keep their own licenses, and so do its fonts, Monaspace Neon and Mona Sans (both under the SIL Open Font License). copies of all of them ship inside the app.
 
 Copyright © 2026 Rain Multimedia LLC
