@@ -123,6 +123,9 @@ private:
     // UTF-8 state variables to parse multi-byte characters
     int utf8_bytes_needed_ = 0;
     char32_t utf8_codepoint_ = 0;
+    // Smallest codepoint the sequence being decoded may encode: anything
+    // below it is an overlong form, which is invalid.
+    char32_t utf8_min_ = 0;
 
     // Helper to process individual decoded UTF-8 codepoints
     void process_char(TerminalGrid& grid, char32_t c);

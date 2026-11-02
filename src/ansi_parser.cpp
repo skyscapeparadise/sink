@@ -107,41 +107,52 @@ void ANSIParser::parse(TerminalGrid& grid, const char* data, size_t size) {
             // per-character path, which handles that case as before.
         }
 
-        // Decode multi-byte UTF-8 byte streams
+        // Decode UTF-8. Malformed input becomes U+FFFD, the replacement
+        // character, one per bad sequence -- as xterm, vte (Alacritty) and the
+        // Unicode standard's recommended practice do -- so broken text shows
+        // up as broken instead of disappearing or turning into something else.
+        // It used to do both: a sequence cut short by another byte vanished,
+        // and a byte that can't start a sequence was taken as Latin-1 (0xFF
+        // drew "ÿ"). termbench's cursor check caught the first against Zed.
+        constexpr char32_t kReplacement = 0xFFFD;
         if (utf8_bytes_needed_ == 0) {
             if (byte < 0x80) {
-                // Standard 1-byte ASCII character
                 process_char(grid, static_cast<char32_t>(byte));
-            } else if ((byte & 0xE0) == 0xC0) {
-                // 2-byte sequence starting byte
+            } else if (byte >= 0xC2 && byte <= 0xDF) {
                 utf8_codepoint_ = byte & 0x1F;
                 utf8_bytes_needed_ = 1;
+                utf8_min_ = 0x80;
             } else if ((byte & 0xF0) == 0xE0) {
-                // 3-byte sequence starting byte
                 utf8_codepoint_ = byte & 0x0F;
                 utf8_bytes_needed_ = 2;
-            } else if ((byte & 0xF8) == 0xF0) {
-                // 4-byte sequence starting byte
+                utf8_min_ = 0x800;
+            } else if (byte >= 0xF0 && byte <= 0xF4) {
                 utf8_codepoint_ = byte & 0x07;
                 utf8_bytes_needed_ = 3;
+                utf8_min_ = 0x10000;
+            } else if (byte == 0x9C && (state_ == STATE_STR || state_ == STATE_STR_ESC)) {
+                // A raw single-byte ST ends a string sequence, as it always
+                // has here. Not valid UTF-8, but harmless to keep.
+                process_char(grid, 0x9C);
             } else {
-                // Invalid start byte, treat as replacement/raw character
-                process_char(grid, static_cast<char32_t>(byte));
+                // A continuation byte with nothing to continue, or a byte
+                // that never starts a sequence (C0, C1, F5-FF).
+                process_char(grid, kReplacement);
+            }
+        } else if ((byte & 0xC0) == 0x80) {
+            utf8_codepoint_ = (utf8_codepoint_ << 6) | (byte & 0x3F);
+            if (--utf8_bytes_needed_ == 0) {
+                const char32_t cp = utf8_codepoint_;
+                const bool valid = cp >= utf8_min_ && cp <= 0x10FFFF && !(cp >= 0xD800 && cp <= 0xDFFF);
+                process_char(grid, valid ? cp : kReplacement);
             }
         } else {
-            if ((byte & 0xC0) == 0x80) {
-                // Continuation byte
-                utf8_codepoint_ = (utf8_codepoint_ << 6) | (byte & 0x3F);
-                utf8_bytes_needed_--;
-                
-                if (utf8_bytes_needed_ == 0) {
-                    process_char(grid, utf8_codepoint_);
-                }
-            } else {
-                // Invalid continuation byte, abort sequence and process character raw
-                utf8_bytes_needed_ = 0;
-                process_char(grid, static_cast<char32_t>(byte));
-            }
+            // Cut short by a byte that isn't a continuation: the partial
+            // character is a replacement, and the byte that interrupted it is
+            // read afresh -- it may be ESC, text, or the start of a character.
+            utf8_bytes_needed_ = 0;
+            process_char(grid, kReplacement);
+            --i;
         }
     }
 }

@@ -2715,6 +2715,45 @@ static void test_unused_controls_and_cancel() {
     }
 }
 
+// Malformed UTF-8 shows as U+FFFD, one per bad sequence, and nothing after it
+// is lost. A sequence cut short used to vanish, and a byte that can't start one
+// was read as Latin-1.
+static void test_malformed_utf8_is_replaced() {
+    // The row as codepoints (row_text is ASCII-only), skipping the trailing
+    // halves of wide characters and trailing blanks.
+    auto text = [](const TerminalGrid& g) {
+        std::u32string out;
+        for (int c = 0; c < g.get_cols(); ++c) {
+            char32_t cp = g.cell_base(g.get_cell_at(c, 0));
+            if (cp != 0) out += cp;
+        }
+        while (!out.empty() && out.back() == U' ') out.pop_back();
+        return out;
+    };
+    auto row = [&](const std::string& bytes) {
+        TerminalGrid g; g.resize(20, 3);
+        ANSIParser p;
+        feed(p, g, bytes);
+        return text(g);
+    };
+    CHECK(row("a\xe6" "b") == U"a\uFFFDb");                 // cut short by text
+    CHECK(row("a\xe6\xb3" "b") == U"a\uFFFDb");             // two of three bytes
+    CHECK(row("a\xff" "b") == U"a\uFFFDb");                  // never a start byte
+    CHECK(row("a\x80" "b") == U"a\uFFFDb");                  // stray continuation
+    CHECK(row("a\xc0\xaf" "b") == U"a\uFFFD\uFFFDb");        // overlong '/'
+    CHECK(row("a\xed\xa0\x80" "b") == U"a\uFFFDb");          // UTF-16 surrogate
+    CHECK(row("a\xf4\x90\x80\x80" "b") == U"a\uFFFDb");      // past U+10FFFF
+    // The byte that interrupted a sequence still does its job.
+    CHECK(row("a\xe6\x1b[2Cb") == U"a\uFFFD  b");
+    // Valid text is untouched, including across a parse call boundary.
+    CHECK(row("\xc3\xa9\xe7\xb3\xbb\xf0\x9f\xa7\xaa") == U"\u00E9\u7CFB\U0001F9EA");
+    TerminalGrid g; g.resize(20, 3);
+    ANSIParser p;
+    feed(p, g, "x\xe7\xb3");
+    feed(p, g, "\xbby");
+    CHECK(text(g) == U"x\u7CFBy");
+}
+
 // An opening sequence that straddles the end of a parse slice is still found,
 // and nothing after it is parsed. The scan for it used to search all pending
 // output on every slice (quadratic under backpressure); bounding it to the
@@ -2864,6 +2903,7 @@ int main() {
     test_synchronized_output_holds_output();
     test_synchronized_output_open_across_slice();
     test_unused_controls_and_cancel();
+    test_malformed_utf8_is_replaced();
     test_kitty_placement_keeps_proportions();
     test_sinkview();
     test_picture_decoding();
