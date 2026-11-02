@@ -110,6 +110,10 @@ public:
     // able to say so before the old one is destroyed.
     void release_textures();
 
+    // Frees the textures of images that have been deleted or evicted since
+    // the last call. Render thread only -- see retired_textures_.
+    void free_retired_textures();
+
     size_t image_count() const { return images_.size(); }
     size_t total_bytes() const { return total_bytes_; }
 
@@ -130,5 +134,17 @@ private:
 
     void evict_until_fits(size_t incoming);
     void drop_image(uint64_t id);
+
+    // Textures of images dropped by parsing -- a kitty delete, eviction at
+    // the memory cap, a full reset -- wait here for the render thread
+    // instead of being destroyed on the spot. SDL textures may only be
+    // destroyed on the thread that renders, and parsing is moving off it
+    // (docs/threading-plan.md). Guarded by the pane's lock, like everything
+    // else in the grid.
+    std::vector<SDL_Texture*> retired_textures_;
+    void retire(SDL_Texture*& texture) {
+        if (texture) retired_textures_.push_back(texture);
+        texture = nullptr;
+    }
     void sort_placements();
 };

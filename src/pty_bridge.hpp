@@ -5,6 +5,7 @@
 #include <mutex>
 #include <thread>
 #include <atomic>
+#include <functional>
 #include <sys/types.h>
 
 class PTYBridge {
@@ -28,6 +29,22 @@ public:
 
     // Write input bytes (characters or escapes) to the shell
     bool write_to_pty(const char* data, size_t size);
+
+    // Writes as much of `data` as can go right now and returns how much
+    // that was: never waits, neither for the write lock (held through a
+    // paste) nor for room in the shell's input. For the reader thread's
+    // replies -- if it blocked here while the shell was blocked writing
+    // output, nobody would read that output and neither would move. Only
+    // with an output handler, whose pty is non-blocking.
+    size_t write_without_waiting(const char* data, size_t size);
+
+    // With a handler, the reader thread hands each chunk it reads straight
+    // to it -- on the reader thread -- instead of keeping it for
+    // read_pending(), and calls it with (nullptr, 0) whenever 100ms pass with
+    // nothing to read, so the handler can act on time passing (letting go of
+    // a synchronized update held too long). The pty is made non-blocking.
+    // Set before spawn(). See docs/threading-plan.md, phase 3.
+    void set_output_handler(std::function<void(const char*, size_t)> handler) { output_handler_ = std::move(handler); }
 
     // Hands over everything the reader thread has accumulated since the last
     // call. `out` is cleared and then *swapped* with the internal buffer, so
@@ -82,6 +99,10 @@ private:
     // neither sink_bench (headless, starts after the pty) nor render_bench
     // could see it.
     std::mutex buffer_mutex_;
+    std::function<void(const char*, size_t)> output_handler_;
+    // Serialises writes, so a reply from the reader thread can't land in the
+    // middle of a paste the main thread is writing.
+    std::mutex write_mutex_;
     std::vector<char> read_buffer_;
 
     // Stop reading once this much is waiting to be parsed. Nothing bounded the

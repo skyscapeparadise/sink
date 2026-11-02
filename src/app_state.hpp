@@ -101,6 +101,18 @@ public:
     // output; see sync_output.hpp.
     sync_output::Hold sync_hold;
 
+    // With the threaded parser (docs/threading-plan.md), what the reader
+    // thread needs to know about its window, set by the frame each frame:
+    // whether the typewriter is on, and whether sinkdemo owns the pane (its
+    // output is dropped then). Atomics, because the window's own fields are
+    // the main thread's.
+    std::atomic<bool> typing_animation{true};
+    std::atomic<bool> demo_owned{false};
+    // Replies the reader thread couldn't write without waiting -- the shell's
+    // input was full, or a paste held the write lock. Sent ahead of anything
+    // newer on its next turn. Guarded by the pane's lock.
+    std::string reply_backlog;
+
     // Typewriter-animation pacing
     std::vector<char> animation_buffer;
     Uint64 last_output_chunk_time = 0;

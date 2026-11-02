@@ -265,6 +265,13 @@ bool PTYBridge::spawn(int cols, int rows, const std::string& cwd, int cell_px_w,
     }
 
     // --- Parent Process ---
+    // A reader that parses also writes replies, and must never block doing it
+    // (see write_without_waiting). write_to_pty already retries on EAGAIN and
+    // read_loop only reads after poll() says there's data, so both cope.
+    if (output_handler_) {
+        int flags = fcntl(master_fd_, F_GETFL);
+        if (flags != -1) fcntl(master_fd_, F_SETFL, flags | O_NONBLOCK);
+    }
     read_thread_ = std::thread(&PTYBridge::read_loop, this);
     return true;
 }
@@ -311,6 +318,7 @@ void PTYBridge::resize_pty(int cols, int rows, int cell_px_w, int cell_px_h) {
 
 bool PTYBridge::write_to_pty(const char* data, size_t size) {
     if (master_fd_ == -1) return false;
+    std::lock_guard<std::mutex> lock(write_mutex_);
     // A single write() call is not guaranteed to consume the whole buffer
     // (e.g. a large clipboard paste can exceed the pty's internal buffer
     // space); retry until every byte is written or a real error occurs.
@@ -337,6 +345,20 @@ void PTYBridge::read_pending(std::vector<char>& out) {
     // and read_buffer_ takes over out's now-empty storage for the next frame.
     // Both capacities survive, so at steady state neither side allocates.
     out.swap(read_buffer_);
+}
+
+size_t PTYBridge::write_without_waiting(const char* data, size_t size) {
+    if (master_fd_ == -1 || size == 0) return 0;
+    std::unique_lock<std::mutex> lock(write_mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) return 0;
+    size_t sent = 0;
+    while (sent < size) {
+        ssize_t n = ::write(master_fd_, data + sent, size - sent);
+        if (n > 0) { sent += static_cast<size_t>(n); continue; }
+        if (n < 0 && errno == EINTR) continue;
+        break;  // EAGAIN (no room right now) or an error: the caller keeps the rest
+    }
+    return sent;
 }
 
 void PTYBridge::read_loop() {
@@ -369,18 +391,24 @@ void PTYBridge::read_loop() {
         if (ret > 0) {
             if (pfd.revents & (POLLIN | POLLHUP | POLLERR)) {
                 ssize_t bytes_read = ::read(master_fd_, buffer.data(), buffer.size());
-                if (bytes_read > 0) {
+                if (bytes_read > 0 && output_handler_) {
+                    output_handler_(buffer.data(), static_cast<size_t>(bytes_read));
+                } else if (bytes_read > 0) {
                     {
                         std::lock_guard<std::mutex> lock(buffer_mutex_);
                         read_buffer_.insert(read_buffer_.end(), buffer.data(), buffer.data() + bytes_read);
                     }
                     if (output_notify_) output_notify_();
+                } else if (bytes_read < 0 && (errno == EAGAIN || errno == EINTR)) {
+                    continue;  // non-blocking pty with nothing after all
                 } else {
                     // EOF or descriptor closed
                     running_ = false;
                     break;
                 }
             }
+        } else if (ret == 0) {
+            if (output_handler_) output_handler_(nullptr, 0);
         } else if (ret < 0) {
             if (errno == EINTR) continue;
             running_ = false;

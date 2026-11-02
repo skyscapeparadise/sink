@@ -219,6 +219,7 @@ set(SOURCES
     src/terminal_grid.cpp
     src/terminal_images.cpp
     src/sync_output.cpp
+    src/pane_output.cpp
     ${SHELL_SPAWN_SOURCES}
     src/prompt_editing.cpp
     src/ansi_parser.cpp
@@ -348,6 +349,7 @@ set_tests_properties(prompt_editing_zsh prompt_editing_bash
 add_executable(pane_lifetime_test
     tests/test_pane_lifetime.cpp
     src/sync_output.cpp
+    src/pane_output.cpp
     src/ansi_parser.cpp
     src/terminal_grid.cpp
     src/terminal_images.cpp
@@ -367,7 +369,8 @@ target_link_libraries(pane_lifetime_test PRIVATE
     PkgConfig::SWSCALE
 )
 add_test(NAME pane_lifetime COMMAND pane_lifetime_test)
-set_tests_properties(pane_lifetime PROPERTIES LABELS integration TIMEOUT 900)
+add_test(NAME pane_lifetime_threaded COMMAND pane_lifetime_test --threaded)
+set_tests_properties(pane_lifetime pane_lifetime_threaded PROPERTIES LABELS integration TIMEOUT 900)
 
 # tmux compatibility proof. Drives a real tmux in a PTY, replays what it writes
 # through sink's parser, and compares against tmux's own view. Registered only

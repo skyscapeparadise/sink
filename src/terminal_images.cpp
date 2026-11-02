@@ -10,7 +10,13 @@ TerminalImages::~TerminalImages() {
     release_textures();
 }
 
+void TerminalImages::free_retired_textures() {
+    for (SDL_Texture* t : retired_textures_) SDL_DestroyTexture(t);
+    retired_textures_.clear();
+}
+
 void TerminalImages::release_textures() {
+    free_retired_textures();
     for (auto& entry : images_) {
         if (entry.second.texture) {
             SDL_DestroyTexture(entry.second.texture);
@@ -28,7 +34,7 @@ const TerminalImage* TerminalImages::find(uint64_t id) const {
 void TerminalImages::drop_image(uint64_t id) {
     auto it = images_.find(id);
     if (it == images_.end()) return;
-    if (it->second.texture) SDL_DestroyTexture(it->second.texture);
+    retire(it->second.texture);
     total_bytes_ -= it->second.byte_size();
     images_.erase(it);
     store_order_.erase(std::remove(store_order_.begin(), store_order_.end(), id),
@@ -128,7 +134,7 @@ void TerminalImages::retire_before(uint64_t oldest_line_id) {
             ++it;
             continue;
         }
-        if (it->second.texture) SDL_DestroyTexture(it->second.texture);
+        retire(it->second.texture);
         total_bytes_ -= it->second.byte_size();
         store_order_.erase(std::remove(store_order_.begin(), store_order_.end(), id),
                            store_order_.end());
@@ -159,7 +165,7 @@ void TerminalImages::set_placements(std::vector<ImagePlacement> placements) {
 }
 
 void TerminalImages::clear_all() {
-    release_textures();
+    for (auto& entry : images_) retire(entry.second.texture);
     images_.clear();
     store_order_.clear();
     placements_.clear();

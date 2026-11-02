@@ -269,6 +269,40 @@ in each terminal.
   cursor check agrees with Alacritty and Zed, and TSan is clean
 - you've used it for a day without noticing anything
 
+**Progress, 2026-11-02:** built behind `SINK_THREADED_PARSER=1`.
+- **Step 0, image textures.** The image store no longer destroys GPU
+  textures inside the parser. Deleted, evicted and reset images retire
+  their textures to a list that `TerminalGrid::render()` frees. Only the
+  HDR renderer swap and the destructor still destroy directly, both on the
+  main thread.
+- **The parse path is out of `main.cpp`.** The typewriter-or-parse decision
+  (`take_output`) and the reader-thread handler (`parse_on_reader`) now
+  live in `src/pane_output.*`, so tests run the code the app runs.
+- **`PTYBridge`.**
+  - An output handler is called on the reader thread with each chunk
+    (64 KB at most), and with nothing every 100 ms so a held synchronized
+    update can time out.
+  - With a handler, the pty is non-blocking.
+  - `write_to_pty` takes a write lock, so a reply can't land inside a
+    paste.
+  - `write_without_waiting` never blocks, neither on the lock nor on the
+    shell's input.
+- **Replies.** Only the reader sends them, in order, and never with the
+  pane's lock held. Whatever can't be written at once waits in
+  `Pane::reply_backlog` for the reader's next turn, at most 100 ms later.
+  This also removes a deadlock that exists today: a huge paste into a
+  program that's busy printing could stall both the main thread and the
+  shell.
+- **Window state the reader needs** (typewriter on, sinkdemo owning the
+  pane) is mirrored into per-pane atomics by the frame.
+- **The frame, with the switch on,** doesn't parse. It collects the title
+  and OSC 52 clipboard writes, and runs the typewriter tick as before.
+- **Tests.** `pane_lifetime_threaded` frees panes mid-flood while their
+  readers parse and the test thread reads the grid like a renderer. With
+  `~Pane()` removed, AddressSanitizer reports a heap-use-after-free in
+  `TerminalGrid::write_run` called from `parse_on_reader`: the test has
+  teeth, as phase 2 required.
+
 ### Phase 4: fairness and frame consistency (small–medium, measured)
 
 1. Implement and measure the waiting flag. New `pty_bench` mode: a flood

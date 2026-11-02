@@ -23,6 +23,7 @@
 #include "settings_ui.hpp"
 #include "sink_demo.hpp"
 #include "app_state.hpp"
+#include "pane_output.hpp"
 #include "config_store.hpp"
 #include "system_fonts.hpp"
 #include "themes.hpp"
@@ -47,6 +48,12 @@ static void* g_app_state = nullptr;
 // Never destroyed: a reader thread can still be finishing as the app quits,
 // and signalling a freed semaphore would be worse than leaking one at exit.
 static SDL_Semaphore* g_pty_wake = nullptr;
+
+// SINK_THREADED_PARSER=1: parse on each pane's pty reader thread instead of in
+// the frame. Off by default while it's proven; see parse_on_reader() and
+// docs/threading-plan.md.
+static bool g_threaded_parse = false;
+
 static void signal_pty_wake() {
     if (g_pty_wake) SDL_SignalSemaphore(g_pty_wake);
 }
@@ -91,12 +98,6 @@ static constexpr Uint64 kParseBudgetNs = sync_output::kFrameParseBudgetNs;
 // partial UTF-8 sequence and a pending charset designation all survive the
 // boundary. Output inside a synchronized update is held until the update
 // closes (see sync_output.hpp).
-static size_t parse_within_budget(Pane& pane, const char* data, size_t size) {
-    const Uint64 start = SDL_GetTicksNS();
-    auto g = pane.lock();
-    return sync_output::parse(g.parser(), g.grid(), pane.sync_hold, data, size, start / 1000000ull,
-                              [start]() { return SDL_GetTicksNS() - start >= kParseBudgetNs; });
-}
 
 // --- Kitty keyboard protocol encoding -------------------------------------
 //
@@ -966,6 +967,7 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     const int cell_px_w = static_cast<int>(std::lround(tw->cell_w * tw->display_scale));
     const int cell_px_h = static_cast<int>(std::lround(tw->cell_h * tw->display_scale));
     tw->fpane().lock()->set_cell_pixel_size(cell_px_w, cell_px_h);
+    if (g_threaded_parse) pane_output::attach_reader_parser(tw->fpane());
     if (!tw->fpane().pty.spawn(cols, rows, inherit_cwd, cell_px_w, cell_px_h)) {
         std::cerr << "Failed to initialize PTY shell context" << std::endl;
     }
@@ -1202,6 +1204,7 @@ static void split_focused_pane(AppState* state, TerminalWindow* tw, bool vertica
     const int cell_px_w = static_cast<int>(std::lround(tw->cell_w * tw->display_scale));
     const int cell_px_h = static_cast<int>(std::lround(tw->cell_h * tw->display_scale));
     new_pane->lock()->set_cell_pixel_size(cell_px_w, cell_px_h);
+    if (g_threaded_parse) pane_output::attach_reader_parser(*new_pane);
     if (!new_pane->pty.spawn(cols, rows, inherit_cwd, cell_px_w, cell_px_h)) {
         std::cerr << "split: failed to spawn PTY for new pane" << std::endl;
         return;
@@ -1945,6 +1948,8 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
     AppState* state = new AppState();
     *appstate = state;
     g_app_state = state;
+    // The threaded parser, while it's being proven (docs/threading-plan.md).
+    if (const char* v = SDL_getenv("SINK_THREADED_PARSER")) g_threaded_parse = std::strcmp(v, "1") == 0;
     g_pty_wake = SDL_CreateSemaphore(0);
     PTYBridge::set_output_notify(signal_pty_wake);
 
@@ -3268,112 +3273,81 @@ static constexpr Uint64 kPtyRedrawGraceMs = 60;
 // had more pending than that and was left for the frame.
 static bool drain_pane_output(TerminalWindow* tw, Pane* pane_ptr, size_t max_bytes) {
     Pane& pane = *pane_ptr;
-    pane.pty.read_pending(pane.pty_output);
-    // Carry anything last frame's budget did not reach. The swap keeps the
-    // common no-backlog case free of a copy.
-    if (pane.pty_pending.empty()) {
-        pane.pty_pending.swap(pane.pty_output);
-    } else if (!pane.pty_output.empty()) {
-        pane.pty_pending.insert(pane.pty_pending.end(),
-                                pane.pty_output.begin(), pane.pty_output.end());
-    }
-
-    // A service pass between frames handles only small, interactive
-    // output -- a query, a keystroke's echo -- and leaves a backlog to the
-    // frame, where it is parsed under the per-frame budget as before.
-    if (pane.pty_pending.size() > max_bytes) return false;
-
-    // Parse only as much as fits in this frame's budget; the rest waits.
-    // Under a full-tilt `cat` a single drain reached 3MB and took 20.8ms
-    // to parse -- 125% of a 60Hz frame spent inside the parser, before
-    // rendering and before input was so much as looked at, which is why a
-    // runaway command was so hard to interrupt.
-    const char* out_data = pane.pty_pending.data();
-    size_t out_size = pane.pty_pending.size();
-    size_t consumed = 0;
-
     bool demo_owns_pane = SinkDemo::is_demo_running(tw) && pane_ptr == &tw->demo_target();
-    if (out_size > 0 && !demo_owns_pane) {
-        auto grid_lock = pane.lock();
-        if (tw->animated_typing) {
-            // A human at the keyboard produces isolated chunks (a keystroke's
-            // echo) tens-to-hundreds of ms apart. A program streaming
-            // continuous screen updates (cacademo, htop, vim, ...) produces
-            // many chunks back-to-back with almost no gap between them, even
-            // when each individual chunk happens to be small -- a single
-            // chunk-size check can't tell those apart. Track the gap between
-            // consecutive chunks and once several land faster than typing
-            // plausibly could, treat the whole burst as program output so
-            // the typewriter pacing doesn't make rendering fall behind it.
-            Uint64 now = SDL_GetTicks();
-            Uint64 gap = now - pane.last_output_chunk_time;
-            pane.last_output_chunk_time = now;
-            if (gap < 40) {
-                pane.rapid_chunk_streak++;
-            } else {
-                pane.rapid_chunk_streak = 0;
-            }
-            bool fast_turnover = pane.rapid_chunk_streak >= 3;
 
-            // Output inside a synchronized update is held, not typed out.
-            // A chunk with an escape in it isn't keyboard echo -- it's a
-            // program moving the cursor, or asking the terminal something
-            // and waiting for the answer. Queued for the typewriter, a
-            // 3-byte query (ESC [ c) was parsed after this pass's replies
-            // went out and answered a frame late.
-            const bool has_escape = std::memchr(out_data, 0x1b, out_size) != nullptr;
-            if (out_size > 5 || fast_turnover || has_escape || pane.lock()->is_synchronized_output()) {
-                // Large chunk / fast turnover (command or program output): bypass typing effect
-                if (!pane.animation_buffer.empty()) {
-                    pane.lock().parse(pane.animation_buffer.data(), pane.animation_buffer.size());
-                    pane.animation_buffer.clear();
-                }
-                consumed = parse_within_budget(pane, out_data, out_size);
-            } else {
-                // Small, unhurried chunk (user typing): queue for animated
-                // typing, which does its own pacing from there.
-                pane.animation_buffer.insert(pane.animation_buffer.end(), out_data, out_data + out_size);
-                consumed = out_size;
-            }
-        } else {
-            consumed = parse_within_budget(pane, out_data, out_size);
+    if (g_threaded_parse) {
+        // The reader thread parses and replies; tell it what it can't see.
+        pane.typing_animation.store(tw->animated_typing, std::memory_order_relaxed);
+        pane.demo_owned.store(demo_owns_pane, std::memory_order_relaxed);
+    } else {
+        pane.pty.read_pending(pane.pty_output);
+        // Carry anything last frame's budget did not reach. The swap keeps the
+        // common no-backlog case free of a copy.
+        if (pane.pty_pending.empty()) {
+            pane.pty_pending.swap(pane.pty_output);
+        } else if (!pane.pty_output.empty()) {
+            pane.pty_pending.insert(pane.pty_pending.end(),
+                                    pane.pty_output.begin(), pane.pty_output.end());
         }
-        pane.lock()->note_output_idle();
+
+        // A service pass between frames handles only small, interactive
+        // output -- a query, a keystroke's echo -- and leaves a backlog to the
+        // frame, where it is parsed under the per-frame budget as before.
+        if (pane.pty_pending.size() > max_bytes) return false;
+
+        // Parse only as much as fits in this frame's budget; the rest waits.
+        // Under a full-tilt `cat` a single drain reached 3MB and took 20.8ms
+        // to parse -- 125% of a 60Hz frame spent inside the parser, before
+        // rendering and before input was so much as looked at, which is why a
+        // runaway command was so hard to interrupt.
+        size_t consumed = 0;
+        if (!pane.pty_pending.empty() && !demo_owns_pane) {
+            const Uint64 start = SDL_GetTicksNS();
+            auto g = pane.lock();
+            consumed = pane_output::take_output(pane, g, pane.pty_pending.data(), pane.pty_pending.size(), tw->animated_typing,
+                                   [start]() { return SDL_GetTicksNS() - start >= kParseBudgetNs; });
+        }
+
+        // Retire what was handled. A pane a demo has taken over drops its
+        // shell output entirely rather than accumulating it, which is what
+        // happened implicitly when this buffer was a per-frame local.
+        if (demo_owns_pane) {
+            pane.pty_pending.clear();
+        } else if (consumed > 0) {
+            pane.pty_pending.erase(pane.pty_pending.begin(),
+                                   pane.pty_pending.begin() + static_cast<long>(consumed));
+        }
+
+        // Send anything the parser owes the shell (DSR cursor reports, DA
+        // capability answers). Not gated to the focused pane, and for a
+        // stronger reason than the clipboard: the program that asked is most
+        // likely blocked waiting for this, focused or not. (With the threaded
+        // parser the reader thread sends these itself.)
+        std::string reply;
+        {
+            auto g = pane.lock();
+            if (g->has_pending_reply()) reply = g->take_pending_reply();
+        }
+        if (!reply.empty()) pane.pty.write_to_pty(reply.data(), reply.size());
     }
 
-    // Retire what was handled. A pane a demo has taken over drops its
-    // shell output entirely rather than accumulating it, which is what
-    // happened implicitly when this buffer was a per-frame local.
-    if (demo_owns_pane) {
-        pane.pty_pending.clear();
-    } else if (consumed > 0) {
-        pane.pty_pending.erase(pane.pty_pending.begin(),
-                               pane.pty_pending.begin() + static_cast<long>(consumed));
+    // What parsing left for the main thread, whichever thread parsed.
+    std::string title, clipboard;
+    bool has_title = false;
+    {
+        auto g = pane.lock();
+        // OSC 0/2 title change (only the focused pane owns the window title)
+        if (pane_ptr == tw->focused && g->has_pending_title()) {
+            title = g->take_window_title();
+            has_title = true;
+        }
+        // OSC 52 clipboard write -- unlike the title, not gated to the
+        // focused pane: a background pane's tmux/script finishing a copy is
+        // a legitimate, common case
+        if (g->has_pending_clipboard_text()) clipboard = g->take_clipboard_text();
     }
-
-    // Apply any OSC 0/2 title change from the data just parsed (only
-    // the focused pane owns the window title)
-    if (pane_ptr == tw->focused && pane.lock()->has_pending_title()) {
-        std::string title = pane.lock()->take_window_title();
-        tw->shell_title = title.empty() ? "sink" : title;
-    }
-
-    // Send anything the parser owes the shell (DSR cursor reports, DA
-    // capability answers). Not gated to the focused pane either, and for
-    // a stronger reason than the clipboard: the program that asked is
-    // most likely blocked waiting for this, focused or not.
-    if (pane.lock()->has_pending_reply()) {
-        std::string reply = pane.lock()->take_pending_reply();
-        pane.pty.write_to_pty(reply.data(), reply.size());
-    }
-
-    // Apply any OSC 52 clipboard write -- unlike the title, this isn't
-    // gated to the focused pane: a background pane's tmux/script
-    // finishing a copy is a legitimate, common case
-    if (pane.lock()->has_pending_clipboard_text()) {
-        std::string text = pane.lock()->take_clipboard_text();
-        SDL_SetClipboardText(text.c_str());
-    }
+    if (has_title) tw->shell_title = title.empty() ? "sink" : title;
+    if (!clipboard.empty()) SDL_SetClipboardText(clipboard.c_str());
     return true;
 }
 

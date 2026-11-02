@@ -1852,6 +1852,7 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
     // wanting more distinct glyphs than the atlas holds re-rasterizes all of
     // them every frame forever instead of just missing a few.
     font_manager.begin_frame(renderer);
+    images_.free_retired_textures();
 
     SDL_Texture* dyn_atlas = font_manager.get_dynamic_atlas_texture();
 
