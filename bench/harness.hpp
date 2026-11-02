@@ -217,10 +217,15 @@ struct Options {
     bool json = false;
     int samples = 0;
     int warmup = -1;
-    std::string only;
+    std::vector<std::string> only;  // --only, any number of times: metrics whose id contains any of them
     std::vector<std::string> positional;
 
-    bool wants(const std::string& id) const { return only.empty() || id.find(only) != std::string::npos; }
+    bool wants(const std::string& id) const {
+        if (only.empty()) return true;
+        for (const std::string& o : only)
+            if (id.find(o) != std::string::npos) return true;
+        return false;
+    }
 };
 
 // With --json, stdout carries the JSON and nothing else. Library code the
@@ -239,7 +244,7 @@ inline Options parse_options(int argc, char** argv) {
         if (a == "--json") o.json = true;
         else if (a == "--samples" && i + 1 < argc) o.samples = std::atoi(argv[++i]);
         else if (a == "--warmup" && i + 1 < argc) o.warmup = std::atoi(argv[++i]);
-        else if (a == "--only" && i + 1 < argc) o.only = argv[++i];
+        else if (a == "--only" && i + 1 < argc) o.only.push_back(argv[++i]);
         else o.positional.push_back(a);
     }
     return o;

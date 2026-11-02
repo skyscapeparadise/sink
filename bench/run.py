@@ -702,6 +702,59 @@ def cmd_ab(args, control=False):
             print("\nTwo builds of the same source showed no detectable difference on any metric.")
 
 
+# --- two metrics from one binary ------------------------------------------------------------
+
+BENCH_FOR_PREFIX = [("parser", "sink_bench"), ("findbar", "sink_bench"), ("reflow", "sink_bench"),
+                    ("pty", "pty_bench"), ("render", "render_bench")]
+
+
+def cmd_pair(args):
+    """Interleaved comparison of two metrics the same binary measures in one
+    run -- two modes of one thing, such as pty_paced.plain_text (the frame
+    parses) against pty_threaded.plain_text (the reader thread parses). One
+    paired ratio per round, as in `ab`; no build-to-build floor applies, since
+    both come from one binary in one process."""
+    check_workloads()
+    env = environment()
+    noise = noise_problems(env)
+    if noise and not args.allow_noisy:
+        raise SystemExit("Not a quiet machine: " + "; ".join(noise) + ". Pass --allow-noisy to run anyway.")
+    benches = {b for prefix, b in BENCH_FOR_PREFIX for mid in (args.a, args.b) if mid.startswith(prefix)}
+    if len(benches) != 1:
+        raise SystemExit("both metrics must come from the same benchmark binary")
+    bench = benches.pop()
+    binfo = build(ROOT, BUILD)
+    samples = (QUICK if args.quick else FULL)[bench]
+    per_round = max(2, samples // args.rounds)
+    pooled = {"A": {}, "B": {}}
+    rounds = {"A": {}, "B": {}}
+    label = f"{args.b} / {args.a}"
+    for r in range(args.rounds):
+        print(f"round {r + 1}/{args.rounds}")
+        doc = run_bench(os.path.join(BUILD, bench), ["--only", args.a, "--only", args.b, WORKLOADS],
+                        per_round, log=lambda *_: None)
+        if doc.get("exit_code"):
+            print(f"  {bench} exited {doc['exit_code']}: {doc.get('stderr', '')[-300:]}")
+        ms = {m["id"]: m for m in doc["metrics"]}
+        for side, mid in (("A", args.a), ("B", args.b)):
+            if mid not in ms:
+                raise SystemExit(f"{bench} produced no metric {mid}")
+            p = pooled[side].setdefault(label, {**ms[mid], "samples": []})
+            p["samples"].extend(ms[mid]["samples"])
+            rounds[side].setdefault(label, []).append(median(ms[mid]["samples"]))
+    rows = compare_paired(pooled["A"], pooled["B"], rounds["A"], rounds["B"], "A", "B", show_floor=False)
+    print(f"\nA = {args.a}\nB = {args.b}")
+    res = {"suite": 1, "kind": "pair", "a": args.a, "b": args.b, "rounds": args.rounds, "environment": env,
+           "noise": noise, "build": binfo, "rows": rows,
+           "pooled": {k: list(v.values()) for k, v in pooled.items()}}
+    os.makedirs(RESULTS, exist_ok=True)
+    stamp = env["date"][:16].replace(":", "")
+    path = os.path.join(RESULTS, f"{stamp}-pair-{args.a}-vs-{args.b}.json")
+    with open(path, "w") as f:
+        json.dump(res, f, indent=1)
+    print(f"wrote {os.path.relpath(path, ROOT)}")
+
+
 # --- terminals --------------------------------------------------------------------------
 
 def cmd_compare_terms(args):
@@ -872,6 +925,14 @@ def main():
     p.add_argument("--rounds", type=int, default=6)
     common(p)
     p.set_defaults(fn=lambda a: cmd_ab(a, control=True))
+
+    p = sub.add_parser("pair", help="interleaved comparison of two metrics one binary measures together")
+    p.add_argument("a")
+    p.add_argument("b")
+    p.add_argument("--rounds", type=int, default=6)
+    p.add_argument("--quick", action="store_true")
+    p.add_argument("--allow-noisy", action="store_true")
+    p.set_defaults(fn=cmd_pair)
 
     p = sub.add_parser("claims", help="check bench/claims.json against a results file")
     p.add_argument("results", nargs="?")
