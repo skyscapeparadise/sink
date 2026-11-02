@@ -58,7 +58,14 @@ public:
     // PATH, which is why the extra places are searched.
     static std::string find_program(const std::string& command);
 
+    // Called from a reader thread whenever new output lands, so the main
+    // thread can wake and answer a query without waiting for the next frame.
+    // Must be cheap and thread-safe (sink's signals a semaphore). Set once,
+    // before any shell is spawned.
+    static void set_output_notify(void (*notify)()) { output_notify_ = notify; }
+
 private:
+    static void (*output_notify_)();
     static bool shell_integration_enabled_;
     static ShellSettings shell_settings_;
     int master_fd_ = -1;

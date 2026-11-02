@@ -43,6 +43,15 @@ SDL_AppResult SDL_AppIterate(void* appstate);
 // Global AppState reference for menu timer callbacks
 static void* g_app_state = nullptr;
 
+// Woken by any pty reader thread when output arrives; see wait_for_next_frame.
+// Never destroyed: a reader thread can still be finishing as the app quits,
+// and signalling a freed semaphore would be worse than leaking one at exit.
+static SDL_Semaphore* g_pty_wake = nullptr;
+static void signal_pty_wake() {
+    if (g_pty_wake) SDL_SignalSemaphore(g_pty_wake);
+}
+
+
 // How long the black dissolve overlay will wait on the video background's
 // first decoded frame before giving up and revealing the terminal anyway.
 // See the FADE_HOLD_BLACK handling in SDL_AppIterate for why this deadline
@@ -1935,6 +1944,8 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
     AppState* state = new AppState();
     *appstate = state;
     g_app_state = state;
+    g_pty_wake = SDL_CreateSemaphore(0);
+    PTYBridge::set_output_notify(signal_pty_wake);
 
     state->video_path = resolve_default_video_path();
     state->font_path = resolve_default_font_path();
@@ -3225,6 +3236,159 @@ static constexpr Uint64 kPtyResizeSettleMs = 120;
 // outlast a frame or so of it.
 static constexpr Uint64 kPtyRedrawGraceMs = 60;
 
+// Reads a pane's pty output, parses what it can, and sends what the parser
+// owes back: replies to queries, the title, OSC 52 clipboard writes. Called
+// once per pane every frame, and between frames when the pty reader wakes the
+// main thread (see wait_for_next_frame), so a program asking the terminal
+// something is answered at once instead of at the next frame. `max_bytes`
+// limits the between-frames calls to small output; returns false when a pane
+// had more pending than that and was left for the frame.
+static bool drain_pane_output(TerminalWindow* tw, Pane* pane_ptr, size_t max_bytes) {
+    Pane& pane = *pane_ptr;
+    pane.pty.read_pending(pane.pty_output);
+    // Carry anything last frame's budget did not reach. The swap keeps the
+    // common no-backlog case free of a copy.
+    if (pane.pty_pending.empty()) {
+        pane.pty_pending.swap(pane.pty_output);
+    } else if (!pane.pty_output.empty()) {
+        pane.pty_pending.insert(pane.pty_pending.end(),
+                                pane.pty_output.begin(), pane.pty_output.end());
+    }
+
+    // A service pass between frames handles only small, interactive
+    // output -- a query, a keystroke's echo -- and leaves a backlog to the
+    // frame, where it is parsed under the per-frame budget as before.
+    if (pane.pty_pending.size() > max_bytes) return false;
+
+    // Parse only as much as fits in this frame's budget; the rest waits.
+    // Under a full-tilt `cat` a single drain reached 3MB and took 20.8ms
+    // to parse -- 125% of a 60Hz frame spent inside the parser, before
+    // rendering and before input was so much as looked at, which is why a
+    // runaway command was so hard to interrupt.
+    const char* out_data = pane.pty_pending.data();
+    size_t out_size = pane.pty_pending.size();
+    size_t consumed = 0;
+
+    bool demo_owns_pane = SinkDemo::is_demo_running(tw) && pane_ptr == &tw->demo_target();
+    if (out_size > 0 && !demo_owns_pane) {
+        std::lock_guard<std::mutex> lock(pane.grid_mutex);
+        if (tw->animated_typing) {
+            // A human at the keyboard produces isolated chunks (a keystroke's
+            // echo) tens-to-hundreds of ms apart. A program streaming
+            // continuous screen updates (cacademo, htop, vim, ...) produces
+            // many chunks back-to-back with almost no gap between them, even
+            // when each individual chunk happens to be small -- a single
+            // chunk-size check can't tell those apart. Track the gap between
+            // consecutive chunks and once several land faster than typing
+            // plausibly could, treat the whole burst as program output so
+            // the typewriter pacing doesn't make rendering fall behind it.
+            Uint64 now = SDL_GetTicks();
+            Uint64 gap = now - pane.last_output_chunk_time;
+            pane.last_output_chunk_time = now;
+            if (gap < 40) {
+                pane.rapid_chunk_streak++;
+            } else {
+                pane.rapid_chunk_streak = 0;
+            }
+            bool fast_turnover = pane.rapid_chunk_streak >= 3;
+
+            // Output inside a synchronized update is held, not typed out.
+            // A chunk with an escape in it isn't keyboard echo -- it's a
+            // program moving the cursor, or asking the terminal something
+            // and waiting for the answer. Queued for the typewriter, a
+            // 3-byte query (ESC [ c) was parsed after this pass's replies
+            // went out and answered a frame late.
+            const bool has_escape = std::memchr(out_data, 0x1b, out_size) != nullptr;
+            if (out_size > 5 || fast_turnover || has_escape || pane.terminal.is_synchronized_output()) {
+                // Large chunk / fast turnover (command or program output): bypass typing effect
+                if (!pane.animation_buffer.empty()) {
+                    pane.parser.parse(pane.terminal, pane.animation_buffer.data(), pane.animation_buffer.size());
+                    pane.animation_buffer.clear();
+                }
+                consumed = parse_within_budget(pane, out_data, out_size);
+            } else {
+                // Small, unhurried chunk (user typing): queue for animated
+                // typing, which does its own pacing from there.
+                pane.animation_buffer.insert(pane.animation_buffer.end(), out_data, out_data + out_size);
+                consumed = out_size;
+            }
+        } else {
+            consumed = parse_within_budget(pane, out_data, out_size);
+        }
+        pane.terminal.note_output_idle();
+    }
+
+    // Retire what was handled. A pane a demo has taken over drops its
+    // shell output entirely rather than accumulating it, which is what
+    // happened implicitly when this buffer was a per-frame local.
+    if (demo_owns_pane) {
+        pane.pty_pending.clear();
+    } else if (consumed > 0) {
+        pane.pty_pending.erase(pane.pty_pending.begin(),
+                               pane.pty_pending.begin() + static_cast<long>(consumed));
+    }
+
+    // Apply any OSC 0/2 title change from the data just parsed (only
+    // the focused pane owns the window title)
+    if (pane_ptr == tw->focused && pane.terminal.has_pending_title()) {
+        std::string title = pane.terminal.take_window_title();
+        tw->shell_title = title.empty() ? "sink" : title;
+    }
+
+    // Send anything the parser owes the shell (DSR cursor reports, DA
+    // capability answers). Not gated to the focused pane either, and for
+    // a stronger reason than the clipboard: the program that asked is
+    // most likely blocked waiting for this, focused or not.
+    if (pane.terminal.has_pending_reply()) {
+        std::string reply = pane.terminal.take_pending_reply();
+        pane.pty.write_to_pty(reply.data(), reply.size());
+    }
+
+    // Apply any OSC 52 clipboard write -- unlike the title, this isn't
+    // gated to the focused pane: a background pane's tmux/script
+    // finishing a copy is a legitimate, common case
+    if (pane.terminal.has_pending_clipboard_text()) {
+        std::string text = pane.terminal.take_clipboard_text();
+        SDL_SetClipboardText(text.c_str());
+    }
+    return true;
+}
+
+// Waits out the rest of the frame (`wait_ms`), but not idly: when a pty has
+// new output, small output is parsed and answered right away. sink used to
+// sleep through it, and only looked at the pty once a frame -- a program
+// asking the terminal something (vim and tmux at startup, a prompt asking
+// where the cursor is, a keyboard-protocol probe) waited 13ms for the answer
+// where Alacritty takes 0.1ms (bench/termbench.py). Rendering stays on the
+// frame cadence, and bulk output stays with the frame and its parse budget:
+// once any pane has a backlog this stops servicing and just sleeps, so a
+// flood can't turn the wait into a busy loop.
+static void wait_for_next_frame(AppState* state, Uint64 wait_ms) {
+    const Uint64 deadline = SDL_GetTicks() + wait_ms;
+    if (!g_pty_wake) {
+        SDL_Delay(static_cast<Uint32>(wait_ms));
+        return;
+    }
+    constexpr size_t kServiceMaxBytes = 16u << 10;
+    bool servicing = true;
+    for (;;) {
+        const Uint64 now = SDL_GetTicks();
+        if (now >= deadline) break;
+        const Sint32 left = static_cast<Sint32>(deadline - now);
+        if (!servicing) {
+            SDL_Delay(static_cast<Uint32>(left));
+            break;
+        }
+        if (!SDL_WaitSemaphoreTimeout(g_pty_wake, left)) break;  // timed out: frame time
+        while (SDL_TryWaitSemaphore(g_pty_wake)) {}             // one pass covers every signal so far
+        for (TerminalWindow* tw : state->windows) {
+            for (Pane* pane : all_panes(tw)) {
+                if (!drain_pane_output(tw, pane, kServiceMaxBytes)) servicing = false;
+            }
+        }
+    }
+}
+
 SDL_AppResult SDL_AppIterate(void* appstate) {
     AppState* state = static_cast<AppState*>(appstate);
     if (!state) return SDL_APP_FAILURE;
@@ -3380,7 +3544,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
     Uint64 current_tick = SDL_GetTicks();
     Uint64 elapsed = current_tick - state->last_tick;
     if (elapsed < 16) {
-        SDL_Delay(16 - elapsed);
+        wait_for_next_frame(state, 16 - elapsed);
         current_tick = SDL_GetTicks();
         elapsed = current_tick - state->last_tick;
     }
@@ -3615,101 +3779,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         // running sinkdemo is streaming into; the other panes stay live)
         for (Pane* pane_ptr : all_panes(tw)) {
         Pane& pane = *pane_ptr;
-        pane.pty.read_pending(pane.pty_output);
-        // Carry anything last frame's budget did not reach. The swap keeps the
-        // common no-backlog case free of a copy.
-        if (pane.pty_pending.empty()) {
-            pane.pty_pending.swap(pane.pty_output);
-        } else if (!pane.pty_output.empty()) {
-            pane.pty_pending.insert(pane.pty_pending.end(),
-                                    pane.pty_output.begin(), pane.pty_output.end());
-        }
-
-        // Parse only as much as fits in this frame's budget; the rest waits.
-        // Under a full-tilt `cat` a single drain reached 3MB and took 20.8ms
-        // to parse -- 125% of a 60Hz frame spent inside the parser, before
-        // rendering and before input was so much as looked at, which is why a
-        // runaway command was so hard to interrupt.
-        const char* out_data = pane.pty_pending.data();
-        size_t out_size = pane.pty_pending.size();
-        size_t consumed = 0;
-
-        bool demo_owns_pane = SinkDemo::is_demo_running(tw) && pane_ptr == &tw->demo_target();
-        if (out_size > 0 && !demo_owns_pane) {
-            std::lock_guard<std::mutex> lock(pane.grid_mutex);
-            if (tw->animated_typing) {
-                // A human at the keyboard produces isolated chunks (a keystroke's
-                // echo) tens-to-hundreds of ms apart. A program streaming
-                // continuous screen updates (cacademo, htop, vim, ...) produces
-                // many chunks back-to-back with almost no gap between them, even
-                // when each individual chunk happens to be small -- a single
-                // chunk-size check can't tell those apart. Track the gap between
-                // consecutive chunks and once several land faster than typing
-                // plausibly could, treat the whole burst as program output so
-                // the typewriter pacing doesn't make rendering fall behind it.
-                Uint64 now = SDL_GetTicks();
-                Uint64 gap = now - pane.last_output_chunk_time;
-                pane.last_output_chunk_time = now;
-                if (gap < 40) {
-                    pane.rapid_chunk_streak++;
-                } else {
-                    pane.rapid_chunk_streak = 0;
-                }
-                bool fast_turnover = pane.rapid_chunk_streak >= 3;
-
-                // Output inside a synchronized update is held, not typed out.
-                if (out_size > 5 || fast_turnover || pane.terminal.is_synchronized_output()) {
-                    // Large chunk / fast turnover (command or program output): bypass typing effect
-                    if (!pane.animation_buffer.empty()) {
-                        pane.parser.parse(pane.terminal, pane.animation_buffer.data(), pane.animation_buffer.size());
-                        pane.animation_buffer.clear();
-                    }
-                    consumed = parse_within_budget(pane, out_data, out_size);
-                } else {
-                    // Small, unhurried chunk (user typing): queue for animated
-                    // typing, which does its own pacing from there.
-                    pane.animation_buffer.insert(pane.animation_buffer.end(), out_data, out_data + out_size);
-                    consumed = out_size;
-                }
-            } else {
-                consumed = parse_within_budget(pane, out_data, out_size);
-            }
-            pane.terminal.note_output_idle();
-        }
-
-        // Retire what was handled. A pane a demo has taken over drops its
-        // shell output entirely rather than accumulating it, which is what
-        // happened implicitly when this buffer was a per-frame local.
-        if (demo_owns_pane) {
-            pane.pty_pending.clear();
-        } else if (consumed > 0) {
-            pane.pty_pending.erase(pane.pty_pending.begin(),
-                                   pane.pty_pending.begin() + static_cast<long>(consumed));
-        }
-
-        // Apply any OSC 0/2 title change from the data just parsed (only
-        // the focused pane owns the window title)
-        if (pane_ptr == tw->focused && pane.terminal.has_pending_title()) {
-            std::string title = pane.terminal.take_window_title();
-            tw->shell_title = title.empty() ? "sink" : title;
-        }
-
-        // Send anything the parser owes the shell (DSR cursor reports, DA
-        // capability answers). Not gated to the focused pane either, and for
-        // a stronger reason than the clipboard: the program that asked is
-        // most likely blocked waiting for this, focused or not.
-        if (pane.terminal.has_pending_reply()) {
-            std::string reply = pane.terminal.take_pending_reply();
-            pane.pty.write_to_pty(reply.data(), reply.size());
-        }
-
-        // Apply any OSC 52 clipboard write -- unlike the title, this isn't
-        // gated to the focused pane: a background pane's tmux/script
-        // finishing a copy is a legitimate, common case
-        if (pane.terminal.has_pending_clipboard_text()) {
-            std::string text = pane.terminal.take_clipboard_text();
-            SDL_SetClipboardText(text.c_str());
-        }
+        drain_pane_output(tw, pane_ptr, SIZE_MAX);
 
         // Process retro animated typing ticks
         if (tw->animated_typing && !pane.animation_buffer.empty()) {

@@ -98,6 +98,7 @@ const std::string& integration_dir() {
 
 bool PTYBridge::shell_integration_enabled_ = true;
 PTYBridge::ShellSettings PTYBridge::shell_settings_;
+void (*PTYBridge::output_notify_)() = nullptr;
 
 std::string PTYBridge::find_program(const std::string& command) {
     if (command.empty()) return std::string();
@@ -369,8 +370,11 @@ void PTYBridge::read_loop() {
             if (pfd.revents & (POLLIN | POLLHUP | POLLERR)) {
                 ssize_t bytes_read = ::read(master_fd_, buffer.data(), buffer.size());
                 if (bytes_read > 0) {
-                    std::lock_guard<std::mutex> lock(buffer_mutex_);
-                    read_buffer_.insert(read_buffer_.end(), buffer.data(), buffer.data() + bytes_read);
+                    {
+                        std::lock_guard<std::mutex> lock(buffer_mutex_);
+                        read_buffer_.insert(read_buffer_.end(), buffer.data(), buffer.data() + bytes_read);
+                    }
+                    if (output_notify_) output_notify_();
                 } else {
                     // EOF or descriptor closed
                     running_ = false;
