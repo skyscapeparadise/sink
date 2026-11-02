@@ -93,7 +93,8 @@ static constexpr Uint64 kParseBudgetNs = sync_output::kFrameParseBudgetNs;
 // closes (see sync_output.hpp).
 static size_t parse_within_budget(Pane& pane, const char* data, size_t size) {
     const Uint64 start = SDL_GetTicksNS();
-    return sync_output::parse(pane.parser, pane.terminal, pane.sync_hold, data, size, start / 1000000ull,
+    auto g = pane.lock();
+    return sync_output::parse(g.parser(), g.grid(), pane.sync_hold, data, size, start / 1000000ull,
                               [start]() { return SDL_GetTicksNS() - start >= kParseBudgetNs; });
 }
 
@@ -869,10 +870,10 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     tw->vibrancy_enabled = vibrancy_enabled;
     tw->crt_mode_enabled = crt_mode_enabled;
     tw->hdr_console_enabled = hdr_console_enabled;
-    tw->fpane().terminal.set_enable_ligatures(ligatures_enabled);
-    tw->fpane().terminal.set_max_scrollback(static_cast<size_t>(scrollback_lines));
+    tw->fpane().lock()->set_enable_ligatures(ligatures_enabled);
+    tw->fpane().lock()->set_max_scrollback(static_cast<size_t>(scrollback_lines));
     tw->color_scheme = preset_override ? scheme_for(*preset_override) : state->color_scheme;
-    tw->fpane().terminal.set_color_scheme(tw->color_scheme);
+    tw->fpane().lock()->set_color_scheme(tw->color_scheme);
 
     // Create Renderer. "gpu" backend (not the default per-platform driver)
     // so the video/hue-shift/CRT effects can plug custom shaders into this
@@ -949,8 +950,8 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     int cols = std::max(40, static_cast<int>((win_w - 2 * state->padding) / tw->cell_w));
     int rows = std::max(10, static_cast<int>((win_h - 2 * state->padding - top_offset_pts) / tw->cell_h));
 
-    tw->fpane().terminal.resize(cols, rows);
-    tw->fpane().terminal.clear_screen();
+    tw->fpane().lock()->resize(cols, rows);
+    tw->fpane().lock()->clear_screen();
 
     // A new window or tab starts where the focused pane of the window it was
     // opened from is. Empty when there is no such pane -- the first window --
@@ -958,13 +959,13 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
     // inherits sink's own and the existing home-directory fallback applies.
     std::string inherit_cwd;
     if (state->active_window) {
-        inherit_cwd = state->active_window->fpane().terminal.get_working_directory();
+        inherit_cwd = state->active_window->fpane().lock()->get_working_directory();
     }
 
     // Start Pseudo-Terminal process connection
     const int cell_px_w = static_cast<int>(std::lround(tw->cell_w * tw->display_scale));
     const int cell_px_h = static_cast<int>(std::lround(tw->cell_h * tw->display_scale));
-    tw->fpane().terminal.set_cell_pixel_size(cell_px_w, cell_px_h);
+    tw->fpane().lock()->set_cell_pixel_size(cell_px_w, cell_px_h);
     if (!tw->fpane().pty.spawn(cols, rows, inherit_cwd, cell_px_w, cell_px_h)) {
         std::cerr << "Failed to initialize PTY shell context" << std::endl;
     }
@@ -1010,7 +1011,7 @@ static TerminalWindow* create_terminal_window(AppState* state, SDL_Window* paren
 static void destroy_terminal_window(TerminalWindow* tw) {
     if (!tw) return;
     // Any running sinkdemo/sinksing thread still holds tw and touches
-    // tw->fpane().terminal/tw->fpane().pty/tw->fpane().grid_mutex on its own schedule. Signal it to
+    // a pane's grid (under its lock) and pty on its own schedule. Signal it to
     // unwind and join before freeing tw, otherwise it dereferences freed
     // memory on its next iteration.
     SinkDemo::request_abort(tw);
@@ -1031,7 +1032,7 @@ static void destroy_terminal_window(TerminalWindow* tw) {
     // part of `delete tw`, which is after the renderer is gone -- they would
     // otherwise be destroying textures against a dead device.
     for (Pane* pane : all_panes(tw)) {
-        pane->terminal.images().release_textures();
+        pane->lock()->images().release_textures();
     }
     if (tw->renderer) {
         SDL_DestroyRenderer(tw->renderer);
@@ -1065,9 +1066,9 @@ static void layout_pane_node(AppState* state, TerminalWindow* tw, PaneNode* node
         // want real pixels, so scale back up.
         int cell_px_w = static_cast<int>(std::lround(tw->cell_w * tw->display_scale));
         int cell_px_h = static_cast<int>(std::lround(tw->cell_h * tw->display_scale));
-        const bool cell_size_changed = cell_px_w != pane->terminal.get_cell_pixel_width() ||
-                                       cell_px_h != pane->terminal.get_cell_pixel_height();
-        pane->terminal.set_cell_pixel_size(cell_px_w, cell_px_h);
+        const bool cell_size_changed = cell_px_w != pane->lock()->get_cell_pixel_width() ||
+                                       cell_px_h != pane->lock()->get_cell_pixel_height();
+        pane->lock()->set_cell_pixel_size(cell_px_w, cell_px_h);
 
         // How many cells the display this window is on would hold, for the
         // XTWINOPS screen-size report. Display bounds come back in the same
@@ -1078,12 +1079,12 @@ static void layout_pane_node(AppState* state, TerminalWindow* tw, PaneNode* node
         SDL_Rect display_bounds;
         if (tw->cell_w > 0.0f && tw->cell_h > 0.0f &&
             SDL_GetDisplayBounds(SDL_GetDisplayForWindow(tw->window), &display_bounds)) {
-            pane->terminal.set_screen_size_chars(
+            pane->lock()->set_screen_size_chars(
                 static_cast<int>(display_bounds.w / tw->cell_w),
                 static_cast<int>(display_bounds.h / tw->cell_h));
         }
-        if (cols != pane->terminal.get_cols() || rows != pane->terminal.get_rows()) {
-            std::lock_guard<std::mutex> lock(pane->grid_mutex);
+        if (cols != pane->lock()->get_cols() || rows != pane->lock()->get_rows()) {
+            auto grid_lock = pane->lock();
             // While the shell is editing a line, it is told about the new
             // size only once the size stops changing. It redraws by climbing
             // the height its line had at the size it last drew, which the
@@ -1095,8 +1096,8 @@ static void layout_pane_node(AppState* state, TerminalWindow* tw, PaneNode* node
             // output above and clears it. Full-screen apps and running
             // commands repaint from scratch and get every size at once.
             int start_row = 0, start_col = 0;
-            bool at_command_line = pane->terminal.input_start(start_row, start_col);
-            pane->terminal.resize(cols, rows);
+            bool at_command_line = pane->lock()->input_start(start_row, start_col);
+            pane->lock()->resize(cols, rows);
             if (at_command_line) {
                 pane->pty_resize_pending = true;
                 pane->pending_pty_cols = cols;
@@ -1183,24 +1184,24 @@ static void split_focused_pane(AppState* state, TerminalWindow* tw, bool vertica
     // Start the new shell where the one being split is, if that shell
     // reported it (OSC 7). Splitting a pane to run something alongside what
     // is already there is the case this exists for.
-    std::string inherit_cwd = leaf->pane->terminal.get_working_directory();
+    std::string inherit_cwd = leaf->pane->lock()->get_working_directory();
 
     auto new_pane = std::make_unique<Pane>();
-    new_pane->terminal.set_enable_ligatures(state->ligatures_enabled);
-    new_pane->terminal.set_max_scrollback(static_cast<size_t>(state->scrollback_lines));
-    new_pane->terminal.set_color_scheme(tw->color_scheme);
+    new_pane->lock()->set_enable_ligatures(state->ligatures_enabled);
+    new_pane->lock()->set_max_scrollback(static_cast<size_t>(state->scrollback_lines));
+    new_pane->lock()->set_color_scheme(tw->color_scheme);
 
     // Seed the new grid/PTY at roughly half the old pane; layout_panes
     // recomputes the exact geometry right after
-    int cols = std::max(20, vertical ? leaf->pane->terminal.get_cols() / 2
-                                     : leaf->pane->terminal.get_cols());
-    int rows = std::max(5, vertical ? leaf->pane->terminal.get_rows()
-                                    : leaf->pane->terminal.get_rows() / 2);
-    new_pane->terminal.resize(cols, rows);
-    new_pane->terminal.clear_screen();
+    int cols = std::max(20, vertical ? leaf->pane->lock()->get_cols() / 2
+                                     : leaf->pane->lock()->get_cols());
+    int rows = std::max(5, vertical ? leaf->pane->lock()->get_rows()
+                                    : leaf->pane->lock()->get_rows() / 2);
+    new_pane->lock()->resize(cols, rows);
+    new_pane->lock()->clear_screen();
     const int cell_px_w = static_cast<int>(std::lround(tw->cell_w * tw->display_scale));
     const int cell_px_h = static_cast<int>(std::lround(tw->cell_h * tw->display_scale));
-    new_pane->terminal.set_cell_pixel_size(cell_px_w, cell_px_h);
+    new_pane->lock()->set_cell_pixel_size(cell_px_w, cell_px_h);
     if (!new_pane->pty.spawn(cols, rows, inherit_cwd, cell_px_w, cell_px_h)) {
         std::cerr << "split: failed to spawn PTY for new pane" << std::endl;
         return;
@@ -1355,12 +1356,12 @@ static void clear_screen_and_scrollback(TerminalWindow* tw) {
     Pane& pane = tw->fpane();
     bool at_prompt = false;
     {
-        std::lock_guard<std::mutex> lock(pane.grid_mutex);
-        if (pane.terminal.is_alt_screen_active()) return;
+        auto grid_lock = pane.lock();
+        if (pane.lock()->is_alt_screen_active()) return;
         int row = 0, col = 0;
-        at_prompt = pane.terminal.input_start(row, col);
-        pane.terminal.clear_screen();
-        pane.terminal.clear_scrollback();
+        at_prompt = pane.lock()->input_start(row, col);
+        pane.lock()->clear_screen();
+        pane.lock()->clear_scrollback();
     }
     if (at_prompt) {
         const char form_feed = '\x0c';
@@ -1429,7 +1430,7 @@ static bool recreate_renderer_for_hdr_console(AppState* state, TerminalWindow* t
     // pixels stay, so every image re-uploads against the new renderer the
     // next time it is drawn and nothing on screen is lost to the toggle.
     for (Pane* pane : all_panes(tw)) {
-        pane->terminal.images().release_textures();
+        pane->lock()->images().release_textures();
     }
 
     if (tw->renderer) {
@@ -1536,9 +1537,9 @@ static void apply_preset_to_window(AppState* state, TerminalWindow* tw, const co
     tw->vibrancy_enabled = p.title_bar;
     tw->crt_mode_enabled = p.crt;
     for (Pane* pane : all_panes(tw)) {
-        pane->terminal.set_enable_ligatures(p.ligatures);
-        pane->terminal.set_max_scrollback(static_cast<size_t>(state->scrollback_lines));
-        pane->terminal.set_color_scheme(tw->color_scheme);
+        pane->lock()->set_enable_ligatures(p.ligatures);
+        pane->lock()->set_max_scrollback(static_cast<size_t>(state->scrollback_lines));
+        pane->lock()->set_color_scheme(tw->color_scheme);
     }
     if (tw->hdr_console_enabled != p.hdr_text) {
         tw->hdr_console_enabled = p.hdr_text;
@@ -1576,7 +1577,7 @@ static void apply_look_from_config(AppState* state) {
     state->color_scheme = scheme_for(p);
     for (auto* tw : state->windows) {
         tw->color_scheme = state->color_scheme;
-        for (Pane* pane : all_panes(tw)) pane->terminal.set_color_scheme(tw->color_scheme);
+        for (Pane* pane : all_panes(tw)) pane->lock()->set_color_scheme(tw->color_scheme);
         apply_background(state, tw, p);
     }
     push_look_to_settings(state);
@@ -1862,8 +1863,8 @@ static void open_settings_window(AppState* state, TerminalWindow* tw) {
 
 static void toggle_search(TerminalWindow* tw) {
     tw->search_drawer_open = !tw->search_drawer_open;
-    tw->fpane().terminal.set_search_active(tw->search_drawer_open);
-    if (tw->search_drawer_open) tw->fpane().terminal.set_search_query(tw->search_input_text);
+    tw->fpane().lock()->set_search_active(tw->search_drawer_open);
+    if (tw->search_drawer_open) tw->fpane().lock()->set_search_query(tw->search_input_text);
 }
 
 // Runs what a key is bound to: text goes to the shell (to every pane while
@@ -1879,7 +1880,7 @@ static void run_binding(AppState* state, TerminalWindow* tw, const keybindings::
             targets.push_back(&tw->fpane());
         }
         for (Pane* p : targets) {
-            p->terminal.note_user_edit();
+            p->lock()->note_user_edit();
             p->pty.write_to_pty(b.text.data(), b.text.size());
         }
         return;
@@ -1903,9 +1904,9 @@ static void run_binding(AppState* state, TerminalWindow* tw, const keybindings::
     else if (a == "font_smaller") set_font_size_requested(-1);
     else if (a == "font_default") set_font_size_requested(2);
     else if (a == "previous_prompt" || a == "next_prompt") {
-        std::lock_guard<std::mutex> lock(tw->fpane().grid_mutex);
-        if (a == "previous_prompt") tw->fpane().terminal.scroll_to_prev_prompt();
-        else tw->fpane().terminal.scroll_to_next_prompt();
+        auto grid_lock = tw->fpane().lock();
+        if (a == "previous_prompt") tw->fpane().lock()->scroll_to_prev_prompt();
+        else tw->fpane().lock()->scroll_to_next_prompt();
     }
     else if (a == "split_right") set_split_pane_right_requested(true);
     else if (a == "split_down") set_split_pane_down_requested(true);
@@ -2000,29 +2001,36 @@ static bool is_modifier_key(SDL_Keycode sym) {
 
 static bool delete_selection_in_prompt(TerminalWindow* tw) {
     if (!tw) return false;
+    // The payload is worked out from the selection and the line, and the
+    // selection cleared, under one hold of the lock, so the two agree. The
+    // write happens outside it: it can block if the shell isn't reading.
     std::string payload;
-    if (!prompt_edit::delete_selection_payload(tw->fpane().terminal, payload)) {
-        return false;
+    {
+        auto g = tw->fpane().lock();
+        if (!prompt_edit::delete_selection_payload(g.grid(), payload)) return false;
+        if (!payload.empty()) g->note_user_edit();
+        g->clear_selection();
     }
-    if (!payload.empty()) {
-        tw->fpane().pty.write_to_pty(payload.data(), payload.size());
-        tw->fpane().terminal.note_user_edit();
-    }
-    tw->fpane().terminal.clear_selection();
+    if (!payload.empty()) tw->fpane().pty.write_to_pty(payload.data(), payload.size());
     return true;
 }
 
 static void set_input_broadcasting(AppState* state, bool on);
 
 static void perform_cut_action(TerminalWindow* tw) {
-    if (!tw || !tw->fpane().terminal.has_selection()) return;
-    std::string selected_text = tw->fpane().terminal.get_selected_text();
+    if (!tw) return;
+    std::string selected_text;
+    {
+        auto g = tw->fpane().lock();
+        if (!g->has_selection()) return;
+        selected_text = g->get_selected_text();
+    }
     if (!selected_text.empty()) {
         SDL_SetClipboardText(selected_text.c_str());
     }
     bool handled = delete_selection_in_prompt(tw);
     if (!handled) {
-        tw->fpane().terminal.clear_selection();
+        tw->fpane().lock()->clear_selection();
     }
 }
 
@@ -2091,7 +2099,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             // Sent per pane, since each runs its own program and enables the
             // mode independently.
             for (Pane* pane : all_panes(tw)) {
-                if (pane && pane->terminal.is_focus_reporting()) {
+                if (pane && pane->lock()->is_focus_reporting()) {
                     const char* seq = gained ? "\x1b[I" : "\x1b[O";
                     pane->pty.write_to_pty(seq, 3);
                 }
@@ -2181,7 +2189,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
     // bypasses reporting so native selection/clipboard stay reachable, the
     // same escape hatch xterm and every GPU terminal provide.
     {
-        int mouse_mode = target_tw->fpane().terminal.get_mouse_mode();
+        int mouse_mode = target_tw->fpane().lock()->get_mouse_mode();
         // Wheel events are handled by the unified hovered-pane wheel block
         // below, not here
         bool is_mouse_event = event->type == SDL_EVENT_MOUSE_BUTTON_DOWN ||
@@ -2195,14 +2203,14 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             auto cell_of = [&](float mx, float my, int& col, int& row) {
                 const SDL_FRect& pr = target_tw->fpane().rect;
                 col = std::clamp(static_cast<int>((mx - pr.x - state->padding) / target_tw->cell_w),
-                                 0, target_tw->fpane().terminal.get_cols() - 1);
+                                 0, target_tw->fpane().lock()->get_cols() - 1);
                 row = std::clamp(static_cast<int>((my - pr.y - state->padding) / target_tw->cell_h),
-                                 0, target_tw->fpane().terminal.get_rows() - 1);
+                                 0, target_tw->fpane().lock()->get_rows() - 1);
             };
             auto send_report = [&](int button_code, int col, int row, bool release) {
                 char buf[40];
                 int len;
-                if (target_tw->fpane().terminal.is_mouse_sgr()) {
+                if (target_tw->fpane().lock()->is_mouse_sgr()) {
                     len = std::snprintf(buf, sizeof(buf), "\x1b[<%d;%d;%d%c",
                                         button_code, col + 1, row + 1, release ? 'm' : 'M');
                 } else {
@@ -2286,7 +2294,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         float wy = -event->wheel.y;
         if (event->wheel.direction == SDL_MOUSEWHEEL_FLIPPED) wy = -wy;
 
-        int hp_mouse_mode = hp.terminal.get_mouse_mode();
+        int hp_mouse_mode = hp.lock()->get_mouse_mode();
         bool shift_bypass = (SDL_GetModState() & SDL_KMOD_SHIFT) != 0;
 
         if (hp_mouse_mode != 0 && hp_mouse_mode != 9 && !shift_bypass) {
@@ -2296,12 +2304,12 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 int mod_bits = ((mods & SDL_KMOD_ALT) ? 8 : 0) | ((mods & SDL_KMOD_CTRL) ? 16 : 0);
                 int button_code = (wy > 0.0f ? 64 : 65) + mod_bits;
                 int col = std::clamp(static_cast<int>((event->wheel.mouse_x - hp.rect.x - state->padding) / target_tw->cell_w),
-                                     0, hp.terminal.get_cols() - 1);
+                                     0, hp.lock()->get_cols() - 1);
                 int row = std::clamp(static_cast<int>((event->wheel.mouse_y - hp.rect.y - state->padding) / target_tw->cell_h),
-                                     0, hp.terminal.get_rows() - 1);
+                                     0, hp.lock()->get_rows() - 1);
                 char buf[40];
                 int len;
-                if (hp.terminal.is_mouse_sgr()) {
+                if (hp.lock()->is_mouse_sgr()) {
                     len = std::snprintf(buf, sizeof(buf), "\x1b[<%d;%d;%dM", button_code, col + 1, row + 1);
                 } else {
                     len = std::snprintf(buf, sizeof(buf), "\x1b[M%c%c%c",
@@ -2314,14 +2322,14 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             return SDL_APP_CONTINUE;
         }
 
-        if (hp.terminal.is_alt_screen_active() && hp_mouse_mode == 0 &&
-            hp.terminal.is_alternate_scroll()) {
+        if (hp.lock()->is_alt_screen_active() && hp_mouse_mode == 0 &&
+            hp.lock()->is_alternate_scroll()) {
             // Pager/editor without mouse mode: wheel becomes arrow keys
             hp.alt_scroll_accum += wy * 3.0f; // ~3 lines per wheel notch
             int lines = static_cast<int>(hp.alt_scroll_accum);
             if (lines != 0) {
                 hp.alt_scroll_accum -= static_cast<float>(lines);
-                bool app_keys = hp.terminal.is_app_cursor_keys();
+                bool app_keys = hp.lock()->is_app_cursor_keys();
                 const char* seq = (lines > 0) ? (app_keys ? "\x1bOA" : "\x1b[A")
                                               : (app_keys ? "\x1bOB" : "\x1b[B");
                 for (int n = std::abs(lines); n > 0; --n) {
@@ -2359,7 +2367,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             // so land the view on it before doing so -- otherwise a click that
             // interrupts a fling selects the row the scroll was heading for
             // rather than the one under the pointer.
-            target_tw->fpane().terminal.snap_scroll_view();
+            target_tw->fpane().lock()->snap_scroll_view();
             if (event->button.button == SDL_BUTTON_LEFT) {
                 float mx = event->button.x;
                 float my = event->button.y;
@@ -2390,9 +2398,9 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 // iTerm2, and Kitty all use so a plain click still just
                 // places the cursor/selects.
                 if ((SDL_GetModState() & SDL_KMOD_GUI) && event->button.clicks == 1) {
-                    uint32_t link_id = target_tw->fpane().terminal.get_cell_at(col, row).hyperlink_id;
+                    uint32_t link_id = target_tw->fpane().lock()->get_cell_at(col, row).hyperlink_id;
                     if (link_id != 0) {
-                        const std::string& uri = target_tw->fpane().terminal.get_hyperlink_uri(link_id);
+                        std::string uri = target_tw->fpane().lock()->get_hyperlink_uri(link_id);  // a copy: the grid owns the original
 #if defined(__APPLE__)
                         open_url_if_safe(uri.c_str());
 #endif
@@ -2404,18 +2412,26 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 if (clicks == 1) {
                     target_tw->fpane().mouse_down_col = col;
                     target_tw->fpane().mouse_down_row = row;
-                    target_tw->fpane().terminal.start_selection(col, row);
+                    target_tw->fpane().lock()->start_selection(col, row);
                 } else if (clicks == 2) {
                     // Double click: select word
-                    target_tw->fpane().terminal.select_word_at(col, row);
-                    std::string selected_text = target_tw->fpane().terminal.get_selected_text();
+                    std::string selected_text;
+                    {
+                        auto g = target_tw->fpane().lock();
+                        g->select_word_at(col, row);
+                        selected_text = g->get_selected_text();
+                    }
                     if (!selected_text.empty()) {
                         SDL_SetClipboardText(selected_text.c_str());
                     }
                 } else if (clicks == 3) {
                     // Triple click: select line
-                    target_tw->fpane().terminal.select_line_at(row);
-                    std::string selected_text = target_tw->fpane().terminal.get_selected_text();
+                    std::string selected_text;
+                    {
+                        auto g = target_tw->fpane().lock();
+                        g->select_line_at(row);
+                        selected_text = g->get_selected_text();
+                    }
                     if (!selected_text.empty()) {
                         SDL_SetClipboardText(selected_text.c_str());
                     }
@@ -2431,8 +2447,9 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             int col = static_cast<int>((mx - target_tw->fpane().rect.x - state->padding) / target_tw->cell_w);
             int row = static_cast<int>((my - target_tw->fpane().rect.y - state->padding) / target_tw->cell_h);
             
-            if (target_tw->fpane().terminal.is_selecting()) {
-                target_tw->fpane().terminal.update_selection(col, row);
+            {
+                auto g = target_tw->fpane().lock();
+                if (g->is_selecting()) g->update_selection(col, row);
             }
         }
     } else if (event->type == SDL_EVENT_MOUSE_BUTTON_UP) {
@@ -2448,15 +2465,20 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 int clicks = event->button.clicks;
                 if (clicks == 1 && col == target_tw->fpane().mouse_down_col && row == target_tw->fpane().mouse_down_row) {
                     // Snapping cursor on mouse release
-                    std::string move_payload =
-                        prompt_edit::click_payload(target_tw->fpane().terminal, row, col);
+                    std::string move_payload;
+                    {
+                        auto g = target_tw->fpane().lock();
+                        move_payload = prompt_edit::click_payload(g.grid(), row, col);
+                        if (!move_payload.empty()) {
+                            g->note_user_edit();
+                            g->clear_selection();
+                        }
+                    }
                     if (!move_payload.empty()) {
                         target_tw->fpane().pty.write_to_pty(move_payload.data(), move_payload.size());
-                        target_tw->fpane().terminal.note_user_edit();
-                        target_tw->fpane().terminal.clear_selection();
                     }
                 }
-                target_tw->fpane().terminal.end_selection();
+                target_tw->fpane().lock()->end_selection();
             }
         }
     } else if (event->type == SDL_EVENT_TEXT_INPUT) {
@@ -2471,20 +2493,20 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         }
         if (target_tw && target_tw->search_drawer_open) {
             target_tw->search_input_text += event->text.text;
-            target_tw->fpane().terminal.set_search_query(target_tw->search_input_text);
+            target_tw->fpane().lock()->set_search_query(target_tw->search_input_text);
             return SDL_APP_CONTINUE;
         }
         if (state->input_broadcasting) {
             for (auto* tw : state->windows) {
-                tw->fpane().terminal.clear_selection();
-                tw->fpane().terminal.reset_scroll();
+                tw->fpane().lock()->clear_selection();
+                tw->fpane().lock()->reset_scroll();
                 tw->fpane().scroll_velocity = 0.0f;
                 tw->fpane().scroll_accumulator = 0.0f;
                 tw->fpane().pty.write_to_pty(event->text.text, std::strlen(event->text.text));
             }
         } else {
-            target_tw->fpane().terminal.clear_selection();
-            target_tw->fpane().terminal.reset_scroll();
+            target_tw->fpane().lock()->clear_selection();
+            target_tw->fpane().lock()->reset_scroll();
             target_tw->fpane().scroll_velocity = 0.0f;
             target_tw->fpane().scroll_accumulator = 0.0f;
             target_tw->fpane().pty.write_to_pty(event->text.text, std::strlen(event->text.text));
@@ -2513,7 +2535,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         if (target_tw && target_tw->search_drawer_open) {
             if (sym == SDLK_ESCAPE) {
                 target_tw->search_drawer_open = false;
-                target_tw->fpane().terminal.set_search_active(false);
+                target_tw->fpane().lock()->set_search_active(false);
                 return SDL_APP_CONTINUE;
             } else if (sym == SDLK_BACKSPACE || sym == SDLK_DELETE) {
                 if (!target_tw->search_input_text.empty()) {
@@ -2529,21 +2551,21 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                            (static_cast<unsigned char>(q.back()) & 0xC0) == 0x80) {
                         q.pop_back();
                     }
-                    target_tw->fpane().terminal.set_search_query(q);
+                    target_tw->fpane().lock()->set_search_query(q);
                 }
                 return SDL_APP_CONTINUE;
             } else if (sym == SDLK_RETURN || sym == SDLK_KP_ENTER) {
                 if (mod & SDL_KMOD_SHIFT) {
-                    target_tw->fpane().terminal.search_prev();
+                    target_tw->fpane().lock()->search_prev();
                 } else {
-                    target_tw->fpane().terminal.search_next();
+                    target_tw->fpane().lock()->search_next();
                 }
                 return SDL_APP_CONTINUE;
             } else if (sym == SDLK_UP) {
-                target_tw->fpane().terminal.search_prev();
+                target_tw->fpane().lock()->search_prev();
                 return SDL_APP_CONTINUE;
             } else if (sym == SDLK_DOWN) {
-                target_tw->fpane().terminal.search_next();
+                target_tw->fpane().lock()->search_next();
                 return SDL_APP_CONTINUE;
             }
         }
@@ -2585,12 +2607,13 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             std::string submitted_line;
             if (!is_modifier_key(sym) && !(mod & SDL_KMOD_GUI)) {
                 bool ctrl = (mod & SDL_KMOD_CTRL) != 0;
+                auto g = tw->fpane().lock();  // the line looked at is the line submitted
                 bool submit = sym == SDLK_RETURN || sym == SDLK_KP_ENTER ||
                               (ctrl && sym == SDLK_C) ||
                               (ctrl && sym == SDLK_D &&
-                               prompt_edit::current_line_text(tw->fpane().terminal).empty());
-                if (submit) submitted_line = prompt_edit::submit_line(tw->fpane().terminal);
-                else        tw->fpane().terminal.note_user_edit();
+                               prompt_edit::current_line_text(g.grid()).empty());
+                if (submit) submitted_line = prompt_edit::submit_line(g.grid());
+                else        g->note_user_edit();
             }
             // Cmd+X only. Ctrl+X goes to the shell: it is how nano exits, and
             // the start of emacs-style chords like zsh and bash's ^X^E.
@@ -2599,15 +2622,15 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 return SDL_APP_CONTINUE;
             }
             if (!(mod & SDL_KMOD_GUI) && sym != SDLK_BACKSPACE && sym != SDLK_DELETE) {
-                tw->fpane().terminal.clear_selection();
+                tw->fpane().lock()->clear_selection();
             }
-            tw->fpane().terminal.reset_scroll();
+            tw->fpane().lock()->reset_scroll();
             tw->fpane().scroll_velocity = 0.0f;
             tw->fpane().scroll_accumulator = 0.0f;
 
             // Application keypad. Only reached when an app has actually asked
             // for it, so ordinary typing never comes near this.
-            if (tw->fpane().terminal.is_app_keypad()) {
+            if (tw->fpane().lock()->is_app_keypad()) {
                 if (char final_byte = app_keypad_final(sym)) {
                     char seq[3] = { '\x1b', 'O', final_byte };
                     tw->fpane().pty.write_to_pty(seq, 3);
@@ -2626,7 +2649,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             // may be running a full-screen app while another is at a shell.
             std::string kitty_seq;
             if (encode_kitty_key(sym, mod, event->key.repeat, true,
-                                 tw->fpane().terminal.kbd_flags(), kitty_seq)) {
+                                 tw->fpane().lock()->kbd_flags(), kitty_seq)) {
                 tw->fpane().pty.write_to_pty(kitty_seq.data(), kitty_seq.size());
                 continue;
             }
@@ -2639,7 +2662,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 if ((sym == SDLK_BACKSPACE || sym == SDLK_DELETE) && delete_selection_in_prompt(tw)) continue;
                 // Command keys aren't counted as edits above, since most send
                 // nothing; these do.
-                if (mod & SDL_KMOD_GUI) tw->fpane().terminal.note_user_edit();
+                if (mod & SDL_KMOD_GUI) tw->fpane().lock()->note_user_edit();
                 tw->fpane().pty.write_to_pty(seq, std::strlen(seq));
                 continue;
             }
@@ -2705,7 +2728,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             } else if (sym == SDLK_UP || sym == SDLK_DOWN ||
                        sym == SDLK_RIGHT || sym == SDLK_LEFT) {
                 // DECCKM: full-screen apps ask for the SS3 (ESC O x) form
-                bool app_keys = tw->fpane().terminal.is_app_cursor_keys();
+                bool app_keys = tw->fpane().lock()->is_app_cursor_keys();
                 char final_byte = (sym == SDLK_UP)    ? 'A'
                                 : (sym == SDLK_DOWN)  ? 'B'
                                 : (sym == SDLK_RIGHT) ? 'C' : 'D';
@@ -2738,7 +2761,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
         for (auto* tw : release_targets) {
             std::string kitty_seq;
             if (encode_kitty_key(event->key.key, event->key.mod, false, false,
-                                 tw->fpane().terminal.kbd_flags(), kitty_seq)) {
+                                 tw->fpane().lock()->kbd_flags(), kitty_seq)) {
                 tw->fpane().pty.write_to_pty(kitty_seq.data(), kitty_seq.size());
             }
         }
@@ -2915,7 +2938,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                 tw->animated_typing = anim;
                 if (!tw->animated_typing) {
                     if (!tw->fpane().animation_buffer.empty()) {
-                        tw->fpane().parser.parse(tw->fpane().terminal, tw->fpane().animation_buffer.data(), tw->fpane().animation_buffer.size());
+                        tw->fpane().lock().parse(tw->fpane().animation_buffer.data(), tw->fpane().animation_buffer.size());
                         tw->fpane().animation_buffer.clear();
                     }
                 }
@@ -2977,7 +3000,7 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
             p.background = state->background;
             for (auto* tw : state->windows) {
                 tw->color_scheme = state->color_scheme;
-                for (Pane* pane : all_panes(tw)) pane->terminal.set_color_scheme(tw->color_scheme);
+                for (Pane* pane : all_panes(tw)) pane->lock()->set_color_scheme(tw->color_scheme);
                 apply_background(state, tw, p);  // the gradient and gel follow the theme
             }
             save_config(state);
@@ -3140,8 +3163,8 @@ static void render_search_drawer(TerminalWindow* tw, int width, int height) {
 
     // Label & Input text
     std::string text = "Find: " + tw->search_input_text + "_";
-    int count = tw->fpane().terminal.get_search_match_count();
-    int idx = tw->fpane().terminal.get_current_search_index();
+    int count = tw->fpane().lock()->get_search_match_count();
+    int idx = tw->fpane().lock()->get_current_search_index();
 
     std::string match_info;
     if (tw->search_input_text.empty()) {
@@ -3271,7 +3294,7 @@ static bool drain_pane_output(TerminalWindow* tw, Pane* pane_ptr, size_t max_byt
 
     bool demo_owns_pane = SinkDemo::is_demo_running(tw) && pane_ptr == &tw->demo_target();
     if (out_size > 0 && !demo_owns_pane) {
-        std::lock_guard<std::mutex> lock(pane.grid_mutex);
+        auto grid_lock = pane.lock();
         if (tw->animated_typing) {
             // A human at the keyboard produces isolated chunks (a keystroke's
             // echo) tens-to-hundreds of ms apart. A program streaming
@@ -3299,10 +3322,10 @@ static bool drain_pane_output(TerminalWindow* tw, Pane* pane_ptr, size_t max_byt
             // 3-byte query (ESC [ c) was parsed after this pass's replies
             // went out and answered a frame late.
             const bool has_escape = std::memchr(out_data, 0x1b, out_size) != nullptr;
-            if (out_size > 5 || fast_turnover || has_escape || pane.terminal.is_synchronized_output()) {
+            if (out_size > 5 || fast_turnover || has_escape || pane.lock()->is_synchronized_output()) {
                 // Large chunk / fast turnover (command or program output): bypass typing effect
                 if (!pane.animation_buffer.empty()) {
-                    pane.parser.parse(pane.terminal, pane.animation_buffer.data(), pane.animation_buffer.size());
+                    pane.lock().parse(pane.animation_buffer.data(), pane.animation_buffer.size());
                     pane.animation_buffer.clear();
                 }
                 consumed = parse_within_budget(pane, out_data, out_size);
@@ -3315,7 +3338,7 @@ static bool drain_pane_output(TerminalWindow* tw, Pane* pane_ptr, size_t max_byt
         } else {
             consumed = parse_within_budget(pane, out_data, out_size);
         }
-        pane.terminal.note_output_idle();
+        pane.lock()->note_output_idle();
     }
 
     // Retire what was handled. A pane a demo has taken over drops its
@@ -3330,8 +3353,8 @@ static bool drain_pane_output(TerminalWindow* tw, Pane* pane_ptr, size_t max_byt
 
     // Apply any OSC 0/2 title change from the data just parsed (only
     // the focused pane owns the window title)
-    if (pane_ptr == tw->focused && pane.terminal.has_pending_title()) {
-        std::string title = pane.terminal.take_window_title();
+    if (pane_ptr == tw->focused && pane.lock()->has_pending_title()) {
+        std::string title = pane.lock()->take_window_title();
         tw->shell_title = title.empty() ? "sink" : title;
     }
 
@@ -3339,16 +3362,16 @@ static bool drain_pane_output(TerminalWindow* tw, Pane* pane_ptr, size_t max_byt
     // capability answers). Not gated to the focused pane either, and for
     // a stronger reason than the clipboard: the program that asked is
     // most likely blocked waiting for this, focused or not.
-    if (pane.terminal.has_pending_reply()) {
-        std::string reply = pane.terminal.take_pending_reply();
+    if (pane.lock()->has_pending_reply()) {
+        std::string reply = pane.lock()->take_pending_reply();
         pane.pty.write_to_pty(reply.data(), reply.size());
     }
 
     // Apply any OSC 52 clipboard write -- unlike the title, this isn't
     // gated to the focused pane: a background pane's tmux/script
     // finishing a copy is a legitimate, common case
-    if (pane.terminal.has_pending_clipboard_text()) {
-        std::string text = pane.terminal.take_clipboard_text();
+    if (pane.lock()->has_pending_clipboard_text()) {
+        std::string text = pane.lock()->take_clipboard_text();
         SDL_SetClipboardText(text.c_str());
     }
     return true;
@@ -3405,7 +3428,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             perform_cut_action(tw);
         }
         if (get_copy_requested()) {
-            std::string selected_text = tw->fpane().terminal.get_selected_text();
+            std::string selected_text = tw->fpane().lock()->get_selected_text();
             if (!selected_text.empty()) {
                 SDL_SetClipboardText(selected_text.c_str());
             }
@@ -3414,8 +3437,8 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             if (SDL_HasClipboardText()) {
                 char* text = SDL_GetClipboardText();
                 if (text) {
-                    tw->fpane().terminal.note_user_edit();
-                    if (tw->fpane().terminal.is_bracketed_paste_active()) {
+                    tw->fpane().lock()->note_user_edit();
+                    if (tw->fpane().lock()->is_bracketed_paste_active()) {
                         // Wrap in bracketed-paste markers so the shell treats the
                         // content as literal text instead of executing embedded
                         // newlines. The payload has its own markers stripped first,
@@ -3433,12 +3456,12 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             }
         }
         if (get_select_all_requested()) {
-            tw->fpane().terminal.select_all();
+            tw->fpane().lock()->select_all();
         }
         if (get_print_requested()) {
-            std::string print_text = tw->fpane().terminal.get_selected_text();
+            std::string print_text = tw->fpane().lock()->get_selected_text();
             if (print_text.empty()) {
-                print_text = tw->fpane().terminal.get_all_text();
+                print_text = tw->fpane().lock()->get_all_text();
             }
             trigger_print_dialog(print_text.c_str());
         }
@@ -3609,7 +3632,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             state->ligatures_enabled = lig;
             for (auto* tw : state->windows) {
                 for (Pane* pane : all_panes(tw)) {
-                    pane->terminal.set_enable_ligatures(lig);
+                    pane->lock()->set_enable_ligatures(lig);
                 }
             }
             save_config(state);
@@ -3683,7 +3706,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         }
 
         for (Pane* pane : all_panes(tw)) {
-            pane->terminal.update_timers(dt);
+            pane->lock()->update_timers(dt);
 
             // A size held back during a resize, now that it has settled.
             if (pane->pty_resize_pending &&
@@ -3697,7 +3720,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             // parked where the shell will look for it rather than on the
             // text (TerminalGrid::resize). Hidden until the redraw lands,
             // rather than seen hopping about during the drag.
-            pane->terminal.set_cursor_suppressed(
+            pane->lock()->set_cursor_suppressed(
                 pane->pty_resize_pending ||
                 (pane->pty_resize_sent_at && current_tick - pane->pty_resize_sent_at < kPtyRedrawGraceMs));
 
@@ -3722,15 +3745,15 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 }
 
                 if (lines != 0) {
-                    int current_offset = pane->terminal.get_scroll_offset();
-                    int max_offset = static_cast<int>(pane->terminal.get_scrollback_size());
+                    int current_offset = pane->lock()->get_scroll_offset();
+                    int max_offset = static_cast<int>(pane->lock()->get_scrollback_size());
 
                     if ((lines > 0 && current_offset >= max_offset) || (lines < 0 && current_offset <= 0)) {
                         pane->scroll_velocity = 0.0f;
                         pane->scroll_accumulator = 0.0f;
                     } else {
-                        pane->terminal.scroll_view(lines);
-                        int new_offset = pane->terminal.get_scroll_offset();
+                        pane->lock()->scroll_view(lines);
+                        int new_offset = pane->lock()->get_scroll_offset();
                         if (new_offset == 0 || new_offset == max_offset) {
                             pane->scroll_velocity = 0.0f;
                             pane->scroll_accumulator = 0.0f;
@@ -3783,7 +3806,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
 
         // Process retro animated typing ticks
         if (tw->animated_typing && !pane.animation_buffer.empty()) {
-            std::lock_guard<std::mutex> lock(pane.grid_mutex);
+            auto grid_lock = pane.lock();
             size_t total_pending = pane.animation_buffer.size();
             size_t chars_to_process = 0;
             
@@ -3795,11 +3818,11 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
                 chars_to_process = std::min(total_pending, (size_t)4);
             }
             
-            pane.parser.parse(pane.terminal, pane.animation_buffer.data(), chars_to_process);
+            pane.lock().parse(pane.animation_buffer.data(), chars_to_process);
             pane.animation_buffer.erase(pane.animation_buffer.begin(), pane.animation_buffer.begin() + chars_to_process);
             
             if (pane.animation_buffer.empty()) {
-                pane.terminal.note_output_idle();
+                pane.lock()->note_output_idle();
             }
         }
         } // end per-pane read/parse loop
@@ -3918,8 +3941,8 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
         for (Pane* pane_ptr : all_panes(tw)) {
             if (!pane_visible(tw, pane_ptr)) continue;
             Pane& pane = *pane_ptr;
-            std::lock_guard<std::mutex> lock(pane.grid_mutex);
-            pane.terminal.set_enable_ligatures(state->ligatures_enabled);
+            auto grid_lock = pane.lock();
+            pane.lock()->set_enable_ligatures(state->ligatures_enabled);
             float start_x = (pane.rect.x + state->padding) * tw->display_scale;
             float start_y = (pane.rect.y + state->padding) * tw->display_scale;
 
@@ -3936,7 +3959,7 @@ SDL_AppResult SDL_AppIterate(void* appstate) {
             if (tw->hdr_console_enabled) {
                 SDL_SetRenderColorScale(tw->renderer, kHdrConsoleTextBoost);
             }
-            pane.terminal.render(tw->renderer, tw->font_manager, start_x, start_y, tw->display_scale, dt, tw->animated_typing);
+            pane.lock()->render(tw->renderer, tw->font_manager, start_x, start_y, tw->display_scale, dt, tw->animated_typing);
             if (tw->hdr_console_enabled) {
                 SDL_SetRenderColorScale(tw->renderer, 1.0f);
             }

@@ -171,9 +171,30 @@ in each terminal.
 
 **Done when:**
 - it builds with the grid private
-- an interleaved `ab` against phase 0 shows no detectable difference (the
-  locks are uncontended, so each costs nanoseconds)
-- fingerprints and tests are unchanged and TSan is clean
+- termbench in the app shows no change against phase 0. The benchmark
+  binaries drive `TerminalGrid` directly and don't compile `main.cpp`, so an
+  `ab` of this phase would compare identical code; termbench is the only
+  measurement that runs it. The locks are uncontended, at tens of
+  nanoseconds each, and none is in a per-byte path.
+- tests are unchanged and TSan is clean
+
+**Progress, 2026-11-02:** done, pending your termbench run and a feel check.
+- `Pane`'s grid and parser are private, reached through `pane.lock()`,
+  which guards a `std::recursive_mutex`, so the compiler found every access:
+  about 150 across `main.cpp` and `sink_demo.cpp`, which fixes sinkdemo's
+  race.
+- Single calls became `pane.lock()->f()`. Read-then-act sequences hold one
+  guard:
+  - deleting a selection in the prompt
+  - cut
+  - click-to-move-the-cursor
+  - the Return/Ctrl-D submit decision
+  - double- and triple-click selection
+  - drag-selection
+- One reference into the grid outlived its guard (a hyperlink's URI) and
+  is now a copy.
+- pty writes stay outside the guards.
+- All 11 suites pass, under TSan too, with zero reports.
 
 ### Phase 2: lifetimes (small, bug-prone)
 

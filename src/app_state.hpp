@@ -32,10 +32,43 @@
 // pacing state that used to live directly on TerminalWindow. A window shows
 // one or more panes arranged by a split tree.
 struct Pane {
-    TerminalGrid terminal;
+    // The grid and its parser are reached only through lock(), which holds
+    // the pane's lock for as long as the returned guard lives:
+    //
+    //     pane.lock()->get_cols();             // one call
+    //     auto g = pane.lock();                // several, consistently
+    //     g->set_search_query(q); int n = g->get_search_match_count();
+    //     g.parser().parse(g.grid(), data, n);
+    //
+    // Other threads touch a pane's grid -- sinkdemo's today, the pty reader's
+    // once parsing moves off the drawing thread (docs/threading-plan.md) --
+    // and the grid being private is what makes the compiler find every
+    // access that would otherwise race. The lock is recursive, so a function
+    // holding it can call one that takes it again.
+    //
+    // Don't let a reference or pointer into the grid (a string it returns,
+    // a Cell*) outlive the guard: copy what's needed while it's held.
+    class Locked {
+    public:
+        TerminalGrid* operator->() const { return &pane_->terminal_; }
+        TerminalGrid& grid() const { return pane_->terminal_; }
+        ANSIParser& parser() const { return pane_->parser_; }
+        void parse(const char* data, size_t size) const { pane_->parser_.parse(pane_->terminal_, data, size); }
+    private:
+        friend struct Pane;
+        explicit Locked(Pane& p) : pane_(&p), lock_(p.grid_mutex_) {}
+        Pane* pane_;
+        std::unique_lock<std::recursive_mutex> lock_;
+    };
+    Locked lock() { return Locked(*this); }
+
+private:
+    TerminalGrid terminal_;
+    ANSIParser parser_;
+    std::recursive_mutex grid_mutex_;
+
+public:
     PTYBridge pty;
-    ANSIParser parser;
-    std::mutex grid_mutex;
 
     // Reused every frame to receive PTYBridge::read_pending()'s bytes. Held
     // across frames rather than declared at the call site so its storage and

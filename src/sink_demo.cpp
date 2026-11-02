@@ -301,8 +301,8 @@ are as beautiful as we can be
 )";
 
 static void feed_to_terminal(TerminalWindow* tw, const std::string& data) {
-    std::lock_guard<std::mutex> lock(tw->demo_target().grid_mutex);
-    tw->demo_target().parser.parse(tw->demo_target().terminal, data.c_str(), data.length());
+    auto grid_lock = tw->demo_target().lock();
+    grid_lock.parse(data.c_str(), data.length());
 }
 
 std::string get_song_lyrics(const std::string& song_name) {
@@ -600,8 +600,8 @@ static bool play_swim_intro(TerminalWindow* tw, const SwimIntro& intro) {
     std::mt19937 rng(1337);
     std::uniform_real_distribution<double> unit(0.0, 1.0);
     auto dims = [&](int& cols, int& rows) {
-        cols = tw->demo_target().terminal.get_cols();
-        rows = tw->demo_target().terminal.get_rows();
+        cols = tw->demo_target().lock()->get_cols();
+        rows = tw->demo_target().lock()->get_rows();
         if (cols <= 0) cols = 80;
         if (rows <= 0) rows = 24;
     };
@@ -926,8 +926,8 @@ static void play_cpp_video_as_text(TerminalWindow* tw, const std::string& dat_pa
         return;
     }
 
-    int cols = tw->demo_target().terminal.get_cols();
-    int rows = tw->demo_target().terminal.get_rows();
+    int cols = tw->demo_target().lock()->get_cols();
+    int rows = tw->demo_target().lock()->get_rows();
     if (cols <= 0) cols = 80;
     if (rows <= 0) rows = 24;
 
@@ -1021,8 +1021,8 @@ static void play_cpp_video_as_text(TerminalWindow* tw, const std::string& dat_pa
             frame_count = 0;
         }
 
-        int cur_cols = tw->demo_target().terminal.get_cols();
-        int cur_rows = tw->demo_target().terminal.get_rows();
+        int cur_cols = tw->demo_target().lock()->get_cols();
+        int cur_rows = tw->demo_target().lock()->get_rows();
         if (cur_cols <= 0) cur_cols = 80;
         if (cur_rows <= 0) cur_rows = 24;
 
@@ -1168,9 +1168,9 @@ void run_demo(TerminalWindow* tw, AppState* state) {
     intro.prompt = prompt;
     intro.text = "swim with me";
     {
-        std::lock_guard<std::mutex> lock(tw->demo_target().grid_mutex);
-        intro.row = tw->demo_target().terminal.get_cursor_row();
-        intro.prompt_col = tw->demo_target().terminal.get_cursor_col();
+        auto grid_lock = tw->demo_target().lock();
+        intro.row = tw->demo_target().lock()->get_cursor_row();
+        intro.prompt_col = tw->demo_target().lock()->get_cursor_col();
     }
     feed_to_terminal(tw, prompt);
     sleep_interruptible(tw, 1000); // 1s pause
