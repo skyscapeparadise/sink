@@ -1,0 +1,940 @@
+{
+ "suite": 1,
+ "kind": "ab",
+ "separate_builds": true,
+ "a": "67c9d6d",
+ "b": "WORKTREE",
+ "build": {
+  "source_digest": "70c9ea393ee4a7e55dda45ab9552b04ee43e1fdddfa838cf8489a4966369514f",
+  "build_type": "Release",
+  "cxx_flags": "-O3 -DNDEBUG -std=gnu++20 -arch arm64 -mmacosx-version-min=26.0 -fstack-protector-strong -ftrivial-auto-var-init=zero -Wformat -Werror=format-security -falign-functions=64",
+  "compiler": "Apple clang version 21.0.0 (clang-2100.3.34.2)"
+ },
+ "rounds": 8,
+ "environment": {
+  "date": "2026-11-01T22:14:47-08:00",
+  "host_cpu": "Apple M1 Max",
+  "cores": 10,
+  "perf_cores": "8",
+  "memory_gb": 64.0,
+  "os": "macOS 27.2 (26B123)",
+  "model": "MacBookPro18,4",
+  "power": "battery",
+  "low_power_mode": false,
+  "thermal": "Note: No thermal warning level has been recorded Note: No performance warning level has been recorded Note: No CPU power status has been recorded",
+  "load_avg": [
+   2.58,
+   3.99,
+   4.2
+  ],
+  "busiest_processes": [
+   "24.6 /Applications/Zed.app/Contents/MacOS/zed",
+   "15.7 /opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python",
+   "12.1 /usr/sbin/coreaudiod",
+   "6.6 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+   "5.8 /Users/kady/Library/Application Support/Zed/external_agents/registry/npx/claude-acp/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude",
+   "4.4 /Library/Application Support/Universal Audio/Apollo/UA Mixer Engine.app/Contents/MacOS/UA Mixer Engine"
+  ],
+  "git_commit": "195c246792877de3e0420ca4320cc82ef20cb1ba",
+  "git_dirty": false
+ },
+ "noise": [
+  "on battery power"
+ ],
+ "rows": [
+  {
+   "id": "parser.plain_text",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 210.113117,
+   "b": 213.18824999999998,
+   "ratio": 1.092367470238306,
+   "ci": [
+    0.9065772426916243,
+    1.3162327861794014
+   ],
+   "rounds": 8,
+   "floor": 0.011173644651034431,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "parser.colored_text",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 143.357255,
+   "b": 142.3821985,
+   "ratio": 0.9398277738551901,
+   "ci": [
+    0.7514179478994043,
+    1.175479301471051
+   ],
+   "rounds": 8,
+   "floor": 0.007752957763858648,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "parser.cursor_heavy",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 175.1639685,
+   "b": 174.1234685,
+   "ratio": 1.0223848977164574,
+   "ci": [
+    0.9640599805650808,
+    1.0842384292998126
+   ],
+   "rounds": 8,
+   "floor": 0.014693475500859421,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "parser.unicode_heavy",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 170.2825425,
+   "b": 156.7037675,
+   "ratio": 0.8954143350735145,
+   "ci": [
+    0.837053635047179,
+    0.9578440351793633
+   ],
+   "rounds": 8,
+   "floor": 0.009135193803468722,
+   "verdict": "worse",
+   "same_output": true
+  },
+  {
+   "id": "parser.sync_tui",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 160.2415595,
+   "b": 159.149766,
+   "ratio": 0.985726516571923,
+   "ci": [
+    0.9738572035862388,
+    0.9977404920299218
+   ],
+   "rounds": 8,
+   "floor": 0.0056387520735770025,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "parser.graphemes",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 134.517719,
+   "b": 128.324032,
+   "ratio": 0.8479225096009004,
+   "ci": [
+    0.6485862013102471,
+    1.1085227851524597
+   ],
+   "rounds": 8,
+   "floor": 0.00442447525418177,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "parser.hyperlinks",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 102.548127,
+   "b": 102.572829,
+   "ratio": 0.987917393801358,
+   "ci": [
+    0.9324756378616542,
+    1.0466555235838428
+   ],
+   "rounds": 8,
+   "floor": 0.03046051322966936,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "parser.images",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 77.56385115,
+   "b": 79.69978835,
+   "ratio": 1.0989524580045245,
+   "ci": [
+    0.8899980926639018,
+    1.356965273194422
+   ],
+   "rounds": 8,
+   "floor": 0.019193613658925468,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "parser_core.plain_text",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 213.373402,
+   "b": 214.648361,
+   "ratio": 1.0060536634177015,
+   "ci": [
+    0.9881033487524669,
+    1.024330071296756
+   ],
+   "rounds": 8,
+   "floor": 0.02304951388101717,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "parser_core.colored_text",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 167.8614885,
+   "b": 164.9507035,
+   "ratio": 0.9851412145459736,
+   "ci": [
+    0.9658618661724974,
+    1.0048053935942323
+   ],
+   "rounds": 8,
+   "floor": 0.025192784128774015,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "parser_core.cursor_heavy",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 195.01270849999997,
+   "b": 194.985629,
+   "ratio": 0.9976721590497848,
+   "ci": [
+    0.987025170369576,
+    1.0084339962377717
+   ],
+   "rounds": 8,
+   "floor": 0.016011642915120028,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "parser_core.unicode_heavy",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 169.25001350000002,
+   "b": 154.74177500000002,
+   "ratio": 0.9142514422981745,
+   "ci": [
+    0.8896934612954175,
+    0.939487290967907
+   ],
+   "rounds": 8,
+   "floor": 0.010883188046601378,
+   "verdict": "worse",
+   "same_output": true
+  }
+ ],
+ "pooled": {
+  "A": [
+   {
+    "id": "parser.plain_text",
+    "label": "plain text (cat-like)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "11c624c82b6c772c",
+    "info": {
+     "screen_text": "ba9d41cfd4dca670",
+     "bytes": 8388608
+    },
+    "samples": [
+     220.095398,
+     218.827856,
+     221.562403,
+     222.1032,
+     209.718717,
+     217.35808,
+     156.838912,
+     67.5010551,
+     212.022559,
+     207.235095,
+     206.239386,
+     210.11001,
+     208.267122,
+     209.020767,
+     211.642546,
+     210.116224
+    ]
+   },
+   {
+    "id": "parser.colored_text",
+    "label": "SGR-heavy (colorized ls)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "779df38d73ec7671",
+    "info": {
+     "screen_text": "89b5c2df0e85cfb1",
+     "bytes": 8388608
+    },
+    "samples": [
+     147.354413,
+     146.713168,
+     149.214757,
+     147.975283,
+     146.428519,
+     144.160485,
+     122.879607,
+     107.075637,
+     142.210426,
+     142.373138,
+     141.815998,
+     142.867455,
+     142.003537,
+     143.847055,
+     140.783004,
+     143.850179
+    ]
+   },
+   {
+    "id": "parser.cursor_heavy",
+    "label": "cursor-heavy (TUI redraw)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "ef7f2d28c21defbe",
+    "info": {
+     "screen_text": "09ab053c2a4d3ed0",
+     "bytes": 8388608
+    },
+    "samples": [
+     180.036569,
+     180.553792,
+     180.525952,
+     181.09825,
+     179.343715,
+     177.870334,
+     116.804024,
+     167.95652,
+     171.687636,
+     171.676428,
+     175.833354,
+     174.656919,
+     174.91771,
+     175.410227,
+     166.607368,
+     173.436094
+    ]
+   },
+   {
+    "id": "parser.unicode_heavy",
+    "label": "UTF-8 heavy (emoji/CJK/box)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "f96126fc6df44356",
+    "info": {
+     "screen_text": "702bcb945873ca57",
+     "bytes": 8388608
+    },
+    "samples": [
+     175.955017,
+     176.030189,
+     175.859603,
+     174.397691,
+     173.141281,
+     172.747777,
+     165.893506,
+     165.461613,
+     168.897521,
+     166.502187,
+     169.512477,
+     170.628293,
+     170.043475,
+     170.52161,
+     166.793353,
+     166.78046
+    ]
+   },
+   {
+    "id": "parser.sync_tui",
+    "label": "synchronized-output TUI",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "2362197c8e825316",
+    "info": {
+     "screen_text": "22b5cd5db7c9589c",
+     "bytes": 8388289
+    },
+    "samples": [
+     165.442773,
+     165.311005,
+     165.964633,
+     165.595745,
+     164.860315,
+     164.253417,
+     157.856538,
+     159.437612,
+     159.205584,
+     157.319224,
+     160.212336,
+     160.270783,
+     160.157943,
+     160.274396,
+     157.356362,
+     158.719005
+    ]
+   },
+   {
+    "id": "parser.graphemes",
+    "label": "grapheme clusters",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "8a42c81317b212fb",
+    "info": {
+     "screen_text": "4734722064b27dc2",
+     "bytes": 8388570
+    },
+    "samples": [
+     137.898412,
+     139.147954,
+     140.220886,
+     139.893746,
+     138.508823,
+     130.104687,
+     132.66764,
+     132.326407,
+     133.880338,
+     132.331695,
+     134.13746,
+     133.333285,
+     135.185428,
+     134.915172,
+     134.466167,
+     134.569271
+    ]
+   },
+   {
+    "id": "parser.hyperlinks",
+    "label": "OSC 8 links + OSC 133 marks",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "6cb570e81b3f5aa2",
+    "info": {
+     "screen_text": "309527855b007d9a",
+     "bytes": 8388585
+    },
+    "samples": [
+     113.251776,
+     113.747133,
+     108.84003,
+     111.957747,
+     93.9196054,
+     92.1261537,
+     97.9445732,
+     100.903442,
+     101.775874,
+     104.861932,
+     100.381332,
+     102.552974,
+     106.196924,
+     105.689626,
+     102.54328,
+     102.397753
+    ]
+   },
+   {
+    "id": "parser.images",
+    "label": "sixel + kitty images",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "4455f4b6be3b7996",
+    "info": {
+     "screen_text": "ac739513c44b5326",
+     "bytes": 8387040
+    },
+    "samples": [
+     81.2000014,
+     81.0653097,
+     80.0846845,
+     78.6428427,
+     28.1043856,
+     54.707853,
+     77.2194324,
+     77.3111125,
+     52.3540722,
+     76.173998,
+     76.4764045,
+     75.3324807,
+     77.9849911,
+     78.1167225,
+     77.8165898,
+     78.1738872
+    ]
+   },
+   {
+    "id": "parser_core.plain_text",
+    "label": "core: plain text (cat-like)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "11c624c82b6c772c",
+    "info": {
+     "screen_text": "ba9d41cfd4dca670",
+     "bytes": 8388608
+    },
+    "samples": [
+     223.381791,
+     222.807351,
+     218.386309,
+     215.523529,
+     205.326514,
+     215.755549,
+     190.487153,
+     212.393845,
+     213.371268,
+     214.456128,
+     211.642082,
+     204.274876,
+     213.375536,
+     216.277592,
+     212.947189,
+     213.197598
+    ]
+   },
+   {
+    "id": "parser_core.colored_text",
+    "label": "core: SGR-heavy (colorized ls)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "779df38d73ec7671",
+    "info": {
+     "screen_text": "89b5c2df0e85cfb1",
+     "bytes": 8388608
+    },
+    "samples": [
+     174.530224,
+     174.41496,
+     169.348605,
+     169.357722,
+     168.415883,
+     166.014713,
+     170.522366,
+     170.197524,
+     167.719867,
+     167.322592,
+     164.782964,
+     168.00311,
+     166.913995,
+     164.916008,
+     167.160459,
+     165.861547
+    ]
+   },
+   {
+    "id": "parser_core.cursor_heavy",
+    "label": "core: cursor-heavy (TUI redraw)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "ef7f2d28c21defbe",
+    "info": {
+     "screen_text": "09ab053c2a4d3ed0",
+     "bytes": 8388608
+    },
+    "samples": [
+     196.138725,
+     200.357724,
+     199.002708,
+     199.598931,
+     196.646963,
+     192.561123,
+     170.799054,
+     182.6279,
+     190.22916,
+     193.053105,
+     196.22833,
+     193.364962,
+     196.43431,
+     195.897778,
+     193.728641,
+     194.127639
+    ]
+   },
+   {
+    "id": "parser_core.unicode_heavy",
+    "label": "core: UTF-8 heavy (emoji/CJK/box)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "f96126fc6df44356",
+    "info": {
+     "screen_text": "702bcb945873ca57",
+     "bytes": 8388608
+    },
+    "samples": [
+     176.591347,
+     176.925422,
+     168.226409,
+     173.192191,
+     166.789152,
+     168.026925,
+     172.82039,
+     173.866742,
+     165.057357,
+     165.873013,
+     167.466203,
+     169.790097,
+     168.70993,
+     170.932256,
+     169.898872,
+     167.604059
+    ]
+   }
+  ],
+  "B": [
+   {
+    "id": "parser.plain_text",
+    "label": "plain text (cat-like)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "11c624c82b6c772c",
+    "info": {
+     "screen_text": "ba9d41cfd4dca670",
+     "bytes": 8388608
+    },
+    "samples": [
+     222.17696,
+     222.592697,
+     222.74996,
+     221.453796,
+     214.968527,
+     212.706089,
+     212.164775,
+     213.170613,
+     211.266678,
+     213.414197,
+     213.075512,
+     211.199514,
+     213.237615,
+     213.205887,
+     211.515708,
+     209.319287
+    ]
+   },
+   {
+    "id": "parser.colored_text",
+    "label": "SGR-heavy (colorized ls)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "779df38d73ec7671",
+    "info": {
+     "screen_text": "89b5c2df0e85cfb1",
+     "bytes": 8388608
+    },
+    "samples": [
+     147.14899,
+     148.119918,
+     147.953846,
+     147.97072,
+     88.0846671,
+     56.4857232,
+     142.310665,
+     141.643897,
+     141.412298,
+     141.567864,
+     143.001848,
+     142.452466,
+     142.311931,
+     142.724613,
+     140.940913,
+     142.76388
+    ]
+   },
+   {
+    "id": "parser.cursor_heavy",
+    "label": "cursor-heavy (TUI redraw)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "ef7f2d28c21defbe",
+    "info": {
+     "screen_text": "09ab053c2a4d3ed0",
+     "bytes": 8388608
+    },
+    "samples": [
+     180.282369,
+     179.347233,
+     180.420436,
+     179.92977,
+     173.375643,
+     172.696815,
+     173.475425,
+     171.405155,
+     176.06086,
+     175.280356,
+     175.04385,
+     174.534984,
+     173.558693,
+     173.711953,
+     172.84155,
+     171.252429
+    ]
+   },
+   {
+    "id": "parser.unicode_heavy",
+    "label": "UTF-8 heavy (emoji/CJK/box)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "f96126fc6df44356",
+    "info": {
+     "screen_text": "702bcb945873ca57",
+     "bytes": 8388608
+    },
+    "samples": [
+     162.989086,
+     162.381184,
+     160.936247,
+     161.397974,
+     155.0876,
+     151.138973,
+     108.380829,
+     135.865527,
+     156.042881,
+     157.52838,
+     157.535229,
+     156.336131,
+     157.071404,
+     155.553252,
+     156.156596,
+     157.375115
+    ]
+   },
+   {
+    "id": "parser.sync_tui",
+    "label": "synchronized-output TUI",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "2362197c8e825316",
+    "info": {
+     "screen_text": "22b5cd5db7c9589c",
+     "bytes": 8388289
+    },
+    "samples": [
+     163.836846,
+     163.633394,
+     163.835028,
+     163.961371,
+     158.461724,
+     159.1185,
+     153.893574,
+     151.505324,
+     157.327993,
+     159.181032,
+     159.46807,
+     160.337705,
+     159.516562,
+     157.839928,
+     156.31224,
+     157.269099
+    ]
+   },
+   {
+    "id": "parser.graphemes",
+    "label": "grapheme clusters",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "8a42c81317b212fb",
+    "info": {
+     "screen_text": "4734722064b27dc2",
+     "bytes": 8388570
+    },
+    "samples": [
+     135.133856,
+     134.136241,
+     133.779032,
+     134.260715,
+     127.700515,
+     128.222614,
+     48.2720245,
+     53.6020547,
+     118.843555,
+     120.292671,
+     129.344865,
+     129.134861,
+     128.42545,
+     127.923689,
+     129.258658,
+     126.880672
+    ]
+   },
+   {
+    "id": "parser.hyperlinks",
+    "label": "OSC 8 links + OSC 133 marks",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "6cb570e81b3f5aa2",
+    "info": {
+     "screen_text": "309527855b007d9a",
+     "bytes": 8388585
+    },
+    "samples": [
+     114.101006,
+     113.943233,
+     113.689546,
+     112.878386,
+     99.9563073,
+     104.032784,
+     89.7601917,
+     81.0919201,
+     104.607124,
+     102.456548,
+     100.032914,
+     102.68911,
+     100.256267,
+     104.783416,
+     95.3613407,
+     102.305815
+    ]
+   },
+   {
+    "id": "parser.images",
+    "label": "sixel + kitty images",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "4455f4b6be3b7996",
+    "info": {
+     "screen_text": "ac739513c44b5326",
+     "bytes": 8387040
+    },
+    "samples": [
+     83.0866365,
+     82.6972764,
+     83.1702594,
+     82.5237169,
+     78.0757683,
+     79.2848289,
+     65.6345227,
+     55.4902908,
+     76.9224128,
+     79.9198789,
+     79.533132,
+     79.1128924,
+     80.0023141,
+     79.8664447,
+     79.2121991,
+     80.7379952
+    ]
+   },
+   {
+    "id": "parser_core.plain_text",
+    "label": "core: plain text (cat-like)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "11c624c82b6c772c",
+    "info": {
+     "screen_text": "ba9d41cfd4dca670",
+     "bytes": 8388608
+    },
+    "samples": [
+     223.574538,
+     223.349829,
+     223.94431,
+     223.651886,
+     214.95288,
+     215.306019,
+     192.603232,
+     199.590839,
+     210.532776,
+     208.767586,
+     214.082623,
+     211.486587,
+     214.343842,
+     214.056845,
+     216.922928,
+     218.272848
+    ]
+   },
+   {
+    "id": "parser_core.colored_text",
+    "label": "core: SGR-heavy (colorized ls)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "779df38d73ec7671",
+    "info": {
+     "screen_text": "89b5c2df0e85cfb1",
+     "bytes": 8388608
+    },
+    "samples": [
+     172.413641,
+     172.645257,
+     172.947575,
+     172.880459,
+     161.056395,
+     163.359488,
+     160.436654,
+     161.916689,
+     162.54312,
+     161.981028,
+     166.684464,
+     164.7144,
+     163.222698,
+     165.187007,
+     168.264007,
+     165.718532
+    ]
+   },
+   {
+    "id": "parser_core.cursor_heavy",
+    "label": "core: cursor-heavy (TUI redraw)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "ef7f2d28c21defbe",
+    "info": {
+     "screen_text": "09ab053c2a4d3ed0",
+     "bytes": 8388608
+    },
+    "samples": [
+     197.995503,
+     198.176567,
+     200.567229,
+     201.51535,
+     196.022378,
+     195.026222,
+     153.569041,
+     189.431498,
+     189.899899,
+     191.8586,
+     194.487892,
+     196.498239,
+     194.565144,
+     193.976816,
+     194.945036,
+     196.35054
+    ]
+   },
+   {
+    "id": "parser_core.unicode_heavy",
+    "label": "core: UTF-8 heavy (emoji/CJK/box)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "f96126fc6df44356",
+    "info": {
+     "screen_text": "702bcb945873ca57",
+     "bytes": 8388608
+    },
+    "samples": [
+     162.072502,
+     162.178189,
+     162.387367,
+     162.937904,
+     154.303873,
+     155.997622,
+     146.107046,
+     150.488971,
+     154.924791,
+     154.558759,
+     153.455015,
+     150.346973,
+     154.121052,
+     152.23295,
+     156.181109,
+     156.688007
+    ]
+   }
+  ]
+ }
+}

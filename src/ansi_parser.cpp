@@ -115,44 +115,47 @@ void ANSIParser::parse(TerminalGrid& grid, const char* data, size_t size) {
         // and a byte that can't start a sequence was taken as Latin-1 (0xFF
         // drew "ÿ"). termbench's cursor check caught the first against Zed.
         constexpr char32_t kReplacement = 0xFFFD;
-        if (utf8_bytes_needed_ == 0) {
-            if (byte < 0x80) {
-                process_char(grid, static_cast<char32_t>(byte));
-            } else if (byte >= 0xC2 && byte <= 0xDF) {
-                utf8_codepoint_ = byte & 0x1F;
-                utf8_bytes_needed_ = 1;
-                utf8_min_ = 0x80;
-            } else if ((byte & 0xF0) == 0xE0) {
-                utf8_codepoint_ = byte & 0x0F;
-                utf8_bytes_needed_ = 2;
-                utf8_min_ = 0x800;
-            } else if (byte >= 0xF0 && byte <= 0xF4) {
-                utf8_codepoint_ = byte & 0x07;
-                utf8_bytes_needed_ = 3;
-                utf8_min_ = 0x10000;
-            } else if (byte == 0x9C && (state_ == STATE_STR || state_ == STATE_STR_ESC)) {
-                // A raw single-byte ST ends a string sequence, as it always
-                // has here. Not valid UTF-8, but harmless to keep.
-                process_char(grid, 0x9C);
-            } else {
-                // A continuation byte with nothing to continue, or a byte
-                // that never starts a sequence (C0, C1, F5-FF).
-                process_char(grid, kReplacement);
+        if (utf8_bytes_needed_ != 0) {
+            if ((byte & 0xC0) == 0x80) {
+                utf8_codepoint_ = (utf8_codepoint_ << 6) | (byte & 0x3F);
+                if (--utf8_bytes_needed_ == 0) {
+                    const char32_t cp = utf8_codepoint_;
+                    const bool valid = cp >= utf8_min_ && cp <= 0x10FFFF && !(cp >= 0xD800 && cp <= 0xDFFF);
+                    process_char(grid, valid ? cp : kReplacement);
+                }
+                continue;
             }
-        } else if ((byte & 0xC0) == 0x80) {
-            utf8_codepoint_ = (utf8_codepoint_ << 6) | (byte & 0x3F);
-            if (--utf8_bytes_needed_ == 0) {
-                const char32_t cp = utf8_codepoint_;
-                const bool valid = cp >= utf8_min_ && cp <= 0x10FFFF && !(cp >= 0xD800 && cp <= 0xDFFF);
-                process_char(grid, valid ? cp : kReplacement);
-            }
-        } else {
             // Cut short by a byte that isn't a continuation: the partial
             // character is a replacement, and the byte that interrupted it is
-            // read afresh -- it may be ESC, text, or the start of a character.
+            // read afresh below -- it may be ESC, text, or the start of a
+            // character. (Falling through rather than stepping `i` back: an
+            // earlier version did that, and modifying the loop counter cost
+            // 7% on all UTF-8 parsing, measured with bench/run.py ab.)
             utf8_bytes_needed_ = 0;
             process_char(grid, kReplacement);
-            --i;
+        }
+        if (byte < 0x80) {
+            process_char(grid, static_cast<char32_t>(byte));
+        } else if (byte >= 0xC2 && byte <= 0xDF) {
+            utf8_codepoint_ = byte & 0x1F;
+            utf8_bytes_needed_ = 1;
+            utf8_min_ = 0x80;
+        } else if ((byte & 0xF0) == 0xE0) {
+            utf8_codepoint_ = byte & 0x0F;
+            utf8_bytes_needed_ = 2;
+            utf8_min_ = 0x800;
+        } else if (byte >= 0xF0 && byte <= 0xF4) {
+            utf8_codepoint_ = byte & 0x07;
+            utf8_bytes_needed_ = 3;
+            utf8_min_ = 0x10000;
+        } else if (byte == 0x9C && (state_ == STATE_STR || state_ == STATE_STR_ESC)) {
+            // A raw single-byte ST ends a string sequence, as it always has
+            // here. Not valid UTF-8, but harmless to keep.
+            process_char(grid, 0x9C);
+        } else {
+            // A continuation byte with nothing to continue, or a byte that
+            // never starts a sequence (C0, C1, F5-FF).
+            process_char(grid, kReplacement);
         }
     }
 }
