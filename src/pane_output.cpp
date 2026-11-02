@@ -113,6 +113,7 @@ void parse_on_reader(Pane& pane, const char* data, size_t size) {
 }
 
 void attach_reader_parser(Pane& pane) {
+    pane.reader_parses = true;
     Pane* p = &pane;
     pane.pty.set_output_handler([p](const char* data, size_t size) { parse_on_reader(*p, data, size); });
 }

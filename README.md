@@ -104,6 +104,7 @@ preset = "clouds"          # a built-in like "pool", or one of yours below
 
 [terminal]
 scrollback_lines = 10000
+threaded_parser = true     # read each pane's output on its own thread; false for the old way
 
 [shell]
 integration = true         # false keeps sink's shell integration out of your shell

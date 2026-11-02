@@ -464,6 +464,11 @@
           "minimum": 100,
           "maximum": 1000000,
           "default": 10000
+        },
+        "threaded_parser": {
+          "description": "Read each pane's output on a thread of its own instead of the one that draws, so programs get answers while a frame is being drawn and a flood of output doesn't take turns with drawing. Applies to new tabs and panes. Turn off to go back to the old way if it causes trouble.",
+          "type": "boolean",
+          "default": true
         }
       }
     },

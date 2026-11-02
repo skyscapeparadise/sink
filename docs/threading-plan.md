@@ -409,6 +409,18 @@ entire frame, but if it shows up, decoding outside the lock is the fix.
 
 ### Phase 6: soak and cleanup (calendar time, little code)
 
+**Status, 2026-11-02:** started early, by your decision. The threaded parser
+is on by default from 0.14-beta, before phase 5's interleaved throughput
+comparison was run. That comparison can still be made, since the old path
+remains. The soak itself is the test.
+- `sink.toml` has `[terminal] threaded_parser = true` (the default);
+  `false` brings back the old path, for new tabs and panes, without a new
+  build. `SINK_THREADED_PARSER=0` or `1` overrides it, for development.
+- Each pane records which mode it was started in (`Pane::reader_parses`),
+  and the frame asks the pane rather than the setting. Changing the setting
+  while panes are open would otherwise leave a non-threaded pane unparsed,
+  or give a threaded one two senders of replies.
+
 1. Switch on by default in a beta. A week or two of your own daily use,
    plus whoever runs the betas.
 2. Then remove the old path:

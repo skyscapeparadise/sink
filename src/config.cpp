@@ -39,6 +39,12 @@ const std::vector<KeyInfo>& keys() {
           "your [presets.<name>] tables." },
         { "terminal.scrollback_lines", Scope::Global, KeyType::Int, int64_t{10000}, 100, 1000000, {},
           "Lines of output kept above the screen, per pane." },
+        { "terminal.threaded_parser", Scope::Global, KeyType::Bool, true, 0, 0, {},
+          "Read each pane's output on a thread of its own instead of the one "
+          "that draws, so programs get answers while a frame is being drawn "
+          "and a flood of output doesn't take turns with drawing. Applies to "
+          "new tabs and panes. Turn off to go back to the old way if it "
+          "causes trouble." },
         { "shell.integration", Scope::Global, KeyType::Bool, true, 0, 0, {},
           "Load sink's shell integration into zsh and bash: prompt marks "
           "(OSC 133) and the working directory (OSC 7), which make Cmd+Up/Down "

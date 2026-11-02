@@ -49,10 +49,12 @@ static void* g_app_state = nullptr;
 // and signalling a freed semaphore would be worse than leaking one at exit.
 static SDL_Semaphore* g_pty_wake = nullptr;
 
-// SINK_THREADED_PARSER=1: parse on each pane's pty reader thread instead of in
-// the frame. Off by default while it's proven; see parse_on_reader() and
-// docs/threading-plan.md.
-static bool g_threaded_parse = false;
+// Whether new panes parse on their pty reader thread instead of in the frame
+// (pane_output::parse_on_reader, docs/threading-plan.md). sink.toml's
+// terminal.threaded_parser, on by default; SINK_THREADED_PARSER=0 or 1
+// overrides it, for development. Each pane keeps the mode it started with
+// (Pane::reader_parses).
+static bool g_threaded_parse = true;
 
 static void signal_pty_wake() {
     if (g_pty_wake) SDL_SignalSemaphore(g_pty_wake);
@@ -705,6 +707,8 @@ static void apply_menu_shortcuts(AppState* state) {
 static void apply_global_settings(AppState* state) {
     const config::Config& c = state->config.config();
     PTYBridge::set_shell_integration_enabled(config::global_bool(c, "shell.integration"));
+    g_threaded_parse = config::global_bool(c, "terminal.threaded_parser");
+    if (const char* v = SDL_getenv("SINK_THREADED_PARSER")) g_threaded_parse = std::strcmp(v, "0") != 0;
     PTYBridge::ShellSettings shell;
     shell.command = config::expand_home(config::global_string(c, "shell.command"));
     shell.args = config::global_strings(c, "shell.args");
@@ -1948,8 +1952,6 @@ SDL_AppResult SDL_AppInit(void** appstate, int argc, char* argv[]) {
     AppState* state = new AppState();
     *appstate = state;
     g_app_state = state;
-    // The threaded parser, while it's being proven (docs/threading-plan.md).
-    if (const char* v = SDL_getenv("SINK_THREADED_PARSER")) g_threaded_parse = std::strcmp(v, "1") == 0;
     g_pty_wake = SDL_CreateSemaphore(0);
     PTYBridge::set_output_notify(signal_pty_wake);
 
@@ -3275,7 +3277,7 @@ static bool drain_pane_output(TerminalWindow* tw, Pane* pane_ptr, size_t max_byt
     Pane& pane = *pane_ptr;
     bool demo_owns_pane = SinkDemo::is_demo_running(tw) && pane_ptr == &tw->demo_target();
 
-    if (g_threaded_parse) {
+    if (pane.reader_parses) {
         // The reader thread parses and replies; tell it what it can't see.
         pane.typing_animation.store(tw->animated_typing, std::memory_order_relaxed);
         pane.demo_owned.store(demo_owns_pane, std::memory_order_relaxed);

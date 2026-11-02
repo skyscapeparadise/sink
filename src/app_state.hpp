@@ -108,6 +108,12 @@ public:
     // the main thread's.
     std::atomic<bool> typing_animation{true};
     std::atomic<bool> demo_owned{false};
+    // Whether this pane's pty reader thread parses its output (the threaded
+    // parser) or the frame does. Fixed when the pane's shell starts, so
+    // changing terminal.threaded_parser affects new panes only, and the
+    // frame asks each pane rather than the setting. Main thread only.
+    bool reader_parses = false;
+
     // Replies the reader thread couldn't write without waiting -- the shell's
     // input was full, or a paste held the write lock. Sent ahead of anything
     // newer on its next turn. Guarded by the pane's lock.
