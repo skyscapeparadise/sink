@@ -708,10 +708,11 @@ def cmd_compare_terms(args):
     docs = [load_json(p) for p in args.files]
     sizes = {(d["config"]["cols"], d["config"]["rows"]) for d in docs}
     if len(sizes) > 1:
-        print("Window sizes differ:")
+        print("Cell grids differ (a matching window size isn't enough if the fonts differ):")
         for p, d in zip(args.files, docs):
             print(f"  {d['config']['terminal']}: {d['config']['cols']}x{d['config']['rows']}  ({p})")
-        raise SystemExit("Throughput scales with cell count; resize the windows to match and re-run.")
+        raise SystemExit("Throughput scales with cell count. Match the grids -- termbench.py --size COLSxROWS "
+                         "refuses to run until they do -- and re-run.")
     machines = {d.get("machine", {}).get("cpu") for d in docs}
     if len(machines) > 1:
         print(f"WARNING: results from different machines: {machines}")

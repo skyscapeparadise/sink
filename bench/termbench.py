@@ -141,6 +141,21 @@ class Tty:
         return cols, rows, xpix, ypix
 
 
+def guess_terminal():
+    """For terminals that answer neither XTVERSION nor set TERM_PROGRAM, from
+    what they do leave in the environment."""
+    env = os.environ
+    if "ALACRITTY_WINDOW_ID" in env or "ALACRITTY_SOCKET" in env or env.get("TERM") == "alacritty":
+        return "alacritty"
+    if "KITTY_WINDOW_ID" in env:
+        return "kitty"
+    if "WEZTERM_PANE" in env:
+        return "wezterm"
+    if "GHOSTTY_RESOURCES_DIR" in env:
+        return "ghostty"
+    return ""
+
+
 def machine():
     def sysctl(k):
         try:
@@ -152,7 +167,10 @@ def machine():
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--label", help="terminal name (default: from TERM_PROGRAM / XTVERSION)")
+    ap.add_argument("--label", help="terminal name (default: from XTVERSION, TERM_PROGRAM or the environment)")
+    ap.add_argument("--size", help="COLSxROWS the window must be, e.g. 143x66; refuses to run otherwise. "
+                                   "Terminals only compare at the same cell grid, which a matching window size "
+                                   "doesn't give you if the fonts differ.")
     ap.add_argument("--out", help="results file (default: bench/results/term-<label>-<date>.json)")
     ap.add_argument("--reps", type=int, default=7, help="timed runs per workload (default 7)")
     ap.add_argument("--warmup", type=int, default=1)
@@ -174,13 +192,16 @@ def main():
     with Tty() as t:
         t.drain()
         cols, rows, xpix, ypix = t.size()
+        if args.size and f"{cols}x{rows}" != args.size:
+            sys.exit(f"\r\nThis window is {cols}x{rows} cells, not {args.size}. Resize it (or change the font "
+                     "size) until it matches, then run again.\r\n")
         t.write(XTVERSION + DA1)
         m = t.wait_for(XTVERSION_REPLY, 1.0)
         version = m.group(1).decode(errors="replace") if m else ""
         if not t.wait_for(DA1_REPLY, 5.0):
             sys.exit("this terminal never answered a device attributes query (ESC [ c)")
         program = os.environ.get("TERM_PROGRAM", "")
-        label = args.label or (version.split()[0] if version else program) or "unknown"
+        label = args.label or (version.split()[0] if version else program) or guess_terminal() or "unknown"
 
         # Responsiveness first, on a quiet terminal.
         lat = []
@@ -237,7 +258,8 @@ def main():
     if not out:
         os.makedirs(os.path.join(HERE, "results"), exist_ok=True)
         safe = re.sub(r"[^A-Za-z0-9._-]+", "_", label)
-        out = os.path.join(HERE, "results", f"term-{safe}-{datetime.date.today().isoformat()}.json")
+        stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H%M")  # a rerun mustn't replace a run
+        out = os.path.join(HERE, "results", f"term-{safe}-{stamp}.json")
     with open(out, "w") as f:
         json.dump(result, f, indent=1)
 
