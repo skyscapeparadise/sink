@@ -407,6 +407,28 @@ entire frame, but if it shows up, decoding outside the lock is the fix.
 
 **Done when:** the success table above is filled in from committed results.
 
+**Prepared, 2026-11-02:** `bench/phase5.sh` runs the unattended part once the
+Mac is quiet: plugged in, with a load average under 2.5 for two minutes. It
+runs the A/A' control, the full suite with its claims, `run.py pair` of
+`pty_threaded` against `pty_paced` on three workloads (8 interleaved rounds
+each), and an `ab` of the gel commit against its parent, to recheck the CPU
+blip noted there. It writes a summary to `bench/results/`. Done already in
+this phase: the threaded `pty_bench` mode (phase 4), the concurrency test with
+its cold start (which found the base64 race), and `run.py pair` itself.
+
+The termbench part has to be done by hand, in one sitting, alternating.
+Every run is
+`python3 bench/termbench.py --size 143x66 --latency-only --queries 1000 --note "..."`.
+1. In sink with the default (threaded), using your usual background, twice.
+2. In a sink window opened after setting `threaded_parser = false` (new
+   tabs and panes pick it up), twice, with notes saying which.
+3. In Alacritty, twice, as the noise control.
+4. Then, if there's time, a full run (drop `--latency-only`) in each, for
+   throughput.
+
+After that: claims for lock wait, threaded throughput and query latency, from
+those results.
+
 ### Phase 6: soak and cleanup (calendar time, little code)
 
 **Status, 2026-11-02:** started early, by your decision. The threaded parser
