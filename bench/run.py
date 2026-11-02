@@ -361,6 +361,11 @@ def check(docs, expected):
                                          "run `bench/run.py bless` and commit bench/expected.json with it."})
         px = m.get("info", {}).get("pixels")
         if px and px != "nondeterministic" and mid.endswith(".frame"):
+            # HDR frames read back through the display's current headroom
+            # (it follows screen brightness): only compare at the same one.
+            head = m["info"].get("hdr_headroom")
+            if head is not None and expected.get("pixels_headroom", {}).get(mid) != head:
+                continue
             if mid in exp_px and exp_px[mid] != px:
                 checks.append({"level": "warn", "what": f"{mid}: rendered pixels changed",
                                "detail": "compare the snapshot PNGs if this wasn't expected; a driver or OS "
@@ -823,6 +828,10 @@ def cmd_bless(args):
         px = m.get("info", {}).get("pixels")
         if px and px != "nondeterministic" and m["id"].endswith(".frame"):
             exp["pixels"][m["id"]] = px
+            if m["info"].get("hdr_headroom") is not None:
+                exp.setdefault("pixels_headroom", {})[m["id"]] = m["info"]["hdr_headroom"]
+        elif px == "nondeterministic":
+            exp["pixels"].pop(m["id"], None)
     exp["blessed_from"] = os.path.basename(path)
     exp["machine"] = res["environment"]["host_cpu"]
     with open(EXPECTED, "w") as f:

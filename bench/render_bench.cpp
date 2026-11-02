@@ -93,7 +93,9 @@ const Scene kScenes[] = {
     {"sgr",         "SGR-heavy",               "colored_text.bin"},
     {"unicode",     "UTF-8 heavy",             "unicode_heavy.bin"},
     {"graphemes",   "grapheme clusters",       "graphemes.bin"},
-    {"cjk",         "distinct CJK screenful",  "distinct_cjk.bin"},
+    // More distinct glyphs than the atlas holds, so which are cached when the
+    // evidence frame is drawn depends on how many frames came before it.
+    {"cjk",         "distinct CJK screenful",  "distinct_cjk.bin", Backdrop::Color, false, false, 1, 0, nullptr, false},
     {"painted",     "painted backgrounds",     "@painted"},
     {"images",      "inline images",           "images.bin"},
     {"scrollback",  "scrollback (deep)",       "plain_text.bin", Backdrop::Color, false, false, 1, 4000},
@@ -484,6 +486,13 @@ int main(int argc, char** argv) {
                 m->add_info("distinct_colors", rb.distinct);
                 m->add_info("output_px", std::to_string(g.out_w) + "x" + std::to_string(g.out_h));
                 m->add_info("batch_frames", batch);
+                // Reading back a linear (HDR) frame converts it using the
+                // display's current HDR headroom, which follows the screen's
+                // brightness. Those pixels only compare at the same headroom.
+                if (g.linear) {
+                    m->add_info("hdr_headroom", SDL_GetFloatProperty(SDL_GetRendererProperties(g.ren),
+                                                                     SDL_PROP_RENDERER_HDR_HEADROOM_FLOAT, 1.0f));
+                }
                 report.add(std::move(*m));
             }
         }
