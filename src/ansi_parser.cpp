@@ -897,15 +897,23 @@ void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
 // returns whatever was successfully decoded so far rather than failing the
 // whole payload -- OSC 52 senders occasionally get padding slightly wrong,
 // and a partial clipboard write is a much better failure mode than none.
+//
+// The table is built at compile time. It used to be filled in on first use
+// behind a plain `static bool`, which is a data race once two panes parse on
+// their own threads and both decode for the first time at once (two kitty
+// images, two OSC 52 writes): tests/test_concurrent_parse.cpp's cold start
+// caught it under ThreadSanitizer.
+static constexpr std::array<int8_t, 256> make_base64_table() {
+    std::array<int8_t, 256> t{};
+    for (auto& v : t) v = -1;
+    const char* alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    for (int i = 0; i < 64; ++i) t[static_cast<uint8_t>(alphabet[i])] = static_cast<int8_t>(i);
+    return t;
+}
+static constexpr std::array<int8_t, 256> kBase64Table = make_base64_table();
+
 static std::string base64_decode(const std::string& in) {
-    static int8_t decode_table[256];
-    static bool initialized = false;
-    if (!initialized) {
-        std::fill(std::begin(decode_table), std::end(decode_table), -1);
-        const char* alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        for (int i = 0; i < 64; ++i) decode_table[static_cast<uint8_t>(alphabet[i])] = static_cast<int8_t>(i);
-        initialized = true;
-    }
+    const auto& decode_table = kBase64Table;
 
     std::string out;
     out.reserve(in.size() * 3 / 4 + 3);

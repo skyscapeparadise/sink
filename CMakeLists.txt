@@ -368,6 +368,35 @@ target_link_libraries(pane_lifetime_test PRIVATE
     PkgConfig::AVUTIL
     PkgConfig::SWSCALE
 )
+# Several panes parsing at once on their reader threads while the test thread
+# acts as the main thread (docs/threading-plan.md, phase 5). For
+# -DSINK_TSAN=ON: finds state shared between panes without a lock.
+add_executable(concurrent_parse_test
+    tests/test_concurrent_parse.cpp
+    src/sync_output.cpp
+    src/pane_output.cpp
+    src/ansi_parser.cpp
+    src/terminal_grid.cpp
+    src/terminal_images.cpp
+    src/font_manager.cpp
+    ${SHELL_SPAWN_SOURCES}
+)
+target_include_directories(concurrent_parse_test PRIVATE src vendor/tomlplusplus ${CMAKE_BINARY_DIR}/generated)
+target_link_libraries(concurrent_parse_test PRIVATE
+    sink_shader_compiler
+    SDL3::SDL3
+    SDL3_ttf::SDL3_ttf
+    SDL3_image::SDL3_image
+    ZLIB::ZLIB
+    PkgConfig::AVCODEC
+    PkgConfig::AVFORMAT
+    PkgConfig::AVUTIL
+    PkgConfig::SWSCALE
+)
+add_test(NAME concurrent_parse COMMAND concurrent_parse_test
+         ${CMAKE_SOURCE_DIR}/bench/workloads ${CMAKE_SOURCE_DIR}/tests/fuzz/seeds 10)
+set_tests_properties(concurrent_parse PROPERTIES LABELS integration TIMEOUT 900)
+
 add_test(NAME pane_lifetime COMMAND pane_lifetime_test)
 add_test(NAME pane_lifetime_threaded COMMAND pane_lifetime_test --threaded)
 set_tests_properties(pane_lifetime pane_lifetime_threaded PROPERTIES LABELS integration TIMEOUT 900)
