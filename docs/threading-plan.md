@@ -137,6 +137,23 @@ change nothing users can see.
 
 **Done when:** TSan is clean on today's code and the baseline is committed.
 
+**Progress, 2026-11-01:** steps 1 and 2 are done. `SINK_TSAN` is in
+CMakeLists.txt. Under it, all 11 test suites pass with zero reports, as do
+`pty_bench` (reader threads under a flood) and `render_bench`'s video scene
+(the decode thread). A deliberate race in a scratch program was caught and
+written to its report file, so the clean result is real. Two things it
+can't see:
+- **sinkdemo's race.** Its thread parses into a pane's grid under
+  `grid_mutex`, and rendering takes that lock too, but the main thread's
+  event handling (selection, scrolling, typing) touches the same grid
+  without it. Nothing automated runs sinkdemo, so no test reaches this.
+  Phase 1's locked grid access fixes it by construction.
+- **Races inside vendored libraries** (SDL, FFmpeg), which aren't
+  instrumented.
+
+Step 3, the baseline, needs a plugged-in, quiet machine and termbench runs
+in each terminal.
+
 ### Phase 1: one way to reach a grid (medium; most of the edits)
 
 1. Make `Pane::terminal` and `Pane::parser` private. Access goes through a

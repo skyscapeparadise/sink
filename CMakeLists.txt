@@ -85,6 +85,19 @@ add_compile_options(
 # land. Here, not only in the benchmark build, so what's measured is what ships.
 add_compile_options(-falign-functions=64)
 
+# ThreadSanitizer, for finding data races between sink's threads (pty readers,
+# video decoding, sinkdemo, and parsing once it moves off the main thread --
+# see docs/threading-plan.md). Its own build directory, never a release:
+#   cmake -B build-tsan -DSINK_TSAN=ON && cmake --build build-tsan
+#   (cd build-tsan && ctest)
+# Vendored libraries aren't instrumented, so races inside SDL or FFmpeg go
+# unseen; races in sink's own code, including its calls into them, are found.
+option(SINK_TSAN "Build with ThreadSanitizer" OFF)
+if(SINK_TSAN)
+    add_compile_options(-fsanitize=thread -fno-omit-frame-pointer -g)
+    add_link_options(-fsanitize=thread)
+endif()
+
 # Find SDL3, SDL3_ttf, and SDL3_image
 # 3.4.0 minimum: the video background hue-shift effect uses the GPU render
 # backend and SDL_GPURenderState custom-shader API, both added in 3.4.0.

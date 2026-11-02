@@ -60,3 +60,4 @@ build-fuzz/
 build-bench/
 build-ab/
 bench/results/*-frames/
+build-tsan/
