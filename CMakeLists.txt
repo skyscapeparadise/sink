@@ -75,6 +75,16 @@ add_compile_options(
     -Werror=format-security
 )
 
+# Every function starts on a 64-byte (cache line) boundary. Without this, where
+# a hot loop lands relative to cache lines depends on the size of everything
+# linked before it, so an unrelated edit -- or just building in a different
+# directory -- moved parser throughput 3-5%: two builds of identical source had
+# identical instructions with the parser shifted 48 bytes. Aligned, a
+# function's internal layout no longer depends on its neighbours, and
+# benchmarks of two builds compare the code rather than where it happened to
+# land. Here, not only in the benchmark build, so what's measured is what ships.
+add_compile_options(-falign-functions=64)
+
 # Find SDL3, SDL3_ttf, and SDL3_image
 # 3.4.0 minimum: the video background hue-shift effect uses the GPU render
 # backend and SDL_GPURenderState custom-shader API, both added in 3.4.0.

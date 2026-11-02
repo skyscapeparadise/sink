@@ -114,14 +114,22 @@ interval comes from the spread between rounds. Treating every sample as
 independent made intervals too narrow: identical binaries "differed".
 
 `run.py aa` is the control: two *separate builds of the same source*, compared
-the same way. On this machine they differ by up to ~3–5% on the parser, from
-code layout alone. An A/B here once reported a 3% "regression" in code the
-change never touched, and that is where it came from. So `ab` holds each
-metric to the floor the latest `aa` run measured: a change only counts if it
-is larger than what identical source can show. Floors are estimates from one
-control run; re-run `aa` when conditions change, and on a quiet machine they
-tighten. `compare` (two results files from different sessions) works, but
-says plainly that session drift is in its ratios.
+the same way. It found that two such builds differed by 3–5% on the parser,
+always in the same direction. Their machine code was instruction for
+instruction identical; the parser's hot functions just sat 48 bytes further
+along in one, which moved its tight loops relative to cache lines. An A/B had
+earlier reported a 3% "regression" in code the change never touched, and that
+was where it came from. Since 2026-11-01 everything is built with
+`-falign-functions=64` (the app too, so what's measured is what ships), and
+the same control puts the parser within about 1% between builds.
+
+`ab` still holds each metric to the floor the latest `aa` run measured, made
+with the same compiler flags: a change only counts if it is larger than what
+identical source can show. Floors are estimates from one control run; re-run
+`aa` when conditions change. `reflow.10000` is the noisiest metric left (it is
+allocation-heavy), at about 5% between builds. `compare` (two results files
+from different sessions) works, but says plainly that session drift is in its
+ratios.
 
 **Claims are executable.** `claims.json` is the list of what the README and
 release notes may say about performance. Each claim is a threshold on a
@@ -232,8 +240,9 @@ These shaped the current design and still apply:
   trigger was 36%.
 - **A semantically neutral edit can move a harness 2x through codegen.**
   Adding wide-character handling to vte_bench made it 2.2x faster on a
-  workload with no wide characters. Today's A/A' control measures the same
-  effect, smaller: 3–5% between two builds of identical source.
+  workload with no wide characters. The A/A' control measured the same
+  effect, smaller: 3–5% between two builds of identical source, until
+  functions were aligned to cache lines.
 - **Uniform drift across unrelated workloads is thermal, not code.** Measure
   both sides in the same session; `ab` does this by construction.
 - **Keep the two parser harnesses doing the same work.** Parity broke twice

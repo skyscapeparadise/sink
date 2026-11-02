@@ -393,7 +393,7 @@ def load_json(path, default=None):
 
 
 def results_name(env, quick):
-    date = env["date"][:10]
+    date = env["date"][:16].replace(":", "")  # with the time, so a rerun doesn't replace a run
     sha = env["git_commit"][:7] or "nogit"
     return f"{date}-{sha}{'-dirty' if env['git_dirty'] else ''}{'-quick' if quick else ''}"
 
@@ -511,10 +511,12 @@ def compare_metric_sets(a_ms, b_ms, a_label="A", b_label="B"):
     return rows
 
 
-def noise_floors(env):
+def noise_floors(env, cxx_flags):
     """Per-metric build-to-build noise from the latest A/A' control on this
-    machine: how far from 1.0 the interval reached between two builds of the
-    same source. Empty if there is none."""
+    machine, built with the same compiler flags: how far from 1.0 the
+    interval reached between two builds of the same source. Empty if there is
+    none. A control made with other flags says nothing about these builds --
+    -falign-functions alone changed the parser's build-to-build spread."""
     if not os.path.isdir(RESULTS):
         return {}, None
     files = sorted((f for f in os.listdir(RESULTS) if f.endswith("-aa.json")),
@@ -522,6 +524,8 @@ def noise_floors(env):
     for f in reversed(files):
         doc = load_json(os.path.join(RESULTS, f))
         if doc.get("environment", {}).get("host_cpu") != env["host_cpu"] or not doc.get("separate_builds"):
+            continue
+        if doc.get("build", {}).get("cxx_flags") != cxx_flags:
             continue
         floors = {}
         for r in doc["rows"]:
@@ -532,7 +536,7 @@ def noise_floors(env):
     return {}, None
 
 
-def compare_paired(a_ms, b_ms, a_rounds, b_rounds, a_label, b_label, floors=None):
+def compare_paired(a_ms, b_ms, a_rounds, b_rounds, a_label, b_label, floors=None, show_floor=True):
     """Interleaved A/B: one ratio per round, judged by paired_ratio_ci."""
     floors = floors or {}
     rows = []
@@ -550,14 +554,18 @@ def compare_paired(a_ms, b_ms, a_rounds, b_rounds, a_label, b_label, floors=None
                      "floor": floor,
                      "verdict": verdict((lo, hi), a["better"], floor) if enough else "too few rounds (<4) to say",
                      "same_output": a.get("fingerprint") == b.get("fingerprint")})
-    print(f"\n{'metric':<40} {a_label:>10} {b_label:>10} {'B/A':>7} {'95% CI':>15} {'floor':>6}  verdict")
+    head = f"{'floor':>6}  " if show_floor else ""
+    print(f"\n{'metric':<40} {a_label:>10} {b_label:>10} {'B/A':>7} {'95% CI':>15} {head}verdict")
     for r in rows:
         ci = f"{r['ci'][0]:.3f}-{r['ci'][1]:.3f}"
         note = "" if r["same_output"] else "  [different output: not the same work]"
-        print(f"{r['id']:<40} {fmt(r['a']):>10} {fmt(r['b']):>10} {r['ratio']:>7.3f} {ci:>15} "
-              f"{100 * r['floor']:>5.1f}%  {r['verdict']}{note}")
-    print("\nOne paired ratio per interleaved round. 'floor' is the smallest change that counts for that metric: "
-          "what two builds of the same source differed by in the latest `aa` run (at least 1%).")
+        fl = f"{100 * r['floor']:>5.1f}%  " if show_floor else ""
+        print(f"{r['id']:<40} {fmt(r['a']):>10} {fmt(r['b']):>10} {r['ratio']:>7.3f} {ci:>15} {fl}{r['verdict']}{note}")
+    if show_floor:
+        print("\nOne paired ratio per interleaved round. 'floor' is the smallest change that counts for that metric: "
+              "what two builds of the same source differed by in the latest `aa` run (at least 1%).")
+    else:
+        print(f"\nOne paired ratio per interleaved round; a difference counts above {100 * MIN_EFFECT:.0f}%.")
     return rows
 
 
@@ -623,16 +631,18 @@ def cmd_ab(args, control=False):
         # Two separate builds of the same source, in different directories,
         # exactly as a real A/B gets. Reusing one binary for both sides would
         # only measure run-to-run noise, and miss the larger effect: code
-        # layout differs from build to build, and that alone moved untouched
-        # metrics by ~3% in an A/B here.
+        # layout differs from build to build, and before -falign-functions=64
+        # that alone moved untouched parser metrics by 3-5%.
         specs = [("A", "WORKTREE"), ("A2", "dir:" + ROOT)]
     else:
         specs = [("A", args.a), ("B", args.b)]
     builds = {}
+    binfo = {}
     for label, spec in specs:
         tree = prepare_tree(spec, label)
         bdir = BUILD if tree == ROOT else os.path.join(AB_ROOT, label)
-        build(tree, bdir)
+        info = build(tree, bdir)
+        binfo = binfo or info
         builds[label] = bdir
     per_round = {k: max(2, v // args.rounds) for k, v in (QUICK if args.quick else FULL).items()}
     pooled = {label: {} for label, _ in specs}
@@ -654,20 +664,24 @@ def cmd_ab(args, control=False):
                     if p.get("fingerprint") != m.get("fingerprint"):
                         p["fingerprint"] = "inconsistent"
     a, b = order
-    floors, floor_file = ({}, None) if control else noise_floors(env)
+    floors, floor_file = ({}, None) if control else noise_floors(env, binfo.get("cxx_flags"))
     if not control:
         if floor_file:
             print(f"\nNoise floors from {floor_file}")
         else:
-            print("\nNo A/A' control on file for this machine, so every metric uses a 1% floor. Build-to-build "
-                  "noise is often larger than that: run `bench/run.py aa` first for verdicts you can rely on.")
-    rows = compare_paired(pooled[a], pooled[b], per_round_medians[a], per_round_medians[b], a, b, floors)
+            print("\nNo A/A' control on file for this machine and these compiler flags, so every metric uses a 1% "
+                  "floor. Run `bench/run.py aa` first for verdicts you can rely on.")
+    rows = compare_paired(pooled[a], pooled[b], per_round_medians[a], per_round_medians[b], a, b, floors,
+                          show_floor=not control)
     res = {"suite": 1, "kind": "aa" if control else "ab", "separate_builds": True, "a": specs[0][1], "b": specs[1][1],
+           "build": binfo,
            "rounds": args.rounds, "environment": env, "noise": noise, "rows": rows,
            "pooled": {k: list(v.values()) for k, v in pooled.items()}}
     os.makedirs(RESULTS, exist_ok=True)
     tag = "aa" if control else f"ab-{re.sub(r'[^A-Za-z0-9]+', '_', specs[0][1])}-vs-{re.sub(r'[^A-Za-z0-9]+', '_', specs[1][1])}"
-    path = os.path.join(RESULTS, f"{env['date'][:10]}-{tag}.json")
+    # Date and time: a second run the same day must not replace the first.
+    stamp = env["date"][:16].replace(":", "")
+    path = os.path.join(RESULTS, f"{stamp}-{tag}.json")
     with open(path, "w") as f:
         json.dump(res, f, indent=1)
     print(f"\nwrote {os.path.relpath(path, ROOT)}")
@@ -677,8 +691,8 @@ def cmd_ab(args, control=False):
             print(f"\nTwo builds of the same source 'differed' on {len(diffs)} metric(s):")
             for r in diffs:
                 print(f"  {r['id']}: {r['ratio']:.3f}  (95% CI {r['ci'][0]:.3f}-{r['ci'][1]:.3f})")
-            print("That is code layout, not code. `ab` now treats changes smaller than these as noise for those "
-                  "metrics; every metric's floor is saved in this file.")
+            print("Same source, so this is the build (code layout) or the machine, not the code. `ab` treats changes "
+                  "smaller than these as noise for those metrics; every metric's floor is saved in this file.")
         else:
             print("\nTwo builds of the same source showed no detectable difference on any metric.")
 
