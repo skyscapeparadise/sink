@@ -342,6 +342,33 @@ set_tests_properties(prompt_editing_zsh prompt_editing_bash
                      prompt_editing_zsh_integration prompt_editing_bash_integration
                      PROPERTIES LABELS integration TIMEOUT 900)
 
+# Frees panes mid-flood to prove ~Pane stops the pty reader before anything it
+# uses is destroyed (docs/threading-plan.md, phase 2). Meaningful under
+# -DSINK_TSAN=ON or AddressSanitizer; without them it only finds crashes.
+add_executable(pane_lifetime_test
+    tests/test_pane_lifetime.cpp
+    src/sync_output.cpp
+    src/ansi_parser.cpp
+    src/terminal_grid.cpp
+    src/terminal_images.cpp
+    src/font_manager.cpp
+    ${SHELL_SPAWN_SOURCES}
+)
+target_include_directories(pane_lifetime_test PRIVATE src vendor/tomlplusplus ${CMAKE_BINARY_DIR}/generated)
+target_link_libraries(pane_lifetime_test PRIVATE
+    sink_shader_compiler
+    SDL3::SDL3
+    SDL3_ttf::SDL3_ttf
+    SDL3_image::SDL3_image
+    ZLIB::ZLIB
+    PkgConfig::AVCODEC
+    PkgConfig::AVFORMAT
+    PkgConfig::AVUTIL
+    PkgConfig::SWSCALE
+)
+add_test(NAME pane_lifetime COMMAND pane_lifetime_test)
+set_tests_properties(pane_lifetime PROPERTIES LABELS integration TIMEOUT 900)
+
 # tmux compatibility proof. Drives a real tmux in a PTY, replays what it writes
 # through sink's parser, and compares against tmux's own view. Registered only
 # when tmux is installed, and labelled "integration" because it spawns servers

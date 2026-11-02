@@ -216,8 +216,41 @@ in each terminal.
 
 **Done when:** that test is clean under both sanitizers.
 
+**Progress, 2026-11-02:**
+- **The destructor.** `~Pane()` now stops the pty reader before any member
+  is destroyed. A destructor body runs first, so every way a pane is freed
+  is covered, including ones that don't call `shutdown()`. The rule that
+  comes with it: never free a pane while holding its lock.
+- **Member order.** `pty` is already declared after the grid and parser
+  (phase 1), so they outlive it. The state declared after `pty` (pending
+  output, the sync hold, the typewriter buffer) is exactly what the
+  destructor protects.
+- **The test.** `tests/test_pane_lifetime.cpp` (ctest `pane_lifetime`,
+  integration label) frees 1,000 panes mid-flood, every tenth with its
+  reader stalled on backpressure, under ThreadSanitizer and
+  AddressSanitizer.
+  - **Its limit today:** the reader touches only `PTYBridge`'s own buffer,
+    so the test would pass even without the destructor. It's the guard for
+    phase 3. Once the reader parses, prove the test has teeth by removing
+    `~Pane()` once and watching it fail under ASan.
+- **HDR renderer recreation** already releases inline-image textures
+  (`release_textures()`, keeping the pixels), and glyph textures live in
+  the per-window FontManager, not the grid. Nothing to fix.
+- **Found for phase 3:** the image store destroys GPU textures from inside
+  the parser, when a kitty delete command arrives and when old images are
+  evicted at the memory cap (`TerminalImages::drop_image()` and the
+  eviction loop). After phase 3 that would run on the reader thread, and
+  SDL textures may only be destroyed on the render thread. Phase 3 step 0,
+  below.
+- **Noted, not changed:** closing a pane takes ~50 ms, because
+  `PTYBridge::shutdown()` gives the shell 50 ms to exit before SIGKILL.
+  Closing a window with four panes takes ~200 ms.
+
 ### Phase 3: parse on the reader thread, behind the switch (medium)
 
+0. Make the image store defer freeing GPU textures. Textures of deleted
+   or evicted images go on a list the frame frees, instead of being
+   destroyed inside the parser (found in phase 2).
 1. `PTYBridge` gets an output handler, called on the reader thread with each
    chunk. With the switch on, the handler is the pane's:
    - lock, then `sync_output::parse` in slices, yielding between slices

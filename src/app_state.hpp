@@ -62,6 +62,22 @@ struct Pane {
     };
     Locked lock() { return Locked(*this); }
 
+    // Stops the pty reader before anything it uses is destroyed. Members are
+    // destroyed in reverse order of declaration, so without this the pending
+    // output, the synchronized-output hold and the typewriter buffer below
+    // would go before the reader thread was joined -- harmless while the
+    // reader only fills PTYBridge's own buffer, a use-after-free once it
+    // parses (docs/threading-plan.md, phase 3). A destructor's body runs
+    // before any member is destroyed, so every way a pane is freed is
+    // covered, not just the ones that remember to call shutdown().
+    //
+    // Never free a pane while holding its lock: once the reader parses under
+    // it, the reader would wait for the lock while this waits for the reader.
+    ~Pane() { pty.shutdown(); }
+    Pane() = default;
+    Pane(const Pane&) = delete;
+    Pane& operator=(const Pane&) = delete;
+
 private:
     TerminalGrid terminal_;
     ANSIParser parser_;
