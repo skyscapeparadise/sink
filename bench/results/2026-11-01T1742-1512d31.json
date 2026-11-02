@@ -1,0 +1,3039 @@
+{
+ "suite": 1,
+ "name": "2026-11-01T1742-1512d31",
+ "quick": false,
+ "environment": {
+  "date": "2026-11-01T17:42:46-08:00",
+  "host_cpu": "Apple M1 Max",
+  "cores": 10,
+  "perf_cores": "8",
+  "memory_gb": 64.0,
+  "os": "macOS 27.2 (26B123)",
+  "model": "MacBookPro18,4",
+  "power": "AC",
+  "low_power_mode": false,
+  "thermal": "Note: No thermal warning level has been recorded Note: No performance warning level has been recorded Note: No CPU power status has been recorded",
+  "load_avg": [
+   2.97,
+   3.58,
+   4.0
+  ],
+  "busiest_processes": [
+   "99.4 /Users/kady/Library/Application Support/Steam/Steam.AppBundle/Steam/Contents/MacOS/steam_osx",
+   "15.1 /opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python",
+   "10.8 /usr/sbin/coreaudiod",
+   "7.3 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+   "4.8 /System/Library/CoreServices/loginwindow.app/Contents/MacOS/loginwindow",
+   "4.1 /Library/Application Support/Universal Audio/Apollo/UA Mixer Engine.app/Contents/MacOS/UA Mixer Engine"
+  ],
+  "git_commit": "1512d3123ebe5a9aa7fe0242368db4f74074987f",
+  "git_dirty": false,
+  "load_avg_after": [
+   2.71,
+   3.37,
+   3.89
+  ]
+ },
+ "build": {
+  "source_digest": "d8973a1769276095fcb7277ea7404ab0ecbae9ee650a41b818a64a09823f6dfa",
+  "build_type": "Release",
+  "cxx_flags": "-O3 -DNDEBUG -std=gnu++20 -arch arm64 -mmacosx-version-min=26.0 -fstack-protector-strong -ftrivial-auto-var-init=zero -Wformat -Werror=format-security -falign-functions=64",
+  "compiler": "Apple clang version 21.0.0 (clang-2100.3.34.2)"
+ },
+ "noise": [],
+ "benches": [
+  {
+   "bench": "sink_bench",
+   "config": {
+    "cols": 120,
+    "rows": 50,
+    "chunk_bytes": 8192,
+    "samples": 20,
+    "warmup": 3
+   },
+   "metrics": [
+    {
+     "id": "parser.plain_text",
+     "label": "plain text (cat-like)",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "11c624c82b6c772c",
+     "info": {
+      "screen_text": "ba9d41cfd4dca670",
+      "bytes": 8388608
+     },
+     "samples": [
+      218.082192,
+      216.663943,
+      217.571132,
+      217.681394,
+      217.573599,
+      218.443949,
+      218.011868,
+      217.583712,
+      216.428011,
+      216.703066,
+      217.589382,
+      216.65905,
+      217.293139,
+      217.247655,
+      217.211526,
+      217.231922,
+      216.836691,
+      217.400166,
+      217.21152,
+      217.141267
+     ]
+    },
+    {
+     "id": "parser.colored_text",
+     "label": "SGR-heavy (colorized ls)",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "779df38d73ec7671",
+     "info": {
+      "screen_text": "89b5c2df0e85cfb1",
+      "bytes": 8388608
+     },
+     "samples": [
+      151.391979,
+      151.792817,
+      151.552586,
+      151.212417,
+      151.234451,
+      149.818696,
+      150.950989,
+      150.99824,
+      151.059781,
+      151.253752,
+      151.240169,
+      150.986368,
+      151.099485,
+      151.176459,
+      151.196342,
+      150.358629,
+      151.034824,
+      151.2198,
+      151.120058,
+      150.885391
+     ]
+    },
+    {
+     "id": "parser.cursor_heavy",
+     "label": "cursor-heavy (TUI redraw)",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "ef7f2d28c21defbe",
+     "info": {
+      "screen_text": "09ab053c2a4d3ed0",
+      "bytes": 8388608
+     },
+     "samples": [
+      179.730009,
+      179.459211,
+      179.585776,
+      180.593532,
+      179.809966,
+      179.940563,
+      179.709152,
+      179.846512,
+      179.831186,
+      179.573847,
+      180.223137,
+      179.612822,
+      179.826804,
+      179.830172,
+      179.682746,
+      179.589976,
+      179.652818,
+      179.662235,
+      179.755253,
+      179.127536
+     ]
+    },
+    {
+     "id": "parser.unicode_heavy",
+     "label": "UTF-8 heavy (emoji/CJK/box)",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "f96126fc6df44356",
+     "info": {
+      "screen_text": "702bcb945873ca57",
+      "bytes": 8388608
+     },
+     "samples": [
+      175.86009,
+      175.523437,
+      175.495363,
+      175.389557,
+      175.592463,
+      175.480285,
+      175.527288,
+      175.477078,
+      175.618644,
+      175.532426,
+      175.763014,
+      175.847848,
+      176.155515,
+      176.556431,
+      177.041255,
+      175.829489,
+      175.583954,
+      175.377699,
+      175.108988,
+      175.048323
+     ]
+    },
+    {
+     "id": "parser.sync_tui",
+     "label": "synchronized-output TUI",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "2362197c8e825316",
+     "info": {
+      "screen_text": "22b5cd5db7c9589c",
+      "bytes": 8388289
+     },
+     "samples": [
+      165.469435,
+      165.344746,
+      165.503816,
+      165.591316,
+      165.602601,
+      165.388761,
+      165.488977,
+      165.434935,
+      165.55262,
+      165.462877,
+      165.628601,
+      164.967406,
+      165.413979,
+      165.867995,
+      165.317267,
+      165.680055,
+      165.490833,
+      165.30873,
+      165.713803,
+      165.608597
+     ]
+    },
+    {
+     "id": "parser.graphemes",
+     "label": "grapheme clusters",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "8a42c81317b212fb",
+     "info": {
+      "screen_text": "4734722064b27dc2",
+      "bytes": 8388570
+     },
+     "samples": [
+      138.224334,
+      138.141492,
+      138.159385,
+      137.715329,
+      137.610801,
+      138.146163,
+      138.165649,
+      138.100852,
+      137.641382,
+      137.656677,
+      137.622735,
+      137.852965,
+      137.791827,
+      137.805176,
+      137.748031,
+      137.819916,
+      138.003675,
+      137.891282,
+      137.504265,
+      137.760684
+     ]
+    },
+    {
+     "id": "parser.hyperlinks",
+     "label": "OSC 8 links + OSC 133 marks",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "6cb570e81b3f5aa2",
+     "info": {
+      "screen_text": "309527855b007d9a",
+      "bytes": 8388585
+     },
+     "samples": [
+      117.489867,
+      117.754461,
+      118.043179,
+      117.854354,
+      116.833981,
+      117.850663,
+      117.647169,
+      117.668726,
+      117.766595,
+      117.71793,
+      117.766524,
+      117.824773,
+      115.133897,
+      117.435684,
+      117.670386,
+      117.434604,
+      117.527551,
+      117.789499,
+      112.349511,
+      116.887753
+     ]
+    },
+    {
+     "id": "parser.images",
+     "label": "sixel + kitty images",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "4455f4b6be3b7996",
+     "info": {
+      "screen_text": "ac739513c44b5326",
+      "bytes": 8387040
+     },
+     "samples": [
+      82.3103127,
+      83.4890466,
+      83.4707141,
+      83.5105852,
+      83.5708632,
+      81.2931896,
+      83.4019187,
+      83.5078963,
+      83.4704955,
+      83.4572145,
+      83.5492577,
+      83.5117475,
+      83.4766301,
+      83.6291515,
+      83.4843993,
+      83.3106692,
+      82.8682748,
+      83.5677714,
+      83.5075327,
+      83.5519126
+     ]
+    },
+    {
+     "id": "parser_core.plain_text",
+     "label": "core: plain text (cat-like)",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "11c624c82b6c772c",
+     "info": {
+      "screen_text": "ba9d41cfd4dca670",
+      "bytes": 8388608
+     },
+     "samples": [
+      217.916109,
+      217.919819,
+      217.840945,
+      217.824141,
+      217.999743,
+      218.512571,
+      218.285504,
+      218.092103,
+      215.775434,
+      218.980849,
+      218.902709,
+      218.921674,
+      219.05955,
+      217.120641,
+      214.932188,
+      217.813762,
+      218.496153,
+      217.879758,
+      218.012611,
+      217.8496
+     ]
+    },
+    {
+     "id": "parser_core.colored_text",
+     "label": "core: SGR-heavy (colorized ls)",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "779df38d73ec7671",
+     "info": {
+      "screen_text": "89b5c2df0e85cfb1",
+      "bytes": 8388608
+     },
+     "samples": [
+      177.578657,
+      177.283354,
+      177.301852,
+      177.80774,
+      177.856331,
+      177.505933,
+      176.960809,
+      177.834586,
+      177.501333,
+      177.558623,
+      177.610201,
+      176.899179,
+      177.357374,
+      177.6406,
+      177.708341,
+      178.252293,
+      176.266294,
+      177.387034,
+      177.394244,
+      177.397029
+     ]
+    },
+    {
+     "id": "parser_core.cursor_heavy",
+     "label": "core: cursor-heavy (TUI redraw)",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "ef7f2d28c21defbe",
+     "info": {
+      "screen_text": "09ab053c2a4d3ed0",
+      "bytes": 8388608
+     },
+     "samples": [
+      200.512143,
+      200.466295,
+      200.5134,
+      201.057017,
+      200.684208,
+      200.827787,
+      200.58483,
+      200.790613,
+      200.630944,
+      200.95832,
+      200.627588,
+      200.71043,
+      200.75177,
+      200.582733,
+      200.501881,
+      200.341,
+      200.384904,
+      200.754083,
+      200.585881,
+      201.014495
+     ]
+    },
+    {
+     "id": "parser_core.unicode_heavy",
+     "label": "core: UTF-8 heavy (emoji/CJK/box)",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "f96126fc6df44356",
+     "info": {
+      "screen_text": "702bcb945873ca57",
+      "bytes": 8388608
+     },
+     "samples": [
+      176.150829,
+      176.187036,
+      176.149859,
+      176.190753,
+      175.964851,
+      176.0452,
+      177.188787,
+      177.227388,
+      177.374578,
+      177.420799,
+      177.160833,
+      177.138767,
+      174.850806,
+      176.089277,
+      176.305948,
+      176.201751,
+      176.225202,
+      176.349997,
+      175.31893,
+      176.347727
+     ]
+    },
+    {
+     "id": "findbar.1000",
+     "label": "1000 lines, per keystroke",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "matches=4502",
+     "info": {
+      "scrollback": 1000
+     },
+     "samples": [
+      0.261,
+      0.261167,
+      0.261041,
+      0.264167,
+      0.261042,
+      0.261084,
+      0.261,
+      0.261125,
+      0.261,
+      0.261125,
+      0.261,
+      0.261167,
+      0.260959,
+      0.261083,
+      0.261125,
+      0.261125,
+      0.261,
+      0.261083,
+      0.261,
+      0.261083
+     ]
+    },
+    {
+     "id": "findbar.10000",
+     "label": "10000 lines, per keystroke",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "matches=37139",
+     "info": {
+      "scrollback": 10000
+     },
+     "samples": [
+      2.507459,
+      2.511875,
+      2.51,
+      2.531375,
+      2.50175,
+      2.499959,
+      2.498875,
+      2.509542,
+      2.499458,
+      2.501667,
+      2.505709,
+      2.501625,
+      2.525917,
+      2.507166,
+      2.508708,
+      2.498791,
+      2.501084,
+      2.506542,
+      2.509459,
+      2.502417
+     ]
+    },
+    {
+     "id": "findbar.100000",
+     "label": "100000 lines, per keystroke",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "matches=350275",
+     "info": {
+      "scrollback": 100000
+     },
+     "samples": [
+      24.865584,
+      24.97525,
+      25.03575,
+      24.974,
+      25.047833,
+      25.043583,
+      25.066041,
+      24.956875,
+      25.046833,
+      25.002417,
+      25.02375,
+      24.986084,
+      25.047416,
+      25.009458,
+      25.002625,
+      24.987542,
+      24.990375,
+      24.966084,
+      25.083708,
+      25.008958
+     ]
+    },
+    {
+     "id": "reflow.1000",
+     "label": "1000 lines, per resize",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "8a17a5b81f321530",
+     "info": {
+      "scrollback": 1000
+     },
+     "samples": [
+      0.87725,
+      0.948209,
+      0.9205,
+      0.986167,
+      0.922792,
+      0.956917,
+      0.879583,
+      0.917208,
+      0.904167,
+      0.951916,
+      0.904083,
+      0.923959,
+      0.867542,
+      0.92025,
+      0.908542,
+      0.959583,
+      0.907833,
+      0.94675,
+      0.866667,
+      0.910792,
+      0.907292,
+      0.953041,
+      0.905,
+      0.923583,
+      0.868458,
+      0.918625,
+      0.900708,
+      0.958375,
+      0.909375,
+      0.927959,
+      0.870875,
+      0.911708,
+      0.898916,
+      0.950917,
+      0.910333,
+      0.939708,
+      0.874125,
+      0.915083,
+      0.901542,
+      0.992125
+     ]
+    },
+    {
+     "id": "reflow.10000",
+     "label": "10000 lines, per resize",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "6825caa6e1c4ed23",
+     "info": {
+      "scrollback": 10000
+     },
+     "samples": [
+      9.038041,
+      11.9095,
+      10.37125,
+      13.109959,
+      10.639875,
+      12.006167,
+      9.352458,
+      12.209708,
+      10.516667,
+      13.135708,
+      10.590875,
+      11.961,
+      9.042416,
+      12.023292,
+      10.314458,
+      13.025791,
+      10.401584,
+      11.728667,
+      8.906333,
+      11.87475,
+      10.252875,
+      13.011542,
+      10.260958,
+      11.766709,
+      8.884792,
+      11.744541,
+      10.22475,
+      12.93975,
+      10.361542,
+      11.752875,
+      8.907667,
+      11.824542,
+      10.232208,
+      12.879667,
+      10.3615,
+      11.77425,
+      8.92025,
+      11.818125,
+      10.318,
+      12.905208
+     ]
+    }
+   ],
+   "exit_code": 0,
+   "stderr": ""
+  },
+  {
+   "bench": "pty_bench",
+   "config": {
+    "cols": 120,
+    "rows": 50,
+    "frame_ms": 16.667,
+    "parse_budget_ms": 8,
+    "samples": 10,
+    "child": "/bin/sh -c 'stty -opost -echo; exec /bin/cat FILE'"
+   },
+   "metrics": [
+    {
+     "id": "pty.plain_text",
+     "label": "pty: plain text",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "11c624c82b6c772c",
+     "info": {
+      "bytes": 8388608,
+      "same_as": "parser.plain_text"
+     },
+     "samples": [
+      161.79907,
+      164.337977,
+      149.036502,
+      171.472972,
+      166.114537,
+      168.790615,
+      168.432134,
+      164.016209,
+      165.529226,
+      165.040332
+     ]
+    },
+    {
+     "id": "pty.cursor_heavy",
+     "label": "pty: cursor-heavy",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "ef7f2d28c21defbe",
+     "info": {
+      "bytes": 8388608,
+      "same_as": "parser.cursor_heavy"
+     },
+     "samples": [
+      167.363285,
+      166.141707,
+      167.032775,
+      167.814419,
+      164.590569,
+      167.620005,
+      167.099936,
+      166.819442,
+      164.214847,
+      166.270188
+     ]
+    },
+    {
+     "id": "pty.sync_tui",
+     "label": "pty: synchronized-output TUI",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "2362197c8e825316",
+     "info": {
+      "bytes": 8388289,
+      "same_as": "parser.sync_tui"
+     },
+     "samples": [
+      154.404101,
+      150.431369,
+      154.518428,
+      152.41931,
+      154.356308,
+      154.180042,
+      154.257588,
+      154.623579,
+      154.020733,
+      148.040964
+     ]
+    },
+    {
+     "id": "pty_paced.plain_text",
+     "label": "paced: plain text",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "11c624c82b6c772c",
+     "info": {
+      "bytes": 8388608,
+      "same_as": "parser.plain_text"
+     },
+     "samples": [
+      87.9297222,
+      87.6835249,
+      87.6680307,
+      87.3986602,
+      87.1385333,
+      87.4001325,
+      87.6523816,
+      87.6715538,
+      87.4158903,
+      87.6618663
+     ]
+    },
+    {
+     "id": "pty_paced.plain_text.worst_frame",
+     "label": "paced: plain text, worst frame",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": null,
+     "info": {
+      "frame_ms": 16.667
+     },
+     "samples": [
+      8.281208,
+      8.255208,
+      8.231958,
+      8.263334,
+      8.215458,
+      8.228708,
+      8.269417,
+      8.278625,
+      8.218375,
+      8.226125
+     ]
+    },
+    {
+     "id": "pty_paced.cursor_heavy",
+     "label": "paced: cursor-heavy",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "ef7f2d28c21defbe",
+     "info": {
+      "bytes": 8388608,
+      "same_as": "parser.cursor_heavy"
+     },
+     "samples": [
+      75.4938057,
+      76.1060347,
+      76.1012384,
+      76.1082365,
+      75.3648421,
+      76.102716,
+      76.1089613,
+      76.0913762,
+      76.1059138,
+      75.8563168
+     ]
+    },
+    {
+     "id": "pty_paced.cursor_heavy.worst_frame",
+     "label": "paced: cursor-heavy, worst frame",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": null,
+     "info": {
+      "frame_ms": 16.667
+     },
+     "samples": [
+      8.227209,
+      8.263084,
+      8.339708,
+      8.29375,
+      8.214584,
+      8.303167,
+      8.303792,
+      8.297666,
+      8.293583,
+      8.3065
+     ]
+    },
+    {
+     "id": "pty_paced.sync_tui",
+     "label": "paced: synchronized-output TUI",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "2362197c8e825316",
+     "info": {
+      "bytes": 8388289,
+      "same_as": "parser.sync_tui"
+     },
+     "samples": [
+      67.1502951,
+      67.0048091,
+      67.1552744,
+      67.1420762,
+      67.1494491,
+      67.1660105,
+      67.1251036,
+      67.4080541,
+      67.1449402,
+      66.8836397
+     ]
+    },
+    {
+     "id": "pty_paced.sync_tui.worst_frame",
+     "label": "paced: synchronized-output TUI, worst frame",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": null,
+     "info": {
+      "frame_ms": 16.667
+     },
+     "samples": [
+      8.006833,
+      8.005792,
+      8.005875,
+      8.005667,
+      8.005666,
+      8.006583,
+      8.006042,
+      8.008708,
+      8.002541,
+      8.004791
+     ]
+    }
+   ],
+   "exit_code": 0,
+   "stderr": ""
+  },
+  {
+   "bench": "render_bench",
+   "config": {
+    "cols": 200,
+    "rows": 50,
+    "font_pt": 15,
+    "max_batch_frames": 20,
+    "samples": 15,
+    "renderer": "gpu",
+    "output_px": "4208x1678",
+    "pixel_density": 2,
+    "crt_shader": "yes"
+   },
+   "metrics": [
+    {
+     "id": "render.blank.cpu",
+     "label": "blank grid (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "51c4bc74",
+     "info": {
+      "pixels": "2ddb07471b3a9462",
+      "distinct_colors": 2,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.12362075,
+      0.12271245,
+      0.1225186,
+      0.12128735,
+      0.12296045,
+      0.1214501,
+      0.1218249,
+      0.1246834,
+      0.1207292,
+      0.1210207,
+      0.1211166,
+      0.1210667,
+      0.12090425,
+      0.1208604,
+      0.1210562
+     ]
+    },
+    {
+     "id": "render.blank.frame",
+     "label": "blank grid (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "51c4bc74",
+     "info": {
+      "pixels": "2ddb07471b3a9462",
+      "distinct_colors": 2,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.66928955,
+      0.64398955,
+      0.6767458,
+      0.6495854,
+      0.61851875,
+      0.61695415,
+      0.61991665,
+      0.69387915,
+      0.65504585,
+      0.65381455,
+      0.66969585,
+      0.6714708,
+      0.6717146,
+      0.6800792,
+      0.6273021
+     ]
+    },
+    {
+     "id": "render.plain.cpu",
+     "label": "plain text (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "a7580100f7610c87",
+      "distinct_colors": 75,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.2574791,
+      0.2604771,
+      0.26016675,
+      0.26013345,
+      0.26002505,
+      0.26115215,
+      0.26001655,
+      0.2599563,
+      0.26012695,
+      0.2599228,
+      0.2600499,
+      0.26036035,
+      0.26028335,
+      0.2603605,
+      0.26067725
+     ]
+    },
+    {
+     "id": "render.plain.frame",
+     "label": "plain text (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "a7580100f7610c87",
+      "distinct_colors": 75,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.6944125,
+      0.693575,
+      0.68685,
+      0.69067295,
+      0.6961375,
+      0.69536045,
+      0.6953896,
+      0.69288335,
+      0.6965604,
+      0.69044165,
+      0.69289585,
+      0.6921396,
+      0.68862915,
+      0.69419165,
+      0.6956771
+     ]
+    },
+    {
+     "id": "render.sgr.cpu",
+     "label": "SGR-heavy (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "e9e729c8",
+     "info": {
+      "pixels": "d4c8e65f2252abde",
+      "distinct_colors": 84,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.235125,
+      0.23456445,
+      0.2343647,
+      0.2350438,
+      0.23418525,
+      0.2349063,
+      0.2344728,
+      0.23397295,
+      0.2346458,
+      0.2342126,
+      0.23492715,
+      0.234077,
+      0.2346937,
+      0.2344145,
+      0.23441255
+     ]
+    },
+    {
+     "id": "render.sgr.frame",
+     "label": "SGR-heavy (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "e9e729c8",
+     "info": {
+      "pixels": "d4c8e65f2252abde",
+      "distinct_colors": 84,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.66275205,
+      0.66645,
+      0.6676979,
+      0.67069375,
+      0.6665979,
+      0.67386665,
+      0.6686229,
+      0.6732125,
+      0.6685375,
+      0.67173335,
+      0.6703458,
+      0.71440415,
+      0.6499146,
+      0.6601625,
+      0.66219585
+     ]
+    },
+    {
+     "id": "render.unicode.cpu",
+     "label": "UTF-8 heavy (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "a36b6823",
+     "info": {
+      "pixels": "830cd9f07ee6f76d",
+      "distinct_colors": 70,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.21377285,
+      0.21316235,
+      0.2112126,
+      0.2107812,
+      0.2109813,
+      0.2107229,
+      0.2105645,
+      0.2129167,
+      0.21065835,
+      0.21102705,
+      0.21106475,
+      0.210825,
+      0.21133115,
+      0.21121865,
+      0.210925
+     ]
+    },
+    {
+     "id": "render.unicode.frame",
+     "label": "UTF-8 heavy (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "a36b6823",
+     "info": {
+      "pixels": "830cd9f07ee6f76d",
+      "distinct_colors": 70,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.64185415,
+      0.6356604,
+      0.63710835,
+      0.63686455,
+      0.64459375,
+      0.63581875,
+      0.6408979,
+      0.64442085,
+      0.64018335,
+      0.6448771,
+      0.63366875,
+      0.6386292,
+      0.63079585,
+      0.64099165,
+      0.6262521
+     ]
+    },
+    {
+     "id": "render.graphemes.cpu",
+     "label": "grapheme clusters (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "d15a45f2",
+     "info": {
+      "pixels": "d68572ab79943782",
+      "distinct_colors": 66,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.2648459,
+      0.2651083,
+      0.2657146,
+      0.26428935,
+      0.26461665,
+      0.2648999,
+      0.2645542,
+      0.26478955,
+      0.26452905,
+      0.26444175,
+      0.26431035,
+      0.26513535,
+      0.26479795,
+      0.26479575,
+      0.2646875
+     ]
+    },
+    {
+     "id": "render.graphemes.frame",
+     "label": "grapheme clusters (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "d15a45f2",
+     "info": {
+      "pixels": "d68572ab79943782",
+      "distinct_colors": 66,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.7094146,
+      0.700425,
+      0.7954333,
+      0.70603955,
+      0.706075,
+      0.70687705,
+      0.7106104,
+      0.7097375,
+      0.6959583,
+      0.71097915,
+      0.70919165,
+      0.70284165,
+      0.7074354,
+      0.70950625,
+      0.7097396
+     ]
+    },
+    {
+     "id": "render.cjk.cpu",
+     "label": "distinct CJK screenful (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "0d0bc569",
+     "info": {
+      "pixels": "ba8a47abc20111ae",
+      "distinct_colors": 91,
+      "output_px": "4208x1678",
+      "batch_frames": 1
+     },
+     "samples": [
+      77.508916,
+      68.74525,
+      63.252834,
+      23.9095,
+      77.86225,
+      68.40075,
+      63.113166,
+      23.981333,
+      77.335625,
+      68.474417,
+      62.438666,
+      24.007584,
+      77.842333,
+      68.992375,
+      62.848916
+     ]
+    },
+    {
+     "id": "render.cjk.frame",
+     "label": "distinct CJK screenful (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "0d0bc569",
+     "info": {
+      "pixels": "ba8a47abc20111ae",
+      "distinct_colors": 91,
+      "output_px": "4208x1678",
+      "batch_frames": 1
+     },
+     "samples": [
+      100.627208,
+      88.406625,
+      81.279334,
+      29.918334,
+      100.657792,
+      87.952,
+      81.385125,
+      29.950833,
+      100.402375,
+      88.243625,
+      81.072833,
+      30.013375,
+      100.721708,
+      88.326208,
+      81.183208
+     ]
+    },
+    {
+     "id": "render.painted.cpu",
+     "label": "painted backgrounds (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "006fdb91",
+     "info": {
+      "pixels": "50e45c5bfcd1ee27",
+      "distinct_colors": 70,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.59288545,
+      0.5924959,
+      0.5906939,
+      0.5908022,
+      0.59106455,
+      0.59062305,
+      0.59031895,
+      0.5904854,
+      0.59161655,
+      0.5905687,
+      0.59045205,
+      0.59171455,
+      0.58995835,
+      0.5914791,
+      0.59151875
+     ]
+    },
+    {
+     "id": "render.painted.frame",
+     "label": "painted backgrounds (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "006fdb91",
+     "info": {
+      "pixels": "50e45c5bfcd1ee27",
+      "distinct_colors": 70,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      1.1786917,
+      1.19350625,
+      1.17553125,
+      1.17157705,
+      1.1748896,
+      1.1792979,
+      1.16855415,
+      1.1800021,
+      1.17183545,
+      1.1719146,
+      1.1711271,
+      1.1726667,
+      1.16958545,
+      1.16646455,
+      1.1730729
+     ]
+    },
+    {
+     "id": "render.images.cpu",
+     "label": "inline images (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "50d5a1c0",
+     "info": {
+      "pixels": "5d60f09f321bb4c6",
+      "distinct_colors": 66,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.14364165,
+      0.14363955,
+      0.14363325,
+      0.14376255,
+      0.1441042,
+      0.1433061,
+      0.1430043,
+      0.1430147,
+      0.1432667,
+      0.14315005,
+      0.14301675,
+      0.14361455,
+      0.14317495,
+      0.14307295,
+      0.1430627
+     ]
+    },
+    {
+     "id": "render.images.frame",
+     "label": "inline images (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "50d5a1c0",
+     "info": {
+      "pixels": "5d60f09f321bb4c6",
+      "distinct_colors": 66,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.5578354,
+      0.55513335,
+      0.5599646,
+      0.5599667,
+      0.5632667,
+      0.55172915,
+      0.5576583,
+      0.54525415,
+      0.55139795,
+      0.55517915,
+      0.5461167,
+      0.54456875,
+      0.543675,
+      0.54839375,
+      0.5568646
+     ]
+    },
+    {
+     "id": "render.scrollback.cpu",
+     "label": "scrollback (deep) (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "0dc10005",
+     "info": {
+      "pixels": "121232f4dae7d7ab",
+      "distinct_colors": 69,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.26430195,
+      0.26455425,
+      0.26442715,
+      0.26483775,
+      0.26432095,
+      0.2644458,
+      0.2644292,
+      0.2643313,
+      0.26443335,
+      0.2643355,
+      0.26388755,
+      0.2641874,
+      0.26370635,
+      0.26413545,
+      0.26398535
+     ]
+    },
+    {
+     "id": "render.scrollback.frame",
+     "label": "scrollback (deep) (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "0dc10005",
+     "info": {
+      "pixels": "121232f4dae7d7ab",
+      "distinct_colors": 69,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.7041375,
+      0.70234165,
+      0.69042085,
+      0.6825167,
+      0.6829,
+      0.68400625,
+      0.68265,
+      0.68062085,
+      0.6945625,
+      0.6952146,
+      0.71040205,
+      0.68823335,
+      0.6955375,
+      0.700375,
+      0.7000125
+     ]
+    },
+    {
+     "id": "render.search.cpu",
+     "label": "scrollback + search (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "0dc10005",
+     "info": {
+      "pixels": "c3550ea943ea5825",
+      "distinct_colors": 82,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.35622715,
+      0.3556271,
+      0.35576675,
+      0.35707695,
+      0.35643535,
+      0.35668125,
+      0.35552275,
+      0.3567249,
+      0.35598125,
+      0.3562334,
+      0.35567095,
+      0.35694785,
+      0.3560833,
+      0.3564353,
+      0.3560041
+     ]
+    },
+    {
+     "id": "render.search.frame",
+     "label": "scrollback + search (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "0dc10005",
+     "info": {
+      "pixels": "c3550ea943ea5825",
+      "distinct_colors": 82,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.8032875,
+      0.80780625,
+      0.80130835,
+      0.7997,
+      0.8026229,
+      0.8092667,
+      0.80595835,
+      0.80496875,
+      0.80519375,
+      0.80659375,
+      0.80758955,
+      0.80710415,
+      0.804125,
+      0.8091875,
+      0.7971708
+     ]
+    },
+    {
+     "id": "render.panes4.cpu",
+     "label": "four panes (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "f23e92e0f23e92e0f23e92e0f23e92e0",
+     "info": {
+      "pixels": "bf9a428894cc539c",
+      "distinct_colors": 77,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.35645835,
+      0.3563709,
+      0.3567834,
+      0.3561958,
+      0.35641035,
+      0.3559896,
+      0.3562458,
+      0.35640615,
+      0.35368965,
+      0.3563751,
+      0.35645835,
+      0.35688745,
+      0.3563147,
+      0.35721045,
+      0.35685425
+     ]
+    },
+    {
+     "id": "render.panes4.frame",
+     "label": "four panes (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "f23e92e0f23e92e0f23e92e0f23e92e0",
+     "info": {
+      "pixels": "bf9a428894cc539c",
+      "distinct_colors": 77,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.8526083,
+      0.85603335,
+      0.852525,
+      0.85539585,
+      0.8549333,
+      0.85636665,
+      0.8493604,
+      0.8500354,
+      0.8627667,
+      0.85636045,
+      0.8607521,
+      0.85569375,
+      0.8592792,
+      0.8501625,
+      0.8602854
+     ]
+    },
+    {
+     "id": "render.gradient.cpu",
+     "label": "gradient background (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "492c260206fdca1c",
+      "distinct_colors": 80,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.26081045,
+      0.2608459,
+      0.26061245,
+      0.26109795,
+      0.260725,
+      0.26044175,
+      0.26122295,
+      0.26038545,
+      0.26068135,
+      0.2604729,
+      0.2606748,
+      0.2603103,
+      0.2607356,
+      0.2610832,
+      0.2609917
+     ]
+    },
+    {
+     "id": "render.gradient.frame",
+     "label": "gradient background (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "492c260206fdca1c",
+      "distinct_colors": 80,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.8595625,
+      0.86825,
+      0.86740625,
+      0.86983335,
+      0.86470205,
+      0.861875,
+      0.8630021,
+      0.8626167,
+      0.8621917,
+      0.8658833,
+      0.87045835,
+      0.8635542,
+      0.872325,
+      0.86300205,
+      0.86423335
+     ]
+    },
+    {
+     "id": "render.gel.cpu",
+     "label": "gel background (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "4cc10418cbaafc4f",
+      "distinct_colors": 174,
+      "output_px": "4208x1678",
+      "batch_frames": 11
+     },
+     "samples": [
+      0.260651545,
+      0.260314364,
+      0.260409273,
+      0.260636364,
+      0.261272636,
+      0.261102182,
+      0.260454545,
+      0.264609818,
+      0.260446818,
+      0.260238364,
+      0.261238455,
+      0.260776545,
+      0.261518727,
+      0.260890091,
+      0.262473455
+     ]
+    },
+    {
+     "id": "render.gel.frame",
+     "label": "gel background (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "4cc10418cbaafc4f",
+      "distinct_colors": 174,
+      "output_px": "4208x1678",
+      "batch_frames": 11
+     },
+     "samples": [
+      4.92256818,
+      4.91378791,
+      4.92159473,
+      4.92734855,
+      4.92082955,
+      4.91514773,
+      4.92456818,
+      4.92080682,
+      4.913481,
+      4.934303,
+      4.92260982,
+      4.91666664,
+      4.91519318,
+      4.92796591,
+      4.91703409
+     ]
+    },
+    {
+     "id": "render.shader.cpu",
+     "label": "shader background (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "ed0da70759244051",
+      "distinct_colors": 118,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.26093335,
+      0.26073945,
+      0.26127295,
+      0.2616833,
+      0.2608604,
+      0.2610417,
+      0.26118325,
+      0.26163335,
+      0.26113325,
+      0.26109365,
+      0.2610499,
+      0.2609062,
+      0.26171035,
+      0.26146255,
+      0.2613539
+     ]
+    },
+    {
+     "id": "render.shader.frame",
+     "label": "shader background (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "ed0da70759244051",
+      "distinct_colors": 118,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      2.3432375,
+      2.34737085,
+      2.35047915,
+      2.3485375,
+      2.3425104,
+      2.3441729,
+      2.345025,
+      2.3420104,
+      2.34528335,
+      2.34253125,
+      2.34184585,
+      2.34564585,
+      2.34438125,
+      2.34045835,
+      2.34024375
+     ]
+    },
+    {
+     "id": "render.picture.cpu",
+     "label": "4K picture background (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "601ee8e328ec40e2",
+      "distinct_colors": 324,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.2601666,
+      0.2603959,
+      0.26053755,
+      0.2602917,
+      0.2602686,
+      0.26150415,
+      0.26071455,
+      0.26016885,
+      0.2621209,
+      0.26240845,
+      0.26036235,
+      0.2603228,
+      0.2628667,
+      0.2604105,
+      0.260327
+     ]
+    },
+    {
+     "id": "render.picture.frame",
+     "label": "4K picture background (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "601ee8e328ec40e2",
+      "distinct_colors": 324,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.7544,
+      0.74816875,
+      0.7433146,
+      0.74097085,
+      0.74779375,
+      0.74453335,
+      0.745925,
+      0.73861875,
+      0.73864375,
+      0.74689375,
+      0.7471854,
+      0.7438479,
+      0.7398167,
+      0.74122085,
+      0.74790625
+     ]
+    },
+    {
+     "id": "render.video.cpu",
+     "label": "video background (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "nondeterministic",
+      "distinct_colors": 225,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.34581675,
+      0.34320615,
+      0.34492715,
+      0.345471,
+      0.3449355,
+      0.34958315,
+      0.3445834,
+      0.36665625,
+      0.3427957,
+      0.3379396,
+      0.322573,
+      0.357875,
+      0.3414126,
+      0.33854165,
+      0.35511465
+     ]
+    },
+    {
+     "id": "render.video.frame",
+     "label": "video background (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "nondeterministic",
+      "distinct_colors": 225,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.97497085,
+      0.97644375,
+      0.98857915,
+      0.98007085,
+      0.98449375,
+      0.9812458,
+      0.9807979,
+      1.0023625,
+      0.9695375,
+      0.96285835,
+      0.9372021,
+      0.98743335,
+      0.98699585,
+      0.9605708,
+      0.9787854
+     ]
+    },
+    {
+     "id": "render.crt.cpu",
+     "label": "CRT effect (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "b6f48b6a141e2840",
+      "distinct_colors": 79,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.29014805,
+      0.28969585,
+      0.28954185,
+      0.29097075,
+      0.28946665,
+      0.2896709,
+      0.288929,
+      0.29071455,
+      0.2898668,
+      0.28880625,
+      0.29147685,
+      0.2898395,
+      0.29011465,
+      0.2897646,
+      0.29005625
+     ]
+    },
+    {
+     "id": "render.crt.frame",
+     "label": "CRT effect (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "b6f48b6a141e2840",
+      "distinct_colors": 79,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      2.2552417,
+      2.25468125,
+      2.2517875,
+      2.26335415,
+      2.25212085,
+      2.25998335,
+      2.25382705,
+      2.25603335,
+      2.2608771,
+      2.2564125,
+      2.25876045,
+      2.2620125,
+      2.25638125,
+      2.25843125,
+      2.2644
+     ]
+    },
+    {
+     "id": "render.hdr.cpu",
+     "label": "HDR text (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "70cbfd20ef589d82",
+      "distinct_colors": 71,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.2649417,
+      0.2653418,
+      0.26473745,
+      0.265298,
+      0.26618555,
+      0.2652731,
+      0.26516045,
+      0.264602,
+      0.2624771,
+      0.2652104,
+      0.2651084,
+      0.265425,
+      0.2655229,
+      0.2649917,
+      0.2649396
+     ]
+    },
+    {
+     "id": "render.hdr.frame",
+     "label": "HDR text (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "70cbfd20ef589d82",
+      "distinct_colors": 71,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.7075146,
+      0.68875,
+      0.6888229,
+      0.70429795,
+      0.69794375,
+      0.69879375,
+      0.695375,
+      0.69476045,
+      0.69815,
+      0.70518955,
+      0.70098125,
+      0.68771665,
+      0.70185,
+      0.6915271,
+      0.696075
+     ]
+    },
+    {
+     "id": "render.everything.cpu",
+     "label": "gel + CRT + HDR + 4 panes (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "f23e92e0f23e92e0f23e92e0f23e92e0",
+     "info": {
+      "pixels": "6ac0d225dfa1c60e",
+      "distinct_colors": 219,
+      "output_px": "4208x1678",
+      "batch_frames": 8
+     },
+     "samples": [
+      0.426854,
+      0.425885375,
+      0.426255125,
+      0.423442875,
+      0.426713375,
+      0.42583875,
+      0.426692875,
+      0.429890625,
+      0.4274635,
+      0.427989625,
+      0.426239625,
+      0.427541625,
+      0.426953125,
+      0.4274065,
+      0.427598875
+     ]
+    },
+    {
+     "id": "render.everything.frame",
+     "label": "gel + CRT + HDR + 4 panes (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "f23e92e0f23e92e0f23e92e0f23e92e0",
+     "info": {
+      "pixels": "6ac0d225dfa1c60e",
+      "distinct_colors": 219,
+      "output_px": "4208x1678",
+      "batch_frames": 8
+     },
+     "samples": [
+      6.60429162,
+      6.59902612,
+      6.58432813,
+      6.60098437,
+      6.58411975,
+      6.5872865,
+      6.575677,
+      6.59007812,
+      6.5846145,
+      6.59883862,
+      6.597073,
+      6.57947388,
+      6.59854175,
+      6.58602087,
+      6.59713025
+     ]
+    }
+   ],
+   "exit_code": 0,
+   "stderr": "Video Background: VideoToolbox hardware accelerated decoding enabled (HEVC/H.264/ProRes).\nVideo Background: SDR content detected (sRGB / BT.709)\nVideo Background: texture format IYUV (8-bit)\nSuccessfully opened video: backgrounds/sinkpool.mp4 (1920x1080)\nVideo Background: VideoToolbox hardware accelerated decoding enabled (HEVC/H.264/ProRes).\nVideo Background: SDR content detected (sRGB / BT.709)\nVideo Background: texture format IYUV (8-bit)\nSuccessfully opened video: backgrounds/sinkpool.mp4 (1920x1080)\n"
+  },
+  {
+   "bench": "vte_bench",
+   "config": {
+    "cols": 120,
+    "rows": 50,
+    "chunk_bytes": 8192,
+    "samples": 20,
+    "warmup": 3,
+    "vte": "0.15"
+   },
+   "metrics": [
+    {
+     "id": "vte.plain_text",
+     "label": "vte: plain text (cat-like)",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": null,
+     "info": {
+      "screen_text": "ba9d41cfd4dca670",
+      "cells": "46d34c6e343d551b",
+      "bytes": 8388608
+     },
+     "samples": [
+      250.525516415,
+      250.544809689,
+      250.080103783,
+      250.095411399,
+      250.249271736,
+      247.208284568,
+      250.564427694,
+      251.465904775,
+      251.40465279,
+      250.485315298,
+      250.141681812,
+      250.278959364,
+      250.363159587,
+      250.407890979,
+      250.536304276,
+      250.022142586,
+      250.049814612,
+      250.129629681,
+      249.90107822,
+      250.53238131
+     ]
+    },
+    {
+     "id": "vte.colored_text",
+     "label": "vte: SGR-heavy (colorized ls)",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": null,
+     "info": {
+      "screen_text": "89b5c2df0e85cfb1",
+      "cells": "9d76f344cd78d469",
+      "bytes": 8388608
+     },
+     "samples": [
+      164.63827171,
+      164.863047751,
+      165.311457117,
+      164.706626924,
+      164.943352267,
+      164.514129522,
+      165.021750486,
+      164.971274068,
+      164.734892652,
+      164.577871748,
+      164.913033009,
+      164.62203696,
+      164.766561516,
+      164.792719392,
+      164.448043299,
+      164.670747427,
+      164.778863881,
+      164.868993552,
+      164.956106211,
+      164.924225049
+     ]
+    },
+    {
+     "id": "vte.cursor_heavy",
+     "label": "vte: cursor-heavy (TUI redraw)",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": null,
+     "info": {
+      "screen_text": "09ab053c2a4d3ed0",
+      "cells": "6849155899c453fa",
+      "bytes": 8388608
+     },
+     "samples": [
+      104.546976714,
+      104.646979954,
+      104.831647385,
+      104.812532959,
+      105.017713535,
+      104.654453169,
+      104.74226085,
+      104.855978675,
+      104.71906656,
+      104.665747841,
+      104.888514064,
+      104.788451045,
+      104.894187071,
+      104.821287893,
+      104.743060363,
+      104.888915624,
+      104.746431345,
+      104.817912092,
+      104.99652199,
+      104.868692926
+     ]
+    },
+    {
+     "id": "vte.unicode_heavy",
+     "label": "vte: UTF-8 heavy (emoji/CJK/box)",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": null,
+     "info": {
+      "screen_text": "702bcb945873ca57",
+      "cells": "77556eb984008a69",
+      "bytes": 8388608
+     },
+     "samples": [
+      272.109223009,
+      272.473373987,
+      272.005916129,
+      272.408047642,
+      272.385629956,
+      271.781827138,
+      273.502711967,
+      271.704142989,
+      271.428729924,
+      272.26936207,
+      271.852636298,
+      272.207986501,
+      271.995512074,
+      271.768365843,
+      271.503962261,
+      272.180202891,
+      272.016700193,
+      272.106918427,
+      271.906143981,
+      272.337338269
+     ]
+    }
+   ],
+   "exit_code": 0,
+   "stderr": ""
+  }
+ ],
+ "stats": {
+  "parser.plain_text": {
+   "n": 20,
+   "median": 217.270397,
+   "ci95": [
+    217.141267,
+    217.5814905
+   ],
+   "min": 216.428011,
+   "max": 218.443949,
+   "mad": 0.31614999999999327,
+   "rel_ci": 0.00202615499432259
+  },
+  "parser.colored_text": {
+   "n": 20,
+   "median": 151.1482585,
+   "ci95": [
+    151.01653199999998,
+    151.2271255
+   ],
+   "min": 149.818696,
+   "max": 151.792817,
+   "mad": 0.10946400000000267,
+   "rel_ci": 0.0013932909455256202
+  },
+  "parser.cursor_heavy": {
+   "n": 20,
+   "median": 179.7195805,
+   "ci95": [
+    179.63281999999998,
+    179.828488
+   ],
+   "min": 179.127536,
+   "max": 180.593532,
+   "mad": 0.1110984999999971,
+   "rel_ci": 0.0010887405782700006
+  },
+  "parser.unicode_heavy": {
+   "n": 20,
+   "median": 175.55819,
+   "ci95": [
+    175.487824,
+    175.79625149999998
+   ],
+   "min": 175.048323,
+   "max": 177.041255,
+   "mad": 0.17456199999999455,
+   "rel_ci": 0.0017568391426227021
+  },
+  "parser.sync_tui": {
+   "n": 20,
+   "median": 165.48990500000002,
+   "ci95": [
+    165.42445700000002,
+    165.5969585
+   ],
+   "min": 164.967406,
+   "max": 165.867995,
+   "mad": 0.10705349999997793,
+   "rel_ci": 0.001042368717294154
+  },
+  "parser.graphemes": {
+   "n": 20,
+   "median": 137.812546,
+   "ci95": [
+    137.715329,
+    138.05226349999998
+   ],
+   "min": 137.504265,
+   "max": 138.224334,
+   "mad": 0.18048749999999814,
+   "rel_ci": 0.0024448753744088286
+  },
+  "parser.hyperlinks": {
+   "n": 20,
+   "median": 117.669556,
+   "ci95": [
+    117.46277549999999,
+    117.7665595
+   ],
+   "min": 112.349511,
+   "max": 118.043179,
+   "mad": 0.16745299999999474,
+   "rel_ci": 0.0025816703175119264
+  },
+  "parser.images": {
+   "n": 20,
+   "median": 83.48672295,
+   "ci95": [
+    83.4572145,
+    83.51116635
+   ],
+   "min": 81.2931896,
+   "max": 83.6291515,
+   "mad": 0.046021599999996,
+   "rel_ci": 0.0006462326953748282
+  },
+  "parser_core.plain_text": {
+   "n": 20,
+   "median": 217.959781,
+   "ci95": [
+    217.84527250000002,
+    218.39903750000002
+   ],
+   "min": 214.932188,
+   "max": 219.05955,
+   "mad": 0.23587100000000305,
+   "rel_ci": 0.0025406751532751747
+  },
+  "parser_core.colored_text": {
+   "n": 20,
+   "median": 177.50363299999998,
+   "ci95": [
+    177.372204,
+    177.6406
+   ],
+   "min": 176.266294,
+   "max": 178.252293,
+   "mad": 0.17401999999998452,
+   "rel_ci": 0.0015120591926137967
+  },
+  "parser_core.cursor_heavy": {
+   "n": 20,
+   "median": 200.629266,
+   "ci95": [
+    200.5480665,
+    200.7529265
+   ],
+   "min": 200.341,
+   "max": 201.057017,
+   "mad": 0.12366049999999973,
+   "rel_ci": 0.0010210873223251312
+  },
+  "parser_core.unicode_heavy": {
+   "n": 20,
+   "median": 176.2134765,
+   "ci95": [
+    176.150344,
+    176.744382
+   ],
+   "min": 174.850806,
+   "max": 177.420799,
+   "mad": 0.15239850000000388,
+   "rel_ci": 0.0033711269523702507
+  },
+  "findbar.1000": {
+   "n": 20,
+   "median": 0.261083,
+   "ci95": [
+    0.261,
+    0.261125
+   ],
+   "min": 0.260959,
+   "max": 0.264167,
+   "mad": 6.249999999999312e-05,
+   "rel_ci": 0.0004787749489625377
+  },
+  "findbar.10000": {
+   "n": 20,
+   "median": 2.5061255,
+   "ci95": [
+    2.501646,
+    2.5090835
+   ],
+   "min": 2.498791,
+   "max": 2.531375,
+   "mad": 0.004417000000000115,
+   "rel_ci": 0.0029677284716986383
+  },
+  "findbar.100000": {
+   "n": 20,
+   "median": 25.0057915,
+   "ci95": [
+    24.986813,
+    25.039666500000003
+   ],
+   "min": 24.865584,
+   "max": 25.083708,
+   "mad": 0.031166500000001207,
+   "rel_ci": 0.00211365035175956
+  },
+  "reflow.1000": {
+   "n": 40,
+   "median": 0.9133955,
+   "ci95": [
+    0.9075625,
+    0.922792
+   ],
+   "min": 0.866667,
+   "max": 0.992125,
+   "mad": 0.013583500000000026,
+   "rel_ci": 0.016673500143147075
+  },
+  "reflow.10000": {
+   "n": 40,
+   "median": 11.184270999999999,
+   "ci95": [
+    10.361521,
+    11.8245
+   ],
+   "min": 8.884792,
+   "max": 13.135708,
+   "mad": 0.8680419999999991,
+   "rel_ci": 0.1308068268374399
+  },
+  "pty.plain_text": {
+   "n": 10,
+   "median": 165.28477900000001,
+   "ci95": [
+    163.0685235,
+    168.432134
+   ],
+   "min": 149.036502,
+   "max": 171.472972,
+   "mad": 2.2079624999999936,
+   "rel_ci": 0.032450722519343375
+  },
+  "pty.cursor_heavy": {
+   "n": 10,
+   "median": 166.9261085,
+   "ci95": [
+    165.7050055,
+    167.363285
+   ],
+   "min": 164.214847,
+   "max": 167.814419,
+   "mad": 0.6749085000000008,
+   "rel_ci": 0.009934212897558754
+  },
+  "pty.sync_tui": {
+   "n": 10,
+   "median": 154.218815,
+   "ci95": [
+    152.3057055,
+    154.437368
+   ],
+   "min": 148.040964,
+   "max": 154.623579,
+   "mad": 0.24884749999999656,
+   "rel_ci": 0.01382232446799701
+  },
+  "pty_paced.plain_text": {
+   "n": 10,
+   "median": 87.65712395,
+   "ci95": [
+    87.4001325,
+    87.6715538
+   ],
+   "min": 87.1385333,
+   "max": 87.9297222,
+   "mad": 0.13381729999999692,
+   "rel_ci": 0.0030963975062063406
+  },
+  "pty_paced.plain_text.worst_frame": {
+   "n": 10,
+   "median": 8.243583000000001,
+   "ci95": [
+    8.2235415,
+    8.2709795
+   ],
+   "min": 8.215458,
+   "max": 8.281208,
+   "mad": 0.022479500000000208,
+   "rel_ci": 0.005754536589247617
+  },
+  "pty_paced.cursor_heavy": {
+   "n": 10,
+   "median": 76.1019772,
+   "ci95": [
+    75.79259095,
+    76.10707515
+   ],
+   "min": 75.3648421,
+   "max": 76.1089613,
+   "mad": 0.006621700000010833,
+   "rel_ci": 0.004132405117064363
+  },
+  "pty_paced.cursor_heavy.worst_frame": {
+   "n": 10,
+   "median": 8.295708,
+   "ci95": [
+    8.260396,
+    8.3048335
+   ],
+   "min": 8.214584,
+   "max": 8.339708,
+   "mad": 0.00943800000000028,
+   "rel_ci": 0.005356685649977168
+  },
+  "pty_paced.sync_tui": {
+   "n": 10,
+   "median": 67.14719464999999,
+   "ci95": [
+    67.07487465,
+    67.1577298
+   ],
+   "min": 66.8836397,
+   "max": 67.4080541,
+   "mad": 0.01344780000000867,
+   "rel_ci": 0.0012339331588144067
+  },
+  "pty_paced.sync_tui.worst_frame": {
+   "n": 10,
+   "median": 8.0058335,
+   "ci95": [
+    8.005229,
+    8.006583
+   ],
+   "min": 8.002541,
+   "max": 8.008708,
+   "mad": 0.00047900000000034026,
+   "rel_ci": 0.00016912667494261394
+  },
+  "render.blank.cpu": {
+   "n": 15,
+   "median": 0.12128735,
+   "ci95": [
+    0.1210562,
+    0.1225186
+   ],
+   "min": 0.1207292,
+   "max": 0.1246834,
+   "mad": 0.0004269499999999954,
+   "rel_ci": 0.0120573167770588
+  },
+  "render.blank.frame": {
+   "n": 15,
+   "median": 0.65504585,
+   "ci95": [
+    0.6273021,
+    0.6717146
+   ],
+   "min": 0.61695415,
+   "max": 0.69387915,
+   "mad": 0.01666875000000001,
+   "rel_ci": 0.06780059746962762
+  },
+  "render.plain.cpu": {
+   "n": 15,
+   "median": 0.26013345,
+   "ci95": [
+    0.26002505,
+    0.26036035
+   ],
+   "min": 0.2574791,
+   "max": 0.26115215,
+   "mad": 0.0001771500000000148,
+   "rel_ci": 0.0012889538042879082
+  },
+  "render.plain.frame": {
+   "n": 15,
+   "median": 0.693575,
+   "ci95": [
+    0.69067295,
+    0.6953896
+   ],
+   "min": 0.68685,
+   "max": 0.6965604,
+   "mad": 0.0018145999999999995,
+   "rel_ci": 0.006800490213747756
+  },
+  "render.sgr.cpu": {
+   "n": 15,
+   "median": 0.2344728,
+   "ci95": [
+    0.2342126,
+    0.2349063
+   ],
+   "min": 0.23397295,
+   "max": 0.235125,
+   "mad": 0.000260200000000016,
+   "rel_ci": 0.002958552122037265
+  },
+  "render.sgr.frame": {
+   "n": 15,
+   "median": 0.6685375,
+   "ci95": [
+    0.66275205,
+    0.67173335
+   ],
+   "min": 0.6499146,
+   "max": 0.71440415,
+   "mad": 0.00319585,
+   "rel_ci": 0.013434250135557048
+  },
+  "render.unicode.cpu": {
+   "n": 15,
+   "median": 0.21102705,
+   "ci95": [
+    0.210825,
+    0.21121865
+   ],
+   "min": 0.2105645,
+   "max": 0.21377285,
+   "mad": 0.0002458499999999919,
+   "rel_ci": 0.0018654006678290552
+  },
+  "render.unicode.frame": {
+   "n": 15,
+   "median": 0.6386292,
+   "ci95": [
+    0.63581875,
+    0.64185415
+   ],
+   "min": 0.6262521,
+   "max": 0.6448771,
+   "mad": 0.0029687999999999937,
+   "rel_ci": 0.009450554406218857
+  },
+  "render.graphemes.cpu": {
+   "n": 15,
+   "median": 0.26478955,
+   "ci95": [
+    0.2645542,
+    0.2648459
+   ],
+   "min": 0.26428935,
+   "max": 0.2657146,
+   "mad": 0.00023534999999996753,
+   "rel_ci": 0.0011016295771491204
+  },
+  "render.graphemes.frame": {
+   "n": 15,
+   "median": 0.70919165,
+   "ci95": [
+    0.70603955,
+    0.7097396
+   ],
+   "min": 0.6959583,
+   "max": 0.7954333,
+   "mad": 0.001787500000000053,
+   "rel_ci": 0.005217278009407
+  },
+  "render.cjk.cpu": {
+   "n": 15,
+   "median": 68.40075,
+   "ci95": [
+    62.438666,
+    68.992375
+   ],
+   "min": 23.9095,
+   "max": 77.86225,
+   "mad": 5.962084000000004,
+   "rel_ci": 0.09581340847870816
+  },
+  "render.cjk.frame": {
+   "n": 15,
+   "median": 87.952,
+   "ci95": [
+    81.183208,
+    88.406625
+   ],
+   "min": 29.918334,
+   "max": 100.721708,
+   "mad": 6.879166999999995,
+   "rel_ci": 0.08212908177187571
+  },
+  "render.painted.cpu": {
+   "n": 15,
+   "median": 0.5908022,
+   "ci95": [
+    0.5904854,
+    0.59151875
+   ],
+   "min": 0.58995835,
+   "max": 0.59288545,
+   "mad": 0.00048325000000004614,
+   "rel_ci": 0.0017490625458062492
+  },
+  "render.painted.frame": {
+   "n": 15,
+   "median": 1.1726667,
+   "ci95": [
+    1.17157705,
+    1.1786917
+   ],
+   "min": 1.16646455,
+   "max": 1.19350625,
+   "mad": 0.0028645499999999657,
+   "rel_ci": 0.006067069185131538
+  },
+  "render.images.cpu": {
+   "n": 15,
+   "median": 0.1432667,
+   "ci95": [
+    0.1430627,
+    0.14363325
+   ],
+   "min": 0.1430043,
+   "max": 0.1441042,
+   "mad": 0.0002520000000000022,
+   "rel_ci": 0.003982432763510313
+  },
+  "render.images.frame": {
+   "n": 15,
+   "median": 0.55513335,
+   "ci95": [
+    0.54839375,
+    0.5576583
+   ],
+   "min": 0.543675,
+   "max": 0.5632667,
+   "mad": 0.004831250000000065,
+   "rel_ci": 0.01668887304284644
+  },
+  "render.scrollback.cpu": {
+   "n": 15,
+   "median": 0.2643313,
+   "ci95": [
+    0.2641874,
+    0.26443335
+   ],
+   "min": 0.26370635,
+   "max": 0.26483775,
+   "mad": 0.00011450000000001737,
+   "rel_ci": 0.0009304611296505362
+  },
+  "render.scrollback.frame": {
+   "n": 15,
+   "median": 0.6945625,
+   "ci95": [
+    0.6829,
+    0.700375
+   ],
+   "min": 0.68062085,
+   "max": 0.71040205,
+   "mad": 0.007779150000000068,
+   "rel_ci": 0.02515972284711602
+  },
+  "render.search.cpu": {
+   "n": 15,
+   "median": 0.35622715,
+   "ci95": [
+    0.35598125,
+    0.35668125
+   ],
+   "min": 0.35552275,
+   "max": 0.35707695,
+   "mad": 0.0004541000000000128,
+   "rel_ci": 0.0019650383189489585
+  },
+  "render.search.frame": {
+   "n": 15,
+   "median": 0.80519375,
+   "ci95": [
+    0.8026229,
+    0.80758955
+   ],
+   "min": 0.7971708,
+   "max": 0.8092667,
+   "mad": 0.002395799999999948,
+   "rel_ci": 0.0061682669543820495
+  },
+  "render.panes4.cpu": {
+   "n": 15,
+   "median": 0.35640615,
+   "ci95": [
+    0.3563147,
+    0.3567834
+   ],
+   "min": 0.35368965,
+   "max": 0.35721045,
+   "mad": 0.0001603499999999758,
+   "rel_ci": 0.001315072705675782
+  },
+  "render.panes4.frame": {
+   "n": 15,
+   "median": 0.85569375,
+   "ci95": [
+    0.852525,
+    0.85636665
+   ],
+   "min": 0.8493604,
+   "max": 0.8627667,
+   "mad": 0.0031687500000000535,
+   "rel_ci": 0.004489515086443053
+  },
+  "render.gradient.cpu": {
+   "n": 15,
+   "median": 0.260725,
+   "ci95": [
+    0.26061245,
+    0.2609917
+   ],
+   "min": 0.2603103,
+   "max": 0.26122295,
+   "mad": 0.00025209999999997734,
+   "rel_ci": 0.0014545977562565831
+  },
+  "render.gradient.frame": {
+   "n": 15,
+   "median": 0.86423335,
+   "ci95": [
+    0.86300205,
+    0.86825
+   ],
+   "min": 0.8595625,
+   "max": 0.872325,
+   "mad": 0.002041650000000006,
+   "rel_ci": 0.0060723761701628395
+  },
+  "render.gel.cpu": {
+   "n": 15,
+   "median": 0.260776545,
+   "ci95": [
+    0.260446818,
+    0.261238455
+   ],
+   "min": 0.260238364,
+   "max": 0.264609818,
+   "mad": 0.0003672720000000296,
+   "rel_ci": 0.0030356909590927975
+  },
+  "render.gel.frame": {
+   "n": 15,
+   "median": 4.92082955,
+   "ci95": [
+    4.91519318,
+    4.92456818
+   ],
+   "min": 4.913481,
+   "max": 4.934303,
+   "mad": 0.004162909999999798,
+   "rel_ci": 0.001905166579078007
+  },
+  "render.shader.cpu": {
+   "n": 15,
+   "median": 0.26113325,
+   "ci95": [
+    0.2610417,
+    0.26146255
+   ],
+   "min": 0.26073945,
+   "max": 0.26171035,
+   "mad": 0.0002206499999999889,
+   "rel_ci": 0.0016116293118552624
+  },
+  "render.shader.frame": {
+   "n": 15,
+   "median": 2.3441729,
+   "ci95": [
+    2.3425104,
+    2.34564585
+   ],
+   "min": 2.34024375,
+   "max": 2.35047915,
+   "mad": 0.0016624999999996781,
+   "rel_ci": 0.0013375506559263686
+  },
+  "render.picture.cpu": {
+   "n": 15,
+   "median": 0.2603959,
+   "ci95": [
+    0.2603228,
+    0.26150415
+   ],
+   "min": 0.2601666,
+   "max": 0.2628667,
+   "mad": 0.00014164999999999317,
+   "rel_ci": 0.004536745778255225
+  },
+  "render.picture.frame": {
+   "n": 15,
+   "median": 0.74453335,
+   "ci95": [
+    0.74097085,
+    0.7471854
+   ],
+   "min": 0.73861875,
+   "max": 0.7544,
+   "mad": 0.0033124999999999405,
+   "rel_ci": 0.008346906152692879
+  },
+  "render.video.cpu": {
+   "n": 15,
+   "median": 0.34492715,
+   "ci95": [
+    0.3427957,
+    0.34958315
+   ],
+   "min": 0.322573,
+   "max": 0.36665625,
+   "mad": 0.003514550000000005,
+   "rel_ci": 0.019677923294817552
+  },
+  "render.video.frame": {
+   "n": 15,
+   "median": 0.98007085,
+   "ci95": [
+    0.97497085,
+    0.98699585
+   ],
+   "min": 0.9372021,
+   "max": 1.0023625,
+   "mad": 0.006924999999999959,
+   "rel_ci": 0.012269521126967456
+  },
+  "render.crt.cpu": {
+   "n": 15,
+   "median": 0.2898395,
+   "ci95": [
+    0.28954185,
+    0.29014805
+   ],
+   "min": 0.28880625,
+   "max": 0.29147685,
+   "mad": 0.00029765000000003816,
+   "rel_ci": 0.0020915023659646152
+  },
+  "render.crt.frame": {
+   "n": 15,
+   "median": 2.2564125,
+   "ci95": [
+    2.2552417,
+    2.25998335
+   ],
+   "min": 2.2517875,
+   "max": 2.2644,
+   "mad": 0.002585450000000211,
+   "rel_ci": 0.002101410978710742
+  },
+  "render.hdr.cpu": {
+   "n": 15,
+   "median": 0.26516045,
+   "ci95": [
+    0.2649417,
+    0.2653418
+   ],
+   "min": 0.2624771,
+   "max": 0.26618555,
+   "mad": 0.00021874999999998979,
+   "rel_ci": 0.0015088977258863995
+  },
+  "render.hdr.frame": {
+   "n": 15,
+   "median": 0.69794375,
+   "ci95": [
+    0.6915271,
+    0.70185
+   ],
+   "min": 0.68771665,
+   "max": 0.7075146,
+   "mad": 0.00390625,
+   "rel_ci": 0.014790446937880057
+  },
+  "render.everything.cpu": {
+   "n": 15,
+   "median": 0.426854,
+   "ci95": [
+    0.426239625,
+    0.4274635
+   ],
+   "min": 0.423442875,
+   "max": 0.429890625,
+   "mad": 0.0006143750000000003,
+   "rel_ci": 0.0028671981520613263
+  },
+  "render.everything.frame": {
+   "n": 15,
+   "median": 6.59007812,
+   "ci95": [
+    6.58432813,
+    6.59883862
+   ],
+   "min": 6.575677,
+   "max": 6.60429162,
+   "mad": 0.007052129999999934,
+   "rel_ci": 0.002201869194230455
+  },
+  "vte.plain_text": {
+   "n": 20,
+   "median": 250.32105947550002,
+   "ci95": [
+    250.11252054,
+    250.5289488625
+   ],
+   "min": 247.208284568,
+   "max": 251.465904775,
+   "mad": 0.2194975069999856,
+   "rel_ci": 0.0016635768615415032
+  },
+  "vte.colored_text": {
+   "n": 20,
+   "median": 164.7857916365,
+   "ci95": [
+    164.6886871755,
+    164.918629029
+   ],
+   "min": 164.448043299,
+   "max": 165.311457117,
+   "mad": 0.1429766695000012,
+   "rel_ci": 0.0013953985426559566
+  },
+  "vte.cursor_heavy": {
+   "n": 20,
+   "median": 104.81522252549999,
+   "ci95": [
+    104.7426606065,
+    104.8623358005
+   ],
+   "min": 104.546976714,
+   "max": 105.017713535,
+   "mad": 0.07312660700000606,
+   "rel_ci": 0.0011417730279673318
+  },
+  "vte.unicode_heavy": {
+   "n": 20,
+   "median": 272.06180931,
+   "ci95": [
+    271.8793901395,
+    272.2386742855
+   ],
+   "min": 271.428729924,
+   "max": 273.502711967,
+   "mad": 0.24235098549999634,
+   "rel_ci": 0.0013205975028660047
+  }
+ },
+ "checks": [
+  {
+   "level": "warn",
+   "what": "render.cjk.frame: rendered pixels changed",
+   "detail": "compare the snapshot PNGs if this wasn't expected; a driver or OS update can also do this"
+  },
+  {
+   "level": "warn",
+   "what": "render.hdr.frame: rendered pixels changed",
+   "detail": "compare the snapshot PNGs if this wasn't expected; a driver or OS update can also do this"
+  },
+  {
+   "level": "warn",
+   "what": "render.everything.frame: rendered pixels changed",
+   "detail": "compare the snapshot PNGs if this wasn't expected; a driver or OS update can also do this"
+  },
+  {
+   "level": "ok",
+   "what": "vte.plain_text vs parser_core.plain_text: same final screen",
+   "detail": "ba9d41cfd4dca670 / ba9d41cfd4dca670"
+  },
+  {
+   "level": "ok",
+   "what": "vte.colored_text vs parser_core.colored_text: same final screen",
+   "detail": "89b5c2df0e85cfb1 / 89b5c2df0e85cfb1"
+  },
+  {
+   "level": "ok",
+   "what": "vte.cursor_heavy vs parser_core.cursor_heavy: same final screen",
+   "detail": "09ab053c2a4d3ed0 / 09ab053c2a4d3ed0"
+  },
+  {
+   "level": "ok",
+   "what": "vte.unicode_heavy vs parser_core.unicode_heavy: same final screen",
+   "detail": "702bcb945873ca57 / 702bcb945873ca57"
+  }
+ ]
+}

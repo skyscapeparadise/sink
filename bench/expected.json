@@ -1,5 +1,5 @@
 {
- "blessed_from": "2026-10-29-bced2b3-dirty-quick.json",
+ "blessed_from": "2026-11-01T1745-020d7ed.json",
  "fingerprints": {
   "findbar.1000": "matches=4502",
   "findbar.10000": "matches=37139",
@@ -66,13 +66,12 @@
  "machine": "Apple M1 Max",
  "pixels": {
   "render.blank.frame": "2ddb07471b3a9462",
-  "render.cjk.frame": "5c071f45a1672703",
   "render.crt.frame": "b6f48b6a141e2840",
-  "render.everything.frame": "2ec5fa41f8e662d3",
+  "render.everything.frame": "6ac0d225dfa1c60e",
   "render.gel.frame": "4cc10418cbaafc4f",
   "render.gradient.frame": "492c260206fdca1c",
   "render.graphemes.frame": "d68572ab79943782",
-  "render.hdr.frame": "994662351a857928",
+  "render.hdr.frame": "70cbfd20ef589d82",
   "render.images.frame": "5d60f09f321bb4c6",
   "render.painted.frame": "50e45c5bfcd1ee27",
   "render.panes4.frame": "bf9a428894cc539c",
@@ -83,5 +82,9 @@
   "render.sgr.frame": "d4c8e65f2252abde",
   "render.shader.frame": "ed0da70759244051",
   "render.unicode.frame": "830cd9f07ee6f76d"
+ },
+ "pixels_headroom": {
+  "render.everything.frame": 16,
+  "render.hdr.frame": 16
  }
 }
