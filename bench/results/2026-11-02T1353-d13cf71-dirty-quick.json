@@ -1,0 +1,1393 @@
+{
+ "suite": 1,
+ "name": "2026-11-02T1353-d13cf71-dirty-quick",
+ "quick": true,
+ "environment": {
+  "date": "2026-11-02T13:53:40-08:00",
+  "host_cpu": "Apple M1 Max",
+  "cores": 10,
+  "perf_cores": "8",
+  "memory_gb": 64.0,
+  "os": "macOS 27.2 (26B123)",
+  "model": "MacBookPro18,4",
+  "power": "battery",
+  "low_power_mode": false,
+  "thermal": "Note: No thermal warning level has been recorded Note: No performance warning level has been recorded Note: No CPU power status has been recorded",
+  "load_avg": [
+   9.0,
+   5.72,
+   4.4
+  ],
+  "busiest_processes": [
+   "26.7 /Applications/Zed.app/Contents/MacOS/zed",
+   "12.7 /opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python",
+   "12.2 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+   "8.8 /Users/kady/Library/Application Support/Zed/external_agents/registry/npx/claude-acp/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude",
+   "8.5 /System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.Networking.xpc/Contents/MacOS/com.apple.WebKit.Networking",
+   "8.4 /System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.WebContent.xpc/Contents/MacOS/com.apple.WebKit.WebContent"
+  ],
+  "git_commit": "d13cf71fb4ce2a35b1287ff028aaa8545f6f17c4",
+  "git_dirty": true,
+  "git_diff_sha256": "70ddf4f0eaedb2bff6a2fd6063f52926be83dc7c3fdc09d57556db41c2ea5558",
+  "load_avg_after": [
+   7.7,
+   5.69,
+   4.43
+  ]
+ },
+ "build": {
+  "source_digest": "c7faf6a03fca84d1c15792473e2fab422a025efc2f43037fa5008372b0ab93ff",
+  "build_type": "Release",
+  "cxx_flags": "-O3 -DNDEBUG -std=gnu++20 -arch arm64 -mmacosx-version-min=26.0 -fstack-protector-strong -ftrivial-auto-var-init=zero -Wformat -Werror=format-security -falign-functions=64",
+  "compiler": "Apple clang version 21.0.0 (clang-2100.3.34.2)"
+ },
+ "noise": [
+  "on battery power",
+  "1-minute load average is 9.0"
+ ],
+ "benches": [
+  {
+   "bench": "render_bench",
+   "config": {
+    "cols": 200,
+    "rows": 50,
+    "font_pt": 15,
+    "max_batch_frames": 20,
+    "samples": 4,
+    "renderer": "gpu",
+    "output_px": "4208x1678",
+    "pixel_density": 2,
+    "crt_shader": "yes"
+   },
+   "metrics": [
+    {
+     "id": "render.blank.cpu",
+     "label": "blank grid (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "51c4bc74",
+     "info": {
+      "pixels": "2ddb07471b3a9462",
+      "distinct_colors": 2,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.13694785,
+      0.131777,
+      0.12681445,
+      0.1341708
+     ]
+    },
+    {
+     "id": "render.blank.frame",
+     "label": "blank grid (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "51c4bc74",
+     "info": {
+      "pixels": "2ddb07471b3a9462",
+      "distinct_colors": 2,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.71335415,
+      0.70439375,
+      0.67950835,
+      0.7347875
+     ]
+    },
+    {
+     "id": "render.plain.cpu",
+     "label": "plain text (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "a7580100f7610c87",
+      "distinct_colors": 75,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.26052515,
+      0.26209165,
+      0.2629126,
+      0.26419385
+     ]
+    },
+    {
+     "id": "render.plain.frame",
+     "label": "plain text (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "a7580100f7610c87",
+      "distinct_colors": 75,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.8063271,
+      0.7148458,
+      0.7161021,
+      0.7418625
+     ]
+    },
+    {
+     "id": "render.sgr.cpu",
+     "label": "SGR-heavy (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "e9e729c8",
+     "info": {
+      "pixels": "d4c8e65f2252abde",
+      "distinct_colors": 84,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.2423416,
+      0.2446041,
+      0.2412708,
+      0.24326655
+     ]
+    },
+    {
+     "id": "render.sgr.frame",
+     "label": "SGR-heavy (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "e9e729c8",
+     "info": {
+      "pixels": "d4c8e65f2252abde",
+      "distinct_colors": 84,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.898625,
+      0.9390646,
+      0.8802104,
+      0.93711665
+     ]
+    },
+    {
+     "id": "render.unicode.cpu",
+     "label": "UTF-8 heavy (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "a36b6823",
+     "info": {
+      "pixels": "830cd9f07ee6f76d",
+      "distinct_colors": 70,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.21954185,
+      0.22083125,
+      0.2189542,
+      0.21894775
+     ]
+    },
+    {
+     "id": "render.unicode.frame",
+     "label": "UTF-8 heavy (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "a36b6823",
+     "info": {
+      "pixels": "830cd9f07ee6f76d",
+      "distinct_colors": 70,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.7106104,
+      0.7594,
+      0.73301875,
+      0.7714354
+     ]
+    },
+    {
+     "id": "render.graphemes.cpu",
+     "label": "grapheme clusters (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "d15a45f2",
+     "info": {
+      "pixels": "d68572ab79943782",
+      "distinct_colors": 66,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.27682085,
+      0.2650833,
+      0.27283745,
+      0.2777771
+     ]
+    },
+    {
+     "id": "render.graphemes.frame",
+     "label": "grapheme clusters (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "d15a45f2",
+     "info": {
+      "pixels": "d68572ab79943782",
+      "distinct_colors": 66,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.869,
+      0.8324333,
+      0.82465835,
+      0.8429854
+     ]
+    },
+    {
+     "id": "render.cjk.cpu",
+     "label": "distinct CJK screenful (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "0d0bc569",
+     "info": {
+      "pixels": "nondeterministic",
+      "distinct_colors": 79,
+      "output_px": "4208x1678",
+      "batch_frames": 3
+     },
+     "samples": [
+      0.416194333,
+      0.416041667,
+      0.393083667,
+      0.418499667
+     ]
+    },
+    {
+     "id": "render.cjk.frame",
+     "label": "distinct CJK screenful (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "0d0bc569",
+     "info": {
+      "pixels": "nondeterministic",
+      "distinct_colors": 79,
+      "output_px": "4208x1678",
+      "batch_frames": 3
+     },
+     "samples": [
+      1.174236,
+      1.02673633,
+      1.04108333,
+      1.05368033
+     ]
+    },
+    {
+     "id": "render.cjk_text.cpu",
+     "label": "CJK text (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "fcb26e0f",
+     "info": {
+      "pixels": "c668ab48e6f63827",
+      "distinct_colors": 107,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.31135205,
+      0.3155125,
+      0.31812505,
+      0.32422495
+     ]
+    },
+    {
+     "id": "render.cjk_text.frame",
+     "label": "CJK text (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "fcb26e0f",
+     "info": {
+      "pixels": "c668ab48e6f63827",
+      "distinct_colors": 107,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.94607295,
+      0.8764354,
+      0.8513792,
+      0.86465415
+     ]
+    },
+    {
+     "id": "render.painted.cpu",
+     "label": "painted backgrounds (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "006fdb91",
+     "info": {
+      "pixels": "50e45c5bfcd1ee27",
+      "distinct_colors": 70,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.6135979,
+      0.606452,
+      0.60529585,
+      0.60749785
+     ]
+    },
+    {
+     "id": "render.painted.frame",
+     "label": "painted backgrounds (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "006fdb91",
+     "info": {
+      "pixels": "50e45c5bfcd1ee27",
+      "distinct_colors": 70,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      1.3466979,
+      1.4063896,
+      1.33588335,
+      1.33047085
+     ]
+    },
+    {
+     "id": "render.images.cpu",
+     "label": "inline images (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "50d5a1c0",
+     "info": {
+      "pixels": "5d60f09f321bb4c6",
+      "distinct_colors": 66,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.15126875,
+      0.14942715,
+      0.1518542,
+      0.1476501
+     ]
+    },
+    {
+     "id": "render.images.frame",
+     "label": "inline images (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "50d5a1c0",
+     "info": {
+      "pixels": "5d60f09f321bb4c6",
+      "distinct_colors": 66,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.6425125,
+      0.59539585,
+      0.63620625,
+      0.63420205
+     ]
+    },
+    {
+     "id": "render.scrollback.cpu",
+     "label": "scrollback (deep) (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "0dc10005",
+     "info": {
+      "pixels": "121232f4dae7d7ab",
+      "distinct_colors": 69,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.26948965,
+      0.26643345,
+      0.26867915,
+      0.2743084
+     ]
+    },
+    {
+     "id": "render.scrollback.frame",
+     "label": "scrollback (deep) (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "0dc10005",
+     "info": {
+      "pixels": "121232f4dae7d7ab",
+      "distinct_colors": 69,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.7436146,
+      0.7508292,
+      0.76285415,
+      0.76165415
+     ]
+    },
+    {
+     "id": "render.search.cpu",
+     "label": "scrollback + search (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "0dc10005",
+     "info": {
+      "pixels": "c3550ea943ea5825",
+      "distinct_colors": 82,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.3552625,
+      0.35691875,
+      0.36199165,
+      0.35493335
+     ]
+    },
+    {
+     "id": "render.search.frame",
+     "label": "scrollback + search (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "0dc10005",
+     "info": {
+      "pixels": "c3550ea943ea5825",
+      "distinct_colors": 82,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.8264625,
+      0.8251792,
+      0.85499795,
+      0.8126229
+     ]
+    },
+    {
+     "id": "render.panes4.cpu",
+     "label": "four panes (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "f23e92e0f23e92e0f23e92e0f23e92e0",
+     "info": {
+      "pixels": "bf9a428894cc539c",
+      "distinct_colors": 77,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.3605563,
+      0.37217715,
+      0.3608375,
+      0.3597812
+     ]
+    },
+    {
+     "id": "render.panes4.frame",
+     "label": "four panes (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "f23e92e0f23e92e0f23e92e0f23e92e0",
+     "info": {
+      "pixels": "bf9a428894cc539c",
+      "distinct_colors": 77,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.94840625,
+      0.9600479,
+      0.9399875,
+      0.932825
+     ]
+    },
+    {
+     "id": "render.gradient.cpu",
+     "label": "gradient background (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "492c260206fdca1c",
+      "distinct_colors": 80,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.26653525,
+      0.270227,
+      0.2702875,
+      0.2645126
+     ]
+    },
+    {
+     "id": "render.gradient.frame",
+     "label": "gradient background (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "492c260206fdca1c",
+      "distinct_colors": 80,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.95718125,
+      0.9423104,
+      0.91861455,
+      0.910475
+     ]
+    },
+    {
+     "id": "render.gel.cpu",
+     "label": "gel background (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "16d2b83ffb00a35d",
+      "distinct_colors": 148,
+      "output_px": "4208x1678",
+      "batch_frames": 19
+     },
+     "samples": [
+      0.264052579,
+      0.262824474,
+      0.269317947,
+      0.273105158
+     ]
+    },
+    {
+     "id": "render.gel.frame",
+     "label": "gel background (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "16d2b83ffb00a35d",
+      "distinct_colors": 148,
+      "output_px": "4208x1678",
+      "batch_frames": 19
+     },
+     "samples": [
+      2.62153068,
+      2.61815789,
+      2.67372584,
+      2.64165347
+     ]
+    },
+    {
+     "id": "render.gel_bare.cpu",
+     "label": "gel background, no text (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "51c4bc74",
+     "info": {
+      "pixels": "34c87ccf9dbe443e",
+      "distinct_colors": 148,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.12792075,
+      0.12791465,
+      0.12882505,
+      0.1311812
+     ]
+    },
+    {
+     "id": "render.gel_bare.frame",
+     "label": "gel background, no text (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "51c4bc74",
+     "info": {
+      "pixels": "34c87ccf9dbe443e",
+      "distinct_colors": 148,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      2.40967705,
+      2.49133125,
+      2.4675354,
+      2.46307085
+     ]
+    },
+    {
+     "id": "render.shader.cpu",
+     "label": "shader background (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "ed0da70759244051",
+      "distinct_colors": 118,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.27242095,
+      0.26546875,
+      0.2638771,
+      0.26212075
+     ]
+    },
+    {
+     "id": "render.shader.frame",
+     "label": "shader background (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "ed0da70759244051",
+      "distinct_colors": 118,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      2.39358335,
+      2.3926021,
+      2.3861896,
+      2.3785146
+     ]
+    },
+    {
+     "id": "render.picture.cpu",
+     "label": "4K picture background (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "601ee8e328ec40e2",
+      "distinct_colors": 324,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.26015205,
+      0.2574959,
+      0.27116465,
+      0.26071875
+     ]
+    },
+    {
+     "id": "render.picture.frame",
+     "label": "4K picture background (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "601ee8e328ec40e2",
+      "distinct_colors": 324,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.8258583,
+      0.783125,
+      0.79900205,
+      0.7782646
+     ]
+    },
+    {
+     "id": "render.video.cpu",
+     "label": "video background (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "nondeterministic",
+      "distinct_colors": 224,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.37430205,
+      0.37616265,
+      0.40344585,
+      0.4048645
+     ]
+    },
+    {
+     "id": "render.video.frame",
+     "label": "video background (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "nondeterministic",
+      "distinct_colors": 224,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      1.16008955,
+      1.1828854,
+      1.20517915,
+      1.3441521
+     ]
+    },
+    {
+     "id": "render.crt.cpu",
+     "label": "CRT effect (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "b6f48b6a141e2840",
+      "distinct_colors": 79,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      0.3153167,
+      0.30379575,
+      0.3012417,
+      0.31536455
+     ]
+    },
+    {
+     "id": "render.crt.frame",
+     "label": "CRT effect (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "b6f48b6a141e2840",
+      "distinct_colors": 79,
+      "output_px": "4208x1678",
+      "batch_frames": 20
+     },
+     "samples": [
+      2.3976604,
+      2.33582915,
+      2.42972915,
+      2.4438396
+     ]
+    },
+    {
+     "id": "render.hdr.cpu",
+     "label": "HDR text (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "77e175a55282cbdd",
+      "distinct_colors": 74,
+      "output_px": "4208x1678",
+      "batch_frames": 20,
+      "hdr_headroom": 1.2000000476837158
+     },
+     "samples": [
+      0.26278125,
+      0.2695438,
+      0.2678459,
+      0.2673251
+     ]
+    },
+    {
+     "id": "render.hdr.frame",
+     "label": "HDR text (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "70a77620",
+     "info": {
+      "pixels": "77e175a55282cbdd",
+      "distinct_colors": 74,
+      "output_px": "4208x1678",
+      "batch_frames": 20,
+      "hdr_headroom": 1.2000000476837158
+     },
+     "samples": [
+      0.7258042,
+      0.7580625,
+      0.8058,
+      0.73586455
+     ]
+    },
+    {
+     "id": "render.everything.cpu",
+     "label": "gel + CRT + HDR + 4 panes (cpu)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "f23e92e0f23e92e0f23e92e0f23e92e0",
+     "info": {
+      "pixels": "f12b24e2aefa7c0a",
+      "distinct_colors": 199,
+      "output_px": "4208x1678",
+      "batch_frames": 11,
+      "hdr_headroom": 1.2000000476837158
+     },
+     "samples": [
+      0.471416545,
+      0.477905091,
+      0.47436,
+      0.469878818
+     ]
+    },
+    {
+     "id": "render.everything.frame",
+     "label": "gel + CRT + HDR + 4 panes (frame)",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": "f23e92e0f23e92e0f23e92e0f23e92e0",
+     "info": {
+      "pixels": "f12b24e2aefa7c0a",
+      "distinct_colors": 199,
+      "output_px": "4208x1678",
+      "batch_frames": 11,
+      "hdr_headroom": 1.2000000476837158
+     },
+     "samples": [
+      4.35339773,
+      4.35749236,
+      4.35524618,
+      4.34388255
+     ]
+    }
+   ],
+   "exit_code": 0,
+   "stderr": "Video Background: VideoToolbox hardware accelerated decoding enabled (HEVC/H.264/ProRes).\nVideo Background: SDR content detected (sRGB / BT.709)\nVideo Background: texture format IYUV (8-bit)\nSuccessfully opened video: backgrounds/sinkpool.mp4 (1920x1080)\nVideo Background: VideoToolbox hardware accelerated decoding enabled (HEVC/H.264/ProRes).\nVideo Background: SDR content detected (sRGB / BT.709)\nVideo Background: texture format IYUV (8-bit)\nSuccessfully opened video: backgrounds/sinkpool.mp4 (1920x1080)\n"
+  }
+ ],
+ "stats": {
+  "render.blank.cpu": {
+   "n": 4,
+   "median": 0.1329739,
+   "ci95": [
+    0.12681445,
+    0.13694785
+   ],
+   "min": 0.12681445,
+   "max": 0.13694785,
+   "mad": 0.0025854250000000023,
+   "rel_ci": 0.07620593214157075
+  },
+  "render.blank.frame": {
+   "n": 4,
+   "median": 0.7088739500000001,
+   "ci95": [
+    0.67950835,
+    0.7347875
+   ],
+   "min": 0.67950835,
+   "max": 0.7347875,
+   "mad": 0.015196874999999999,
+   "rel_ci": 0.07798163552208408
+  },
+  "render.plain.cpu": {
+   "n": 4,
+   "median": 0.26250212500000003,
+   "ci95": [
+    0.26052515,
+    0.26419385
+   ],
+   "min": 0.26052515,
+   "max": 0.26419385,
+   "mad": 0.0010510999999999993,
+   "rel_ci": 0.013975886861868354
+  },
+  "render.plain.frame": {
+   "n": 4,
+   "median": 0.7289823,
+   "ci95": [
+    0.7148458,
+    0.8063271
+   ],
+   "min": 0.7148458,
+   "max": 0.8063271,
+   "mad": 0.013508350000000002,
+   "rel_ci": 0.1254917986348914
+  },
+  "render.sgr.cpu": {
+   "n": 4,
+   "median": 0.242804075,
+   "ci95": [
+    0.2412708,
+    0.2446041
+   ],
+   "min": 0.2412708,
+   "max": 0.2446041,
+   "mad": 0.0009978750000000092,
+   "rel_ci": 0.013728352788148154
+  },
+  "render.sgr.frame": {
+   "n": 4,
+   "median": 0.9178708250000001,
+   "ci95": [
+    0.8802104,
+    0.9390646
+   ],
+   "min": 0.8802104,
+   "max": 0.9390646,
+   "mad": 0.02021980000000001,
+   "rel_ci": 0.06412035157561531
+  },
+  "render.unicode.cpu": {
+   "n": 4,
+   "median": 0.219248025,
+   "ci95": [
+    0.21894775,
+    0.22083125
+   ],
+   "min": 0.21894775,
+   "max": 0.22083125,
+   "mad": 0.0002970500000000209,
+   "rel_ci": 0.008590727328102545
+  },
+  "render.unicode.frame": {
+   "n": 4,
+   "median": 0.7462093750000001,
+   "ci95": [
+    0.7106104,
+    0.7714354
+   ],
+   "min": 0.7106104,
+   "max": 0.7714354,
+   "mad": 0.01920832499999997,
+   "rel_ci": 0.08151197510752262
+  },
+  "render.graphemes.cpu": {
+   "n": 4,
+   "median": 0.27482914999999997,
+   "ci95": [
+    0.2650833,
+    0.2777771
+   ],
+   "min": 0.2650833,
+   "max": 0.2777771,
+   "mad": 0.0024698250000000366,
+   "rel_ci": 0.0461879680521516
+  },
+  "render.graphemes.frame": {
+   "n": 4,
+   "median": 0.83770935,
+   "ci95": [
+    0.82465835,
+    0.869
+   ],
+   "min": 0.82465835,
+   "max": 0.869,
+   "mad": 0.009163525000000006,
+   "rel_ci": 0.052932022305827206
+  },
+  "render.cjk.cpu": {
+   "n": 4,
+   "median": 0.416118,
+   "ci95": [
+    0.393083667,
+    0.418499667
+   ],
+   "min": 0.393083667,
+   "max": 0.418499667,
+   "mad": 0.0012290000000000356,
+   "rel_ci": 0.06107882860150245
+  },
+  "render.cjk.frame": {
+   "n": 4,
+   "median": 1.04738183,
+   "ci95": [
+    1.02673633,
+    1.174236
+   ],
+   "min": 1.02673633,
+   "max": 1.174236,
+   "mad": 0.013471999999999928,
+   "rel_ci": 0.14082702771347483
+  },
+  "render.cjk_text.cpu": {
+   "n": 4,
+   "median": 0.316818775,
+   "ci95": [
+    0.31135205,
+    0.32422495
+   ],
+   "min": 0.31135205,
+   "max": 0.32422495,
+   "mad": 0.0033865000000000145,
+   "rel_ci": 0.04063174601947129
+  },
+  "render.cjk_text.frame": {
+   "n": 4,
+   "median": 0.8705447749999999,
+   "ci95": [
+    0.8513792,
+    0.94607295
+   ],
+   "min": 0.8513792,
+   "max": 0.94607295,
+   "mad": 0.012528099999999986,
+   "rel_ci": 0.10877527810100293
+  },
+  "render.painted.cpu": {
+   "n": 4,
+   "median": 0.606974925,
+   "ci95": [
+    0.60529585,
+    0.6135979
+   ],
+   "min": 0.60529585,
+   "max": 0.6135979,
+   "mad": 0.0011010000000000741,
+   "rel_ci": 0.013677747890491622
+  },
+  "render.painted.frame": {
+   "n": 4,
+   "median": 1.341290625,
+   "ci95": [
+    1.33047085,
+    1.4063896
+   ],
+   "min": 1.33047085,
+   "max": 1.4063896,
+   "mad": 0.008113525000000066,
+   "rel_ci": 0.0566012679019508
+  },
+  "render.images.cpu": {
+   "n": 4,
+   "median": 0.15034795,
+   "ci95": [
+    0.1476501,
+    0.1518542
+   ],
+   "min": 0.1476501,
+   "max": 0.1518542,
+   "mad": 0.001213524999999993,
+   "rel_ci": 0.027962469724395898
+  },
+  "render.images.frame": {
+   "n": 4,
+   "median": 0.63520415,
+   "ci95": [
+    0.59539585,
+    0.6425125
+   ],
+   "min": 0.59539585,
+   "max": 0.6425125,
+   "mad": 0.00415522500000004,
+   "rel_ci": 0.07417560165499563
+  },
+  "render.scrollback.cpu": {
+   "n": 4,
+   "median": 0.2690844,
+   "ci95": [
+    0.26643345,
+    0.2743084
+   ],
+   "min": 0.26643345,
+   "max": 0.2743084,
+   "mad": 0.0015281000000000045,
+   "rel_ci": 0.029265724806045952
+  },
+  "render.scrollback.frame": {
+   "n": 4,
+   "median": 0.7562416750000001,
+   "ci95": [
+    0.7436146,
+    0.76285415
+   ],
+   "min": 0.7436146,
+   "max": 0.76285415,
+   "mad": 0.006012475000000017,
+   "rel_ci": 0.025441007334064198
+  },
+  "render.search.cpu": {
+   "n": 4,
+   "median": 0.356090625,
+   "ci95": [
+    0.35493335,
+    0.36199165
+   ],
+   "min": 0.35493335,
+   "max": 0.36199165,
+   "mad": 0.000992700000000013,
+   "rel_ci": 0.019821639505392813
+  },
+  "render.search.frame": {
+   "n": 4,
+   "median": 0.8258208499999999,
+   "ci95": [
+    0.8126229,
+    0.85499795
+   ],
+   "min": 0.8126229,
+   "max": 0.85499795,
+   "mad": 0.006919799999999976,
+   "rel_ci": 0.05131264244539233
+  },
+  "render.panes4.cpu": {
+   "n": 4,
+   "median": 0.3606969,
+   "ci95": [
+    0.3597812,
+    0.37217715
+   ],
+   "min": 0.3597812,
+   "max": 0.37217715,
+   "mad": 0.0005281499999999772,
+   "rel_ci": 0.03436666630625323
+  },
+  "render.panes4.frame": {
+   "n": 4,
+   "median": 0.944196875,
+   "ci95": [
+    0.932825,
+    0.9600479
+   ],
+   "min": 0.932825,
+   "max": 0.9600479,
+   "mad": 0.007790625000000051,
+   "rel_ci": 0.028831804807657235
+  },
+  "render.gradient.cpu": {
+   "n": 4,
+   "median": 0.268381125,
+   "ci95": [
+    0.2645126,
+    0.2702875
+   ],
+   "min": 0.2645126,
+   "max": 0.2702875,
+   "mad": 0.0018761250000000063,
+   "rel_ci": 0.02151753406652583
+  },
+  "render.gradient.frame": {
+   "n": 4,
+   "median": 0.930462475,
+   "ci95": [
+    0.910475,
+    0.95718125
+   ],
+   "min": 0.910475,
+   "max": 0.95718125,
+   "mad": 0.01591769999999998,
+   "rel_ci": 0.05019681207455459
+  },
+  "render.gel.cpu": {
+   "n": 4,
+   "median": 0.266685263,
+   "ci95": [
+    0.262824474,
+    0.273105158
+   ],
+   "min": 0.262824474,
+   "max": 0.273105158,
+   "mad": 0.0032467365000000137,
+   "rel_ci": 0.03854987667616279
+  },
+  "render.gel.frame": {
+   "n": 4,
+   "median": 2.631592075,
+   "ci95": [
+    2.61815789,
+    2.67372584
+   ],
+   "min": 2.61815789,
+   "max": 2.67372584,
+   "mad": 0.011747790000000036,
+   "rel_ci": 0.02111571566425238
+  },
+  "render.gel_bare.cpu": {
+   "n": 4,
+   "median": 0.1283729,
+   "ci95": [
+    0.12791465,
+    0.1311812
+   ],
+   "min": 0.12791465,
+   "max": 0.1311812,
+   "mad": 0.0004552000000000167,
+   "rel_ci": 0.025445791128813063
+  },
+  "render.gel_bare.frame": {
+   "n": 4,
+   "median": 2.465303125,
+   "ci95": [
+    2.40967705,
+    2.49133125
+   ],
+   "min": 2.40967705,
+   "max": 2.49133125,
+   "mad": 0.014130200000000093,
+   "rel_ci": 0.03312136311837921
+  },
+  "render.shader.cpu": {
+   "n": 4,
+   "median": 0.26467292499999995,
+   "ci95": [
+    0.26212075,
+    0.27242095
+   ],
+   "min": 0.26212075,
+   "max": 0.27242095,
+   "mad": 0.001673999999999981,
+   "rel_ci": 0.03891671201351624
+  },
+  "render.shader.frame": {
+   "n": 4,
+   "median": 2.3893958499999997,
+   "ci95": [
+    2.3785146,
+    2.39358335
+   ],
+   "min": 2.3785146,
+   "max": 2.39358335,
+   "mad": 0.003696875000000377,
+   "rel_ci": 0.0063065104930186385
+  },
+  "render.picture.cpu": {
+   "n": 4,
+   "median": 0.2604354,
+   "ci95": [
+    0.2574959,
+    0.27116465
+   ],
+   "min": 0.2574959,
+   "max": 0.27116465,
+   "mad": 0.0016114249999999997,
+   "rel_ci": 0.05248422449482677
+  },
+  "render.picture.frame": {
+   "n": 4,
+   "median": 0.791063525,
+   "ci95": [
+    0.7782646,
+    0.8258583
+   ],
+   "min": 0.7782646,
+   "max": 0.8258583,
+   "mad": 0.010368725000000023,
+   "rel_ci": 0.060164194778162816
+  },
+  "render.video.cpu": {
+   "n": 4,
+   "median": 0.38980424999999996,
+   "ci95": [
+    0.37430205,
+    0.4048645
+   ],
+   "min": 0.37430205,
+   "max": 0.4048645,
+   "mad": 0.014350925000000042,
+   "rel_ci": 0.07840460949309819
+  },
+  "render.video.frame": {
+   "n": 4,
+   "median": 1.194032275,
+   "ci95": [
+    1.16008955,
+    1.3441521
+   ],
+   "min": 1.16008955,
+   "max": 1.3441521,
+   "mad": 0.022544800000000143,
+   "rel_ci": 0.15415207264812011
+  },
+  "render.crt.cpu": {
+   "n": 4,
+   "median": 0.309556225,
+   "ci95": [
+    0.3012417,
+    0.31536455
+   ],
+   "min": 0.3012417,
+   "max": 0.31536455,
+   "mad": 0.005784400000000023,
+   "rel_ci": 0.04562289128574307
+  },
+  "render.crt.frame": {
+   "n": 4,
+   "median": 2.4136947749999997,
+   "ci95": [
+    2.33582915,
+    2.4438396
+   ],
+   "min": 2.33582915,
+   "max": 2.4438396,
+   "mad": 0.023089600000000265,
+   "rel_ci": 0.04474900932741179
+  },
+  "render.hdr.cpu": {
+   "n": 4,
+   "median": 0.26758550000000003,
+   "ci95": [
+    0.26278125,
+    0.2695438
+   ],
+   "min": 0.26278125,
+   "max": 0.2695438,
+   "mad": 0.001109350000000009,
+   "rel_ci": 0.02527248300076042
+  },
+  "render.hdr.frame": {
+   "n": 4,
+   "median": 0.746963525,
+   "ci95": [
+    0.7258042,
+    0.8058
+   ],
+   "min": 0.7258042,
+   "max": 0.8058,
+   "mad": 0.01612914999999998,
+   "rel_ci": 0.10709465365126089
+  },
+  "render.everything.cpu": {
+   "n": 4,
+   "median": 0.4728882725,
+   "ci95": [
+    0.469878818,
+    0.477905091
+   ],
+   "min": 0.469878818,
+   "max": 0.477905091,
+   "mad": 0.002240591000000014,
+   "rel_ci": 0.016972873862081298
+  },
+  "render.everything.frame": {
+   "n": 4,
+   "median": 4.354321955,
+   "ci95": [
+    4.34388255,
+    4.35749236
+   ],
+   "min": 4.34388255,
+   "max": 4.35749236,
+   "mad": 0.002047315000000438,
+   "rel_ci": 0.0031255865185559452
+  }
+ },
+ "checks": [
+  {
+   "level": "warn",
+   "what": "render.gel.frame: rendered pixels changed",
+   "detail": "compare the snapshot PNGs if this wasn't expected; a driver or OS update can also do this"
+  },
+  {
+   "level": "warn",
+   "what": "render.gel_bare.cpu: no blessed fingerprint yet",
+   "detail": "51c4bc74"
+  },
+  {
+   "level": "warn",
+   "what": "render.gel_bare.frame: no blessed fingerprint yet",
+   "detail": "51c4bc74"
+  }
+ ]
+}

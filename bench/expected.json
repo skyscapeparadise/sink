@@ -1,5 +1,5 @@
 {
- "blessed_from": "2026-11-02T1108-00d6602-dirty.json",
+ "blessed_from": "2026-11-02T1353-d13cf71-dirty-quick.json",
  "fingerprints": {
   "findbar.1000": "matches=4502",
   "findbar.10000": "matches=37139",
@@ -40,6 +40,8 @@
   "render.everything.frame": "f23e92e0f23e92e0f23e92e0f23e92e0",
   "render.gel.cpu": "70a77620",
   "render.gel.frame": "70a77620",
+  "render.gel_bare.cpu": "51c4bc74",
+  "render.gel_bare.frame": "51c4bc74",
   "render.gradient.cpu": "70a77620",
   "render.gradient.frame": "70a77620",
   "render.graphemes.cpu": "d15a45f2",
@@ -74,11 +76,12 @@
   "render.blank.frame": "2ddb07471b3a9462",
   "render.cjk_text.frame": "c668ab48e6f63827",
   "render.crt.frame": "b6f48b6a141e2840",
-  "render.everything.frame": "6ac0d225dfa1c60e",
-  "render.gel.frame": "4cc10418cbaafc4f",
+  "render.everything.frame": "f12b24e2aefa7c0a",
+  "render.gel.frame": "16d2b83ffb00a35d",
+  "render.gel_bare.frame": "34c87ccf9dbe443e",
   "render.gradient.frame": "492c260206fdca1c",
   "render.graphemes.frame": "d68572ab79943782",
-  "render.hdr.frame": "70cbfd20ef589d82",
+  "render.hdr.frame": "77e175a55282cbdd",
   "render.images.frame": "5d60f09f321bb4c6",
   "render.painted.frame": "50e45c5bfcd1ee27",
   "render.panes4.frame": "bf9a428894cc539c",
@@ -91,7 +94,7 @@
   "render.unicode.frame": "830cd9f07ee6f76d"
  },
  "pixels_headroom": {
-  "render.everything.frame": 16,
-  "render.hdr.frame": 16
+  "render.everything.frame": 1.2000000476837158,
+  "render.hdr.frame": 1.2000000476837158
  }
 }

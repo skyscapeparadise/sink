@@ -107,6 +107,7 @@ const Scene kScenes[] = {
     // Backgrounds, each with plain text over it.
     {"gradient",    "gradient background",     "plain_text.bin", Backdrop::Gradient},
     {"gel",         "gel background",          "plain_text.bin", Backdrop::Gel},
+    {"gel_bare",    "gel background, no text", nullptr, Backdrop::Gel},
     {"shader",      "shader background",       "plain_text.bin", Backdrop::Shader},
     {"picture",     "4K picture background",   "plain_text.bin", Backdrop::Image},
     {"video",       "video background",        "plain_text.bin", Backdrop::Video, false, false, 1, 0, nullptr, false},

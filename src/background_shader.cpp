@@ -1,5 +1,7 @@
 #include "background_shader.hpp"
 
+#include <vector>
+
 #include <cmath>
 #include <cstring>
 #include <iostream>
@@ -40,25 +42,32 @@ float hash12(float2 p) {
     return fract((p3.x + p3.y) * p3.z);
 }
 
-float value_noise(float2 p) {
+// Value noise on a lattice of random values held in a 256x256 texture (see
+// BackgroundShader::init), instead of hashing each corner. One gather fetches
+// all four corners of a cell, where four hash12 calls computed them, and the
+// gel evaluates this 30 times a pixel. The interpolation is the same quintic,
+// so the noise has the same character; only the random values differ.
+constexpr sampler kLattice(coord::normalized, address::repeat, filter::nearest);
+
+float value_noise(float2 p, texture2d<float> lattice) {
     float2 i = floor(p);
     float2 f = fract(p);
     float2 u = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
-    float a = hash12(i);
-    float b = hash12(i + float2(1.0, 0.0));
-    float c = hash12(i + float2(0.0, 1.0));
-    float d = hash12(i + float2(1.0, 1.0));
+    // Sampling exactly between texel centres i+0.5 and i+1.5 gathers texels
+    // i and i+1 on each axis, returned as (i,i+1y), (i+1x,i+1y), (i+1x,i), (i,i).
+    float4 g = lattice.gather(kLattice, (i + 1.0) / 256.0);
+    float a = g.w, b = g.z, c = g.x, d = g.y;
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
 // Rotating between octaves keeps the lattice from lining up into streaks.
 constant float2x2 kOctave = float2x2(float2(0.80, 0.60), float2(-0.60, 0.80));
 
-float fbm(float2 p) {
+float fbm(float2 p, texture2d<float> lattice) {
     float sum = 0.0;
     float amp = 0.5;
     for (int i = 0; i < 6; ++i) {
-        sum += amp * value_noise(p);
+        sum += amp * value_noise(p, lattice);
         p = kOctave * p * 2.03 + float2(17.1, 9.2);
         amp *= 0.5;
     }
@@ -79,15 +88,16 @@ float stars(float2 px, float cell, float density, float t) {
 
 // Measured in points from the window's top-right corner, so resizing
 // uncovers more of the same sky rather than stretching it.
-float3 gel(float2 uv, constant BgUniforms& u) {
+float3 gel(float2 uv, constant BgUniforms& u, texture2d<float> lattice) {
     float2 px = float2(uv.x * u.size.x - u.size.x, uv.y * u.size.y);
     float2 p = px / 300.0 + float2(3.7, 1.9);
     float t = u.time;
 
-    float2 q = float2(fbm(p + float2(0.021, 0.013) * t), fbm(p + float2(5.2, 1.3) - float2(0.017, 0.024) * t));
-    float2 r = float2(fbm(p + 3.2 * q + float2(1.7, 9.2) + float2(-0.032, 0.041) * t),
-                      fbm(p + 3.2 * q + float2(8.3, 2.8) + float2(0.038, -0.027) * t));
-    float f = fbm(p + 3.0 * r + float2(0.009, -0.006) * t);
+    float2 q = float2(fbm(p + float2(0.021, 0.013) * t, lattice),
+                      fbm(p + float2(5.2, 1.3) - float2(0.017, 0.024) * t, lattice));
+    float2 r = float2(fbm(p + 3.2 * q + float2(1.7, 9.2) + float2(-0.032, 0.041) * t, lattice),
+                      fbm(p + 3.2 * q + float2(8.3, 2.8) + float2(0.038, -0.027) * t, lattice));
+    float f = fbm(p + 3.0 * r + float2(0.009, -0.006) * t, lattice);
 
     // Light gathers near the top and falls away to the bottom.
     float2 n = px / max(u.size.y, 1.0);
@@ -136,7 +146,7 @@ fragment main0_out main0(main0_in in [[stage_in]],
 {
     main0_out out = {};
     float2 uv = in.in_var_TEXCOORD0;
-    float3 col = u.mode > 0.5 ? gel(uv, u) : gradient(uv, u);
+    float3 col = u.mode > 0.5 ? gel(uv, u, u_texture) : gradient(uv, u);
 
     // Hue rotation and exposure, as the video background gets them.
     float a = u.hue * 0.0174532925;
@@ -205,10 +215,32 @@ bool BackgroundShader::init(SDL_Renderer* renderer, bool linear_colorspace) {
         return false;
     }
 
-    white_ = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, 1, 1);
+    // The gel's noise lattice: 256x256 random values in the red channel, from
+    // a fixed seed so the gel is the same on every run. It's also what the
+    // full-window draw is drawn with; the gradient ignores it.
+    //
+    // With linear output (HDR text), SDL's GPU renderer gives 8-bit RGBA
+    // textures an sRGB format, so the hardware gamma-decodes every read: the
+    // random values arrived squashed toward zero and the gel went nearly
+    // black (measured: the shader saw decode(v) where it should see v). So in
+    // that mode each value is stored sRGB-encoded, and the decode gives it
+    // back -- the same lattice, and the same gel, in both modes. (A 16-bit
+    // format, which SDL doesn't remap, isn't the way round it: SDL converts
+    // that one on upload, and the values came out wrong in SDR as well.)
+    white_ = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32, SDL_TEXTUREACCESS_STATIC, 256, 256);
     if (white_) {
-        const Uint32 pixel = 0xFFFFFFFF;
-        SDL_UpdateTexture(white_, nullptr, &pixel, sizeof(pixel));
+        auto srgb_encode = [](double v) {
+            return v <= 0.0031308 ? 12.92 * v : 1.055 * std::pow(v, 1.0 / 2.4) - 0.055;
+        };
+        std::vector<Uint32> lattice(256 * 256);
+        uint32_t x = 0x9E3779B9u;
+        for (Uint32& v : lattice) {
+            x ^= x << 13; x ^= x >> 17; x ^= x << 5;  // xorshift32
+            Uint32 r = x & 0xFFu;
+            if (linear_colorspace) r = static_cast<Uint32>(std::lround(255.0 * srgb_encode(r / 255.0)));
+            v = 0xFF000000u | r;  // red = the random value, opaque
+        }
+        SDL_UpdateTexture(white_, nullptr, lattice.data(), 256 * sizeof(Uint32));
     } else {
         cleanup();
         return false;

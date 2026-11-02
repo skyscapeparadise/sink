@@ -1,0 +1,334 @@
+{
+ "suite": 1,
+ "kind": "ab",
+ "separate_builds": true,
+ "a": "HEAD",
+ "b": "WORKTREE",
+ "build": {
+  "source_digest": "6d15ae358e8a64f49c9086cbdc581f0049b5705d6e80a5df1ff1fce8822e15e2",
+  "build_type": "Release",
+  "cxx_flags": "-O3 -DNDEBUG -std=gnu++20 -arch arm64 -mmacosx-version-min=26.0 -fstack-protector-strong -ftrivial-auto-var-init=zero -Wformat -Werror=format-security -falign-functions=64",
+  "compiler": "Apple clang version 21.0.0 (clang-2100.3.34.2)"
+ },
+ "rounds": 6,
+ "environment": {
+  "date": "2026-11-02T13:33:50-08:00",
+  "host_cpu": "Apple M1 Max",
+  "cores": 10,
+  "perf_cores": "8",
+  "memory_gb": 64.0,
+  "os": "macOS 27.2 (26B123)",
+  "model": "MacBookPro18,4",
+  "power": "battery",
+  "low_power_mode": false,
+  "thermal": "Note: No thermal warning level has been recorded Note: No performance warning level has been recorded Note: No CPU power status has been recorded",
+  "load_avg": [
+   3.16,
+   3.13,
+   3.55
+  ],
+  "busiest_processes": [
+   "56.3 /System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.WebContent.xpc/Contents/MacOS/com.apple.WebKit.WebContent",
+   "33.8 /Users/kady/Library/Application Support/Zed/external_agents/registry/npx/claude-acp/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude",
+   "17.5 /opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python",
+   "10.7 /usr/libexec/duetexpertd",
+   "10.2 /usr/sbin/coreaudiod",
+   "5.5 /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/FSEvents.framework/Versions/A/Support/fseventsd"
+  ],
+  "git_commit": "d13cf71fb4ce2a35b1287ff028aaa8545f6f17c4",
+  "git_dirty": true,
+  "git_diff_sha256": "70ddf4f0eaedb2bff6a2fd6063f52926be83dc7c3fdc09d57556db41c2ea5558"
+ },
+ "noise": [
+  "on battery power",
+  "1-minute load average is 3.16"
+ ],
+ "rows": [
+  {
+   "id": "render.gel.cpu",
+   "unit": "ms",
+   "better": "lower",
+   "a": 0.2596978,
+   "b": 0.3339582695,
+   "ratio": 1.2759491801064182,
+   "ci": [
+    1.1208708684775746,
+    1.4524833823413918
+   ],
+   "rounds": 6,
+   "floor": 0.05101184182123286,
+   "verdict": "worse",
+   "same_output": true
+  },
+  {
+   "id": "render.gel.frame",
+   "unit": "ms",
+   "better": "lower",
+   "a": 4.948804150000001,
+   "b": 3.3439450500000003,
+   "ratio": 0.637778212382275,
+   "ci": [
+    0.5819655143726263,
+    0.6989435596162927
+   ],
+   "rounds": 6,
+   "floor": 0.04540876903551583,
+   "verdict": "better",
+   "same_output": true
+  },
+  {
+   "id": "render.gel_bare.cpu",
+   "unit": "ms",
+   "better": "lower",
+   "a": 0.12331249999999999,
+   "b": 0.12278549999999999,
+   "ratio": 0.9960900156563833,
+   "ci": [
+    0.9725239104269612,
+    1.0202271724658538
+   ],
+   "rounds": 6,
+   "floor": 0.01,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "render.gel_bare.frame",
+   "unit": "ms",
+   "better": "lower",
+   "a": 4.76832563,
+   "b": 2.40230415,
+   "ratio": 0.5059852643883833,
+   "ci": [
+    0.500138888393042,
+    0.5118999816246722
+   ],
+   "rounds": 6,
+   "floor": 0.01,
+   "verdict": "better",
+   "same_output": true
+  }
+ ],
+ "pooled": {
+  "A": [
+   {
+    "id": "render.gel.cpu",
+    "label": "gel background (cpu)",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": "70a77620",
+    "info": {
+     "pixels": "4cc10418cbaafc4f",
+     "distinct_colors": 174,
+     "output_px": "4208x1678",
+     "batch_frames": 10
+    },
+    "samples": [
+     0.2640208,
+     0.2649251,
+     0.2571002,
+     0.2555749,
+     0.2604126,
+     0.2595665,
+     0.2559544,
+     0.2564582,
+     0.2614209,
+     0.2579125,
+     0.2621334,
+     0.2598291
+    ]
+   },
+   {
+    "id": "render.gel.frame",
+    "label": "gel background (frame)",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": "70a77620",
+    "info": {
+     "pixels": "4cc10418cbaafc4f",
+     "distinct_colors": 174,
+     "output_px": "4208x1678",
+     "batch_frames": 10
+    },
+    "samples": [
+     4.9224375,
+     4.9222667,
+     4.9530417,
+     4.9436042,
+     4.9269041,
+     4.9457209,
+     4.9562,
+     4.9629208,
+     4.9577625,
+     4.9643375,
+     4.949125,
+     4.9484833
+    ]
+   },
+   {
+    "id": "render.gel_bare.cpu",
+    "label": "gel background, no text (cpu)",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": "51c4bc74",
+    "info": {
+     "pixels": "c384c153a82d0e63",
+     "distinct_colors": 174,
+     "output_px": "4208x1678",
+     "batch_frames": 12
+    },
+    "samples": [
+     0.127253583,
+     0.126965167,
+     0.123663167,
+     0.1220765,
+     0.122861083,
+     0.122704833,
+     0.122886455,
+     0.123590909,
+     0.123034091,
+     0.122609727,
+     0.123867273,
+     0.123632636
+    ]
+   },
+   {
+    "id": "render.gel_bare.frame",
+    "label": "gel background, no text (frame)",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": "51c4bc74",
+    "info": {
+     "pixels": "c384c153a82d0e63",
+     "distinct_colors": 174,
+     "output_px": "4208x1678",
+     "batch_frames": 12
+    },
+    "samples": [
+     4.76279517,
+     4.70990625,
+     4.76135417,
+     4.77317367,
+     4.78069092,
+     4.76842017,
+     4.77103409,
+     4.77443564,
+     4.76799618,
+     4.76525755,
+     4.77985609,
+     4.76823109
+    ]
+   }
+  ],
+  "B": [
+   {
+    "id": "render.gel.cpu",
+    "label": "gel background (cpu)",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": "70a77620",
+    "info": {
+     "pixels": "16d2b83ffb00a35d",
+     "distinct_colors": 148,
+     "output_px": "4208x1678",
+     "batch_frames": 14
+    },
+    "samples": [
+     0.4019495,
+     0.406984857,
+     0.38875,
+     0.26440625,
+     0.294764929,
+     0.255523929,
+     0.389474187,
+     0.262145875,
+     0.360474385,
+     0.264070462,
+     0.406833462,
+     0.307442154
+    ]
+   },
+   {
+    "id": "render.gel.frame",
+    "label": "gel background (frame)",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": "70a77620",
+    "info": {
+     "pixels": "16d2b83ffb00a35d",
+     "distinct_colors": 148,
+     "output_px": "4208x1678",
+     "batch_frames": 14
+    },
+    "samples": [
+     3.39722029,
+     3.54132436,
+     3.42380987,
+     2.6734245,
+     3.05488393,
+     2.57691964,
+     3.36764325,
+     2.68910938,
+     3.534157,
+     2.66648715,
+     3.72705769,
+     3.32024685
+    ]
+   },
+   {
+    "id": "render.gel_bare.cpu",
+    "label": "gel background, no text (cpu)",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": "51c4bc74",
+    "info": {
+     "pixels": "34c87ccf9dbe443e",
+     "distinct_colors": 148,
+     "output_px": "4208x1678",
+     "batch_frames": 20
+    },
+    "samples": [
+     0.1227146,
+     0.1228564,
+     0.1219542,
+     0.12291875,
+     0.12468355,
+     0.12988545,
+     0.1216791,
+     0.1219563,
+     0.12238535,
+     0.1224438,
+     0.1229667,
+     0.12294175
+    ]
+   },
+   {
+    "id": "render.gel_bare.frame",
+    "label": "gel background, no text (frame)",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": "51c4bc74",
+    "info": {
+     "pixels": "34c87ccf9dbe443e",
+     "distinct_colors": 148,
+     "output_px": "4208x1678",
+     "batch_frames": 20
+    },
+    "samples": [
+     2.3906854,
+     2.40327915,
+     2.40181455,
+     2.40676875,
+     2.3919521,
+     2.54605415,
+     2.39670625,
+     2.3916625,
+     2.40279375,
+     2.40324585,
+     2.40752295,
+     2.3929
+    ]
+   }
+  ]
+ }
+}

@@ -41,6 +41,6 @@ private:
     SDL_GPUDevice* device_ = nullptr;  // borrowed from the renderer
     SDL_GPUShader* shader_ = nullptr;
     SDL_GPURenderState* state_ = nullptr;
-    SDL_Texture* white_ = nullptr;     // what the full-window draw samples (ignored)
+    SDL_Texture* white_ = nullptr;     // the gel's noise lattice, which the full-window draw also draws with
     bool linear_colorspace_ = false;
 };
