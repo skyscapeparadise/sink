@@ -8,6 +8,9 @@
 #include <sys/wait.h>
 #include <signal.h>
 #include <poll.h>
+#if defined(__APPLE__)
+#include <pthread/qos.h>
+#endif
 #include <chrono>
 #include <vector>
 #include <sys/stat.h>
@@ -362,6 +365,16 @@ size_t PTYBridge::write_without_waiting(const char* data, size_t size) {
 }
 
 void PTYBridge::read_loop() {
+#if defined(__APPLE__)
+    // A reader that parses answers the terminal's queries, so it's as
+    // latency-critical as the main thread and gets the same scheduling class.
+    // At the default class it could wait for a core while video decoding,
+    // the GPU driver and the main thread were busy: with a video background
+    // and the CRT effect, 8 of 100 queries took over 1ms (termbench,
+    // 2026-11-02). Only when parsing here; a reader that just moves bytes
+    // keeps the default.
+    if (output_handler_) pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+#endif
     // 64K rather than 1K. A program dumping output at full tilt otherwise
     // costs one poll() and one read() per kilobyte, which is the bulk of what
     // this thread does once the byte-at-a-time queue is gone.

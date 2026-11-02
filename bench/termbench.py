@@ -175,12 +175,18 @@ def main():
     ap.add_argument("--reps", type=int, default=7, help="timed runs per workload (default 7)")
     ap.add_argument("--warmup", type=int, default=1)
     ap.add_argument("--queries", type=int, default=100, help="responsiveness queries (default 100)")
+    ap.add_argument("--latency-only", action="store_true",
+                    help="only the query round trip, no throughput workloads; use with --queries 1000")
+    ap.add_argument("--note", default="", help="what this run is, recorded in the results "
+                    "(termbench can't see the terminal's settings): e.g. 'threaded, pool video + CRT'")
     ap.add_argument("--workloads", nargs="*", default=DEFAULT_WORKLOADS)
     ap.add_argument("--timeout", type=float, default=120.0, help="seconds to wait for one workload")
     args = ap.parse_args()
 
     if not (os.isatty(0) and os.isatty(1)):
         sys.exit("termbench must run in a terminal window, with stdin and stdout unredirected.")
+    if args.latency_only:
+        args.workloads = []
     check_manifest(args.workloads)
     data = {n: open(os.path.join(WORKLOAD_DIR, n + ".bin"), "rb").read() for n in args.workloads}
 
@@ -248,7 +254,7 @@ def main():
             "term_program_version": os.environ.get("TERM_PROGRAM_VERSION", ""),
             "term": os.environ.get("TERM", ""),
             "cols": cols, "rows": rows, "xpixel": xpix, "ypixel": ypix,
-            "reps": args.reps, "warmup": args.warmup,
+            "reps": args.reps, "warmup": args.warmup, "note": args.note,
         },
         "machine": machine(),
         "date": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -258,16 +264,20 @@ def main():
     if not out:
         os.makedirs(os.path.join(HERE, "results"), exist_ok=True)
         safe = re.sub(r"[^A-Za-z0-9._-]+", "_", label)
-        stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H%M")  # a rerun mustn't replace a run
+        stamp = datetime.datetime.now().strftime("%Y-%m-%dT%H%M%S")  # a rerun mustn't replace a run
         out = os.path.join(HERE, "results", f"term-{safe}-{stamp}.json")
     with open(out, "w") as f:
         json.dump(result, f, indent=1)
 
-    print(f"termbench: {label} ({version or program}), {cols}x{rows} cells")
+    print(f"termbench: {label} ({version or program}), {cols}x{rows} cells" + (f" -- {args.note}" if args.note else ""))
     for m in metrics:
         s = sorted(m["samples"])
         med = s[len(s) // 2] if len(s) % 2 else (s[len(s) // 2 - 1] + s[len(s) // 2]) / 2
         print(f"  {m['label']:<20} median {med:9.2f} {m['unit']:<5}  (n={len(s)}, {s[0]:.2f}..{s[-1]:.2f})")
+        if m["id"] == "term.query_latency":
+            pct = lambda q: s[min(len(s) - 1, int(q * len(s)))]
+            print(f"  {'':<20} p90 {pct(0.9):.2f} ms, p99 {pct(0.99):.2f} ms, "
+                  f"{sum(x > 1 for x in s)} of {len(s)} over 1 ms")
     print(f"wrote {out}")
     print("Compare terminals with: python3 bench/run.py compare-terms bench/results/term-*.json")
 
