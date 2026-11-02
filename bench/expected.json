@@ -1,5 +1,5 @@
 {
- "blessed_from": "2026-11-01T2336-e31c4d2-dirty-quick.json",
+ "blessed_from": "2026-11-02T1108-00d6602-dirty.json",
  "fingerprints": {
   "findbar.1000": "matches=4502",
   "findbar.10000": "matches=37139",
@@ -22,6 +22,10 @@
   "pty_paced.cursor_heavy": "ef7f2d28c21defbe",
   "pty_paced.plain_text": "11c624c82b6c772c",
   "pty_paced.sync_tui": "2362197c8e825316",
+  "pty_threaded.cursor_heavy": "ef7f2d28c21defbe",
+  "pty_threaded.images": "4455f4b6be3b7996",
+  "pty_threaded.plain_text": "11c624c82b6c772c",
+  "pty_threaded.sync_tui": "2362197c8e825316",
   "reflow.1000": "8a17a5b81f321530",
   "reflow.10000": "6825caa6e1c4ed23",
   "render.blank.cpu": "51c4bc74",

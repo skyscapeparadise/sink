@@ -473,18 +473,24 @@ target_link_libraries(tmux_replay PRIVATE
 add_executable(pty_bench
     bench/pty_bench.cpp
     src/sync_output.cpp
+    src/pane_output.cpp
     src/ansi_parser.cpp
     src/terminal_grid.cpp
     src/terminal_images.cpp
     src/font_manager.cpp
     ${SHELL_SPAWN_SOURCES}
 )
-target_include_directories(pty_bench PRIVATE src ${CMAKE_BINARY_DIR}/generated)
+target_include_directories(pty_bench PRIVATE src vendor/tomlplusplus ${CMAKE_BINARY_DIR}/generated)
 target_link_libraries(pty_bench PRIVATE
+    sink_shader_compiler
     SDL3::SDL3
     SDL3_ttf::SDL3_ttf
     SDL3_image::SDL3_image
     ZLIB::ZLIB
+    PkgConfig::AVCODEC
+    PkgConfig::AVFORMAT
+    PkgConfig::AVUTIL
+    PkgConfig::SWSCALE
 )
 
 # Frames composed the way main.cpp composes them, so it needs every class a

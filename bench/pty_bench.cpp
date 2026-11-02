@@ -21,12 +21,29 @@
 //                   (sync_output::kFrameParseBudgetNs). What a user actually
 //                   gets, and what one frame costs while output pours in.
 //
+//   pty_threaded.<w>            the threaded parser (SINK_THREADED_PARSER):
+//                               the app's own Pane and
+//                               pane_output::parse_on_reader parse on the pty
+//                               reader thread, while this thread plays the
+//                               renderer, locking the pane and reading the
+//                               whole screen every 4ms. A frame comes every
+//                               16.7ms, but where it lands against the
+//                               parser's work is effectively random either
+//                               way, and 4ms samples that four times as often.
+//   pty_threaded.<w>.lock_wait  the longest any of those locks waited: what
+//                               a frame can lose to the parser holding the
+//                               pane during a flood (docs/threading-plan.md,
+//                               phase 4). The typewriter is off for this mode
+//                               -- no frame tick runs to type anything out.
+//
 // Checks, failing the run if any is off:
 //   - exactly the file's bytes arrive, no more, no fewer
 //   - the grid ends with the same fingerprint sink_bench's parser.<w> gets
 //     from the same bytes in memory (bench/run.py compares the two)
 #include "ansi_parser.hpp"
+#include "app_state.hpp"
 #include "harness.hpp"
+#include "pane_output.hpp"
 #include "pty_bridge.hpp"
 #include "sync_output.hpp"
 #include "terminal_grid.hpp"
@@ -134,6 +151,59 @@ Run run_once(const std::string& path, size_t expect, bool paced) {
     return r;
 }
 
+struct ThreadedRun {
+    bool ok = false;
+    double seconds = 0;
+    double wait_max_ms = 0;
+    std::string fingerprint;
+};
+
+// `path` empty: the control. Same pane, same probes, a child that prints
+// nothing for half a second -- so its lock waits are the probe's own noise
+// (the scheduler, the machine), the floor the real waits are judged against.
+ThreadedRun run_threaded(const std::string& path) {
+    ThreadedRun r;
+    PTYBridge::ShellSettings sh;
+    sh.command = "/bin/sh";
+    sh.login = false;
+    if (path.empty()) sh.args = {"-c", "stty -opost -echo; read go; exec /bin/sleep 0.5"};
+    else sh.args = {"-c", "stty -opost -echo; read go; exec /bin/cat \"$0\"", path};
+    PTYBridge::set_shell_settings(sh);
+    PTYBridge::set_shell_integration_enabled(false);
+
+    auto pane = std::make_unique<Pane>();
+    pane->lock()->resize(kCols, kRows);
+    pane->typing_animation.store(false);
+    pane_output::attach_reader_parser(*pane);
+    if (!pane->pty.spawn(kCols, kRows)) { std::fprintf(stderr, "pty spawn failed\n"); return r; }
+    // stty runs, then the child waits on `read`; it prints nothing, so give
+    // it time rather than waiting for a signal through the parser.
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+
+    auto t0 = bench::clock::now();
+    pane->pty.write_to_pty("\n", 1);
+    constexpr auto kProbe = std::chrono::milliseconds(4);
+    auto next_frame = t0 + kProbe;
+    const auto deadline = t0 + std::chrono::seconds(60);
+    // The reader exits at EOF, after parsing everything cat wrote. Checked
+    // every half millisecond so the throughput isn't rounded to frames.
+    while (pane->pty.is_running() && bench::clock::now() < deadline) {
+        if (bench::clock::now() >= next_frame) {
+            next_frame += kProbe;
+            auto w0 = bench::clock::now();
+            auto g = pane->lock();
+            r.wait_max_ms = std::max(r.wait_max_ms, bench::seconds_since(w0) * 1000.0);
+            (void)bench::screen_text_hash(g.grid());  // a frame's worth of reading the grid
+        }
+        std::this_thread::sleep_for(std::chrono::microseconds(500));
+    }
+    r.seconds = bench::seconds_since(t0);
+    r.ok = !pane->pty.is_running();
+    if (!r.ok) std::fprintf(stderr, "%s: timed out\n", path.empty() ? "control" : path.c_str());
+    r.fingerprint = bench::grid_fingerprint(pane->lock().grid());
+    return r;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -189,6 +259,54 @@ int main(int argc, char** argv) {
                 report.add(std::move(worst));
             }
         }
+    }
+
+    if (opt.wants("pty_threaded.idle")) {
+        bench::Metric wait{"pty_threaded.idle.lock_wait", "threaded: no output (control), worst lock wait",
+                           "ms", "lower", {}, {}, {}};
+        for (int i = 0; i < warmup + samples; ++i) {
+            ThreadedRun r = run_threaded("");
+            if (!r.ok) { ++failures; break; }
+            if (i >= warmup) wait.samples.push_back(r.wait_max_ms);
+        }
+        wait.add_info("note", "the probe's own noise: compare pty_threaded.*.lock_wait against this");
+        report.add(std::move(wait));
+    }
+    // Images too, for the threaded parser: decoding one happens inside the
+    // parse, so it's where a long hold of the pane's lock would come from.
+    const char* threaded_files[][3] = {
+        {"plain_text.bin",   "plain_text",   "plain text"},
+        {"cursor_heavy.bin", "cursor_heavy", "cursor-heavy"},
+        {"sync_tui.bin",     "sync_tui",     "synchronized-output TUI"},
+        {"images.bin",       "images",       "sixel + kitty images"},
+    };
+    for (auto& f : threaded_files) {
+        const std::string base = std::string("pty_threaded.") + f[1];
+        if (!opt.wants(base)) continue;
+        const std::string path = dir + "/" + f[0];
+        const size_t size = bench::read_file(path).size();
+        const double mb = size / (1024.0 * 1024.0);
+        bench::Metric tp{base, std::string("threaded: ") + f[2], "MB/s", "higher", {}, {}, {}};
+        bench::Metric wait{base + ".lock_wait", std::string("threaded: ") + f[2] + ", worst lock wait", "ms", "lower", {}, {}, {}};
+        std::string fp;
+        for (int i = 0; i < warmup + samples; ++i) {
+            ThreadedRun r = run_threaded(path);
+            if (!r.ok) { ++failures; break; }
+            if (fp.empty()) fp = r.fingerprint;
+            else if (fp != r.fingerprint) {
+                std::fprintf(stderr, "%s: grid differs between runs\n", base.c_str());
+                ++failures;
+            }
+            if (i < warmup) continue;
+            tp.samples.push_back(mb / r.seconds);
+            wait.samples.push_back(r.wait_max_ms);
+        }
+        tp.fingerprint = fp;
+        tp.add_info("bytes", static_cast<double>(size));
+        tp.add_info("same_as", std::string("parser.") + f[1]);
+        report.add(std::move(tp));
+        wait.add_info("frame_ms", 16.667);
+        report.add(std::move(wait));
     }
 
     if (opt.json) report.write(json_out);

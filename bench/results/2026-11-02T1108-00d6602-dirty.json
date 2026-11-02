@@ -1,0 +1,711 @@
+{
+ "suite": 1,
+ "name": "2026-11-02T1108-00d6602-dirty",
+ "quick": false,
+ "environment": {
+  "date": "2026-11-02T11:08:04-08:00",
+  "host_cpu": "Apple M1 Max",
+  "cores": 10,
+  "perf_cores": "8",
+  "memory_gb": 64.0,
+  "os": "macOS 27.2 (26B123)",
+  "model": "MacBookPro18,4",
+  "power": "battery",
+  "low_power_mode": false,
+  "thermal": "Note: No thermal warning level has been recorded Note: No performance warning level has been recorded Note: No CPU power status has been recorded",
+  "load_avg": [
+   6.82,
+   7.31,
+   6.86
+  ],
+  "busiest_processes": [
+   "35.4 /System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.WebContent.xpc/Contents/MacOS/com.apple.WebKit.WebContent",
+   "29.5 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+   "27.9 /usr/libexec/sysmond",
+   "25.0 /Applications/Zed.app/Contents/MacOS/zed",
+   "21.5 /System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.GPU.xpc/Contents/MacOS/com.apple.WebKit.GPU",
+   "18.3 /opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python"
+  ],
+  "git_commit": "00d6602b426d6aa0337699e14f343c5a165483a3",
+  "git_dirty": true,
+  "git_diff_sha256": "2a8cfafe031e63768ec8aa69a53d0dbeab88acc804f279d0481580814b4068f0",
+  "load_avg_after": [
+   6.54,
+   7.33,
+   6.9
+  ]
+ },
+ "build": {
+  "source_digest": "da06f7c1f503dc27827d0693912742280d33eddf9ded55fb1a64edb4dcb4e4f4",
+  "build_type": "Release",
+  "cxx_flags": "-O3 -DNDEBUG -std=gnu++20 -arch arm64 -mmacosx-version-min=26.0 -fstack-protector-strong -ftrivial-auto-var-init=zero -Wformat -Werror=format-security -falign-functions=64",
+  "compiler": "Apple clang version 21.0.0 (clang-2100.3.34.2)"
+ },
+ "noise": [
+  "on battery power",
+  "1-minute load average is 6.82"
+ ],
+ "benches": [
+  {
+   "bench": "pty_bench",
+   "config": {
+    "cols": 120,
+    "rows": 50,
+    "frame_ms": 16.667,
+    "parse_budget_ms": 8,
+    "samples": 10,
+    "child": "/bin/sh -c 'stty -opost -echo; exec /bin/cat FILE'"
+   },
+   "metrics": [
+    {
+     "id": "pty.plain_text",
+     "label": "pty: plain text",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "11c624c82b6c772c",
+     "info": {
+      "bytes": 8388608,
+      "same_as": "parser.plain_text"
+     },
+     "samples": [
+      148.709137,
+      142.23771,
+      135.37238,
+      147.060513,
+      136.035046,
+      149.004002,
+      132.843839,
+      133.303802,
+      144.190693,
+      127.830497
+     ]
+    },
+    {
+     "id": "pty.cursor_heavy",
+     "label": "pty: cursor-heavy",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "ef7f2d28c21defbe",
+     "info": {
+      "bytes": 8388608,
+      "same_as": "parser.cursor_heavy"
+     },
+     "samples": [
+      131.447068,
+      141.670651,
+      143.137987,
+      137.795221,
+      141.933624,
+      131.608711,
+      146.296749,
+      119.236662,
+      129.749894,
+      132.64771
+     ]
+    },
+    {
+     "id": "pty.sync_tui",
+     "label": "pty: synchronized-output TUI",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "2362197c8e825316",
+     "info": {
+      "bytes": 8388289,
+      "same_as": "parser.sync_tui"
+     },
+     "samples": [
+      136.119468,
+      138.771578,
+      135.462073,
+      137.775346,
+      134.451776,
+      133.747152,
+      128.521041,
+      138.692082,
+      133.088057,
+      140.5537
+     ]
+    },
+    {
+     "id": "pty_paced.plain_text",
+     "label": "paced: plain text",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "11c624c82b6c772c",
+     "info": {
+      "bytes": 8388608,
+      "same_as": "parser.plain_text"
+     },
+     "samples": [
+      85.9238783,
+      84.703889,
+      85.2556938,
+      77.5226039,
+      85.1228334,
+      84.8813499,
+      77.2605346,
+      76.7484248,
+      84.8405424,
+      85.9929187
+     ]
+    },
+    {
+     "id": "pty_paced.plain_text.worst_frame",
+     "label": "paced: plain text, worst frame",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": null,
+     "info": {
+      "frame_ms": 16.667
+     },
+     "samples": [
+      8.30575,
+      8.257125,
+      8.230541,
+      8.288583,
+      8.227958,
+      8.257041,
+      8.138375,
+      8.26975,
+      8.2865,
+      8.196709
+     ]
+    },
+    {
+     "id": "pty_paced.cursor_heavy",
+     "label": "paced: cursor-heavy",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "ef7f2d28c21defbe",
+     "info": {
+      "bytes": 8388608,
+      "same_as": "parser.cursor_heavy"
+     },
+     "samples": [
+      72.8079128,
+      73.7939304,
+      75.0415078,
+      74.2950102,
+      73.5386494,
+      73.0924025,
+      73.6026139,
+      73.5597802,
+      74.0067766,
+      73.7522901
+     ]
+    },
+    {
+     "id": "pty_paced.cursor_heavy.worst_frame",
+     "label": "paced: cursor-heavy, worst frame",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": null,
+     "info": {
+      "frame_ms": 16.667
+     },
+     "samples": [
+      8.287292,
+      8.396292,
+      8.252583,
+      8.334458,
+      8.23125,
+      8.255875,
+      8.341959,
+      8.316,
+      8.317292,
+      8.195709
+     ]
+    },
+    {
+     "id": "pty_paced.sync_tui",
+     "label": "paced: synchronized-output TUI",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "2362197c8e825316",
+     "info": {
+      "bytes": 8388289,
+      "same_as": "parser.sync_tui"
+     },
+     "samples": [
+      66.1335022,
+      65.6010307,
+      65.2411939,
+      64.5871826,
+      66.5115473,
+      65.594329,
+      64.883288,
+      64.8753073,
+      64.6319072,
+      66.0548444
+     ]
+    },
+    {
+     "id": "pty_paced.sync_tui.worst_frame",
+     "label": "paced: synchronized-output TUI, worst frame",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": null,
+     "info": {
+      "frame_ms": 16.667
+     },
+     "samples": [
+      8.005291,
+      8.003917,
+      8.020625,
+      8.008042,
+      8.006083,
+      8.005958,
+      8.005834,
+      8.004416,
+      8.008875,
+      8.008083
+     ]
+    },
+    {
+     "id": "pty_threaded.idle.lock_wait",
+     "label": "threaded: no output (control), worst lock wait",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": null,
+     "info": {
+      "note": "the probe's own noise: compare pty_threaded.*.lock_wait against this"
+     },
+     "samples": [
+      0.003834,
+      0.010583,
+      0.000833,
+      0.004042,
+      0.003375,
+      0.003375,
+      0.016417,
+      0.002833,
+      0.003209,
+      0.005875
+     ]
+    },
+    {
+     "id": "pty_threaded.plain_text",
+     "label": "threaded: plain text",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "11c624c82b6c772c",
+     "info": {
+      "bytes": 8388608,
+      "same_as": "parser.plain_text"
+     },
+     "samples": [
+      74.2455951,
+      76.2295587,
+      77.3767981,
+      77.9160382,
+      76.6206156,
+      78.3229107,
+      72.8028885,
+      71.8562605,
+      73.1451978,
+      77.4994478
+     ]
+    },
+    {
+     "id": "pty_threaded.plain_text.lock_wait",
+     "label": "threaded: plain text, worst lock wait",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": null,
+     "info": {
+      "frame_ms": 16.667
+     },
+     "samples": [
+      0.051333,
+      0.032416,
+      0.190208,
+      0.08675,
+      0.060959,
+      0.032291,
+      0.054417,
+      0.1735,
+      0.072584,
+      0.026375
+     ]
+    },
+    {
+     "id": "pty_threaded.cursor_heavy",
+     "label": "threaded: cursor-heavy",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "ef7f2d28c21defbe",
+     "info": {
+      "bytes": 8388608,
+      "same_as": "parser.cursor_heavy"
+     },
+     "samples": [
+      71.3965654,
+      75.4240543,
+      73.9021776,
+      71.5248694,
+      71.5994993,
+      76.7973279,
+      72.5332733,
+      71.5840168,
+      75.9916617,
+      71.904888
+     ]
+    },
+    {
+     "id": "pty_threaded.cursor_heavy.lock_wait",
+     "label": "threaded: cursor-heavy, worst lock wait",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": null,
+     "info": {
+      "frame_ms": 16.667
+     },
+     "samples": [
+      0.117541,
+      0.046667,
+      0.034542,
+      0.028,
+      0.028209,
+      0.030125,
+      0.046583,
+      0.040917,
+      0.029542,
+      0.040916
+     ]
+    },
+    {
+     "id": "pty_threaded.sync_tui",
+     "label": "threaded: synchronized-output TUI",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "2362197c8e825316",
+     "info": {
+      "bytes": 8388289,
+      "same_as": "parser.sync_tui"
+     },
+     "samples": [
+      69.8851576,
+      68.6367959,
+      68.7569445,
+      69.5448834,
+      68.5088264,
+      69.7937002,
+      68.157055,
+      66.9682555,
+      66.5127689,
+      68.2187609
+     ]
+    },
+    {
+     "id": "pty_threaded.sync_tui.lock_wait",
+     "label": "threaded: synchronized-output TUI, worst lock wait",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": null,
+     "info": {
+      "frame_ms": 16.667
+     },
+     "samples": [
+      0.076125,
+      0.043833,
+      0.065041,
+      0.045667,
+      0.049708,
+      0.065084,
+      0.07025,
+      0.053792,
+      0.122792,
+      0.049625
+     ]
+    },
+    {
+     "id": "pty_threaded.images",
+     "label": "threaded: sixel + kitty images",
+     "unit": "MB/s",
+     "better": "higher",
+     "fingerprint": "4455f4b6be3b7996",
+     "info": {
+      "bytes": 8387040,
+      "same_as": "parser.images"
+     },
+     "samples": [
+      44.8677185,
+      44.3310354,
+      45.8683988,
+      45.2021353,
+      45.1119388,
+      43.8630539,
+      43.9135855,
+      45.818323,
+      44.2154282,
+      44.7075387
+     ]
+    },
+    {
+     "id": "pty_threaded.images.lock_wait",
+     "label": "threaded: sixel + kitty images, worst lock wait",
+     "unit": "ms",
+     "better": "lower",
+     "fingerprint": null,
+     "info": {
+      "frame_ms": 16.667
+     },
+     "samples": [
+      0.164,
+      0.158416,
+      0.121166,
+      0.077667,
+      0.095,
+      0.086917,
+      0.259666,
+      0.1215,
+      0.212542,
+      0.227041
+     ]
+    }
+   ],
+   "exit_code": 0,
+   "stderr": ""
+  }
+ ],
+ "stats": {
+  "pty.plain_text": {
+   "n": 10,
+   "median": 139.13637799999998,
+   "ci95": [
+    133.303802,
+    147.060513
+   ],
+   "min": 127.830497,
+   "max": 149.004002,
+   "mad": 6.062557499999983,
+   "rel_ci": 0.09887213680379116
+  },
+  "pty.cursor_heavy": {
+   "n": 10,
+   "median": 135.2214655,
+   "ci95": [
+    130.6793025,
+    141.933624
+   ],
+   "min": 119.236662,
+   "max": 146.296749,
+   "mad": 5.96037849999999,
+   "rel_ci": 0.08322880881660023
+  },
+  "pty.sync_tui": {
+   "n": 10,
+   "median": 135.7907705,
+   "ci95": [
+    133.747152,
+    138.692082
+   ],
+   "min": 128.521041,
+   "max": 140.5537,
+   "mad": 2.373166000000012,
+   "rel_ci": 0.03641580338481104
+  },
+  "pty_paced.plain_text": {
+   "n": 10,
+   "median": 84.86094615,
+   "ci95": [
+    77.5226039,
+    85.52335585
+   ],
+   "min": 76.7484248,
+   "max": 85.9929187,
+   "mad": 0.728839899999997,
+   "rel_ci": 0.09428072998217459
+  },
+  "pty_paced.plain_text.worst_frame": {
+   "n": 10,
+   "median": 8.257083,
+   "ci95": [
+    8.226875,
+    8.2865
+   ],
+   "min": 8.138375,
+   "max": 8.30575,
+   "mad": 0.02927100000000049,
+   "rel_ci": 0.007221073107779162
+  },
+  "pty_paced.cursor_heavy": {
+   "n": 10,
+   "median": 73.67745199999999,
+   "ci95": [
+    73.32609135000001,
+    74.0444703
+   ],
+   "min": 72.8079128,
+   "max": 75.0415078,
+   "mad": 0.23406359999999893,
+   "rel_ci": 0.00975032293462032
+  },
+  "pty_paced.cursor_heavy.worst_frame": {
+   "n": 10,
+   "median": 8.301646000000002,
+   "ci95": [
+    8.2435625,
+    8.334458
+   ],
+   "min": 8.195709,
+   "max": 8.396292,
+   "mad": 0.0430419999999998,
+   "rel_ci": 0.010949093709849856
+  },
+  "pty_paced.sync_tui": {
+   "n": 10,
+   "median": 65.41776145,
+   "ci95": [
+    64.8753073,
+    66.0548444
+   ],
+   "min": 64.5871826,
+   "max": 66.5115473,
+   "mad": 0.5897685499999952,
+   "rel_ci": 0.018030838626319125
+  },
+  "pty_paced.sync_tui.worst_frame": {
+   "n": 10,
+   "median": 8.0060205,
+   "ci95": [
+    8.005125,
+    8.008083
+   ],
+   "min": 8.003917,
+   "max": 8.020625,
+   "mad": 0.0018129999999993984,
+   "rel_ci": 0.0003694719492661269
+  },
+  "pty_threaded.idle.lock_wait": {
+   "n": 10,
+   "median": 0.0036045,
+   "ci95": [
+    0.003104,
+    0.0073124999999999996
+   ],
+   "min": 0.000833,
+   "max": 0.016417,
+   "mad": 0.0006044999999999998,
+   "rel_ci": 1.1675683173810514
+  },
+  "pty_threaded.plain_text": {
+   "n": 10,
+   "median": 76.42508715,
+   "ci95": [
+    72.97404315,
+    77.64641815
+   ],
+   "min": 71.8562605,
+   "max": 78.3229107,
+   "mad": 1.6943873000000025,
+   "rel_ci": 0.0611366656452678
+  },
+  "pty_threaded.plain_text.lock_wait": {
+   "n": 10,
+   "median": 0.057688,
+   "ci95": [
+    0.032416,
+    0.12304199999999998
+   ],
+   "min": 0.026375,
+   "max": 0.190208,
+   "mad": 0.025334500000000003,
+   "rel_ci": 1.5709679656080984
+  },
+  "pty_threaded.cursor_heavy": {
+   "n": 10,
+   "median": 72.21908065,
+   "ci95": [
+    71.56218435,
+    75.4240543
+   ],
+   "min": 71.3965654,
+   "max": 76.7973279,
+   "mad": 0.758363249999995,
+   "rel_ci": 0.05347437152677184
+  },
+  "pty_threaded.cursor_heavy.lock_wait": {
+   "n": 10,
+   "median": 0.037729,
+   "ci95": [
+    0.029167,
+    0.046583
+   ],
+   "min": 0.028,
+   "max": 0.117541,
+   "mad": 0.0085205,
+   "rel_ci": 0.461607781812399
+  },
+  "pty_threaded.sync_tui": {
+   "n": 10,
+   "median": 68.57281115,
+   "ci95": [
+    67.73854095,
+    69.5448834
+   ],
+   "min": 66.5127689,
+   "max": 69.8851576,
+   "mad": 0.6939142000000018,
+   "rel_ci": 0.026341962939928302
+  },
+  "pty_threaded.sync_tui.lock_wait": {
+   "n": 10,
+   "median": 0.0594165,
+   "ci95": [
+    0.0476875,
+    0.0706045
+   ],
+   "min": 0.043833,
+   "max": 0.122792,
+   "mad": 0.010312500000000002,
+   "rel_ci": 0.38570094165762037
+  },
+  "pty_threaded.images": {
+   "n": 10,
+   "median": 44.787628600000005,
+   "ci95": [
+    44.12231045,
+    45.4651309
+   ],
+   "min": 43.8630539,
+   "max": 45.8683988,
+   "mad": 0.5143968000000072,
+   "rel_ci": 0.029981950194165843
+  },
+  "pty_threaded.images.lock_wait": {
+   "n": 10,
+   "median": 0.139958,
+   "ci95": [
+    0.095,
+    0.212542
+   ],
+   "min": 0.077667,
+   "max": 0.259666,
+   "mad": 0.0489995,
+   "rel_ci": 0.83983766558539
+  }
+ },
+ "checks": [
+  {
+   "level": "warn",
+   "what": "pty_threaded.plain_text: no blessed fingerprint yet",
+   "detail": "11c624c82b6c772c"
+  },
+  {
+   "level": "warn",
+   "what": "pty_threaded.cursor_heavy: no blessed fingerprint yet",
+   "detail": "ef7f2d28c21defbe"
+  },
+  {
+   "level": "warn",
+   "what": "pty_threaded.sync_tui: no blessed fingerprint yet",
+   "detail": "2362197c8e825316"
+  },
+  {
+   "level": "warn",
+   "what": "pty_threaded.images: no blessed fingerprint yet",
+   "detail": "4455f4b6be3b7996"
+  }
+ ]
+}

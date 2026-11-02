@@ -317,6 +317,44 @@ in each terminal.
 
 **Done when:** the lock-wait target is met and recorded in a results file.
 
+**Progress, 2026-11-02:** measured first, and the fairness mechanism turned
+out not to be needed.
+- **The new mode.** `pty_bench` gained `pty_threaded.<w>`: the app's own
+  `Pane` and `parse_on_reader` parse a flood through a real pty, while the
+  bench thread locks the pane and reads the whole screen every 4 ms.
+- **The control.** `pty_threaded.idle.lock_wait` runs the same probes with
+  a child that prints nothing, which gives the probe's own noise.
+
+| | median of each run's worst wait | worst seen |
+|---|---|---|
+| control (no output) | 0.004 ms | 1.74 ms (the scheduler, not the parser) |
+| plain text | 0.033 ms | 0.57 ms |
+| TUI redraws | 0.032 ms | 0.11 ms |
+| synchronized TUI | 0.049 ms | 0.15 ms |
+| sixel + kitty images | 0.097 ms | 0.13 ms |
+
+Why the waits are so short:
+- the pty hands over output in small reads, so one parse holds the lock
+  only briefly
+- macOS mutexes hand the lock to waiters in order by default, so the
+  reader can't keep taking it back
+
+The millisecond outliers appear in the control too, so they're the probe
+thread being descheduled. Neither the waiting flag nor smaller slices
+would change them, so neither was added.
+
+**Behaviour.** The threaded parser leaves exactly the grid in-memory parsing
+does: `pty_threaded.*` fingerprints equal the blessed `parser.*` ones on all
+four workloads. Synchronized updates are still held whole, by
+`sync_output::parse`, so a frame mid-flood can show a partly written
+unsynchronized redraw, as it could at a frame boundary before. Checking
+that by eye is part of your phase 3 trial.
+
+**Not covered:** a single very large image (a 4K photo through
+`sinkview`) is decoded inside the parse, so the renderer would wait for the
+whole decode. That's no worse than today, where the same decode blocks the
+entire frame, but if it shows up, decoding outside the lock is the fix.
+
 ### Phase 5: benchmarks and claims (small)
 
 1. `pty_bench` gains a threaded mode that mirrors the app, so "measure what
