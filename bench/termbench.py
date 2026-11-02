@@ -141,6 +141,39 @@ class Tty:
         return cols, rows, xpix, ypix
 
 
+# Executable names of terminals, as `ps` shows them, and what to call each.
+KNOWN_TERMINALS = {
+    "sink": "sink", "alacritty": "alacritty", "zed": "zed", "kitty": "kitty", "ghostty": "ghostty",
+    "wezterm-gui": "wezterm", "terminal": "terminal.app", "iterm2": "iterm2", "tmux": "tmux",
+    "warp": "warp", "hyper": "hyper", "rio": "rio",
+}
+
+
+def terminal_from_process_tree():
+    """The terminal that owns this session, found by walking up from this
+    process to the first ancestor that is a known terminal. More reliable than
+    the environment: a terminal launched from another (Alacritty opened from
+    Zed's shell) inherits that one's TERM_PROGRAM, and Alacritty sets none of
+    its own, so the variable named the wrong program."""
+    pid = os.getpid()
+    for _ in range(12):
+        try:
+            out = subprocess.run(["ps", "-o", "ppid=,comm=", "-p", str(pid)],
+                                 capture_output=True, text=True).stdout.strip()
+        except OSError:
+            return ""
+        if not out:
+            return ""
+        ppid, _, comm = out.partition(" ")
+        name = os.path.basename(comm.strip()).lower()
+        if name in KNOWN_TERMINALS:
+            return KNOWN_TERMINALS[name]
+        if not ppid.strip().isdigit() or int(ppid) <= 1:
+            return ""
+        pid = int(ppid)
+    return ""
+
+
 def guess_terminal():
     """For terminals that answer neither XTVERSION nor set TERM_PROGRAM, from
     what they do leave in the environment."""
@@ -207,7 +240,8 @@ def main():
         if not t.wait_for(DA1_REPLY, 5.0):
             sys.exit("this terminal never answered a device attributes query (ESC [ c)")
         program = os.environ.get("TERM_PROGRAM", "")
-        label = args.label or (version.split()[0] if version else program) or guess_terminal() or "unknown"
+        from_tree = terminal_from_process_tree()
+        label = args.label or from_tree or (version.split()[0] if version else "") or program or guess_terminal() or "unknown"
 
         # Responsiveness first, on a quiet terminal.
         lat = []
@@ -250,7 +284,7 @@ def main():
     result = {
         "bench": "termbench",
         "config": {
-            "terminal": label, "xtversion": version, "term_program": program,
+            "terminal": label, "terminal_process": from_tree, "xtversion": version, "term_program": program,
             "term_program_version": os.environ.get("TERM_PROGRAM_VERSION", ""),
             "term": os.environ.get("TERM", ""),
             "cols": cols, "rows": rows, "xpixel": xpix, "ypixel": ypix,
