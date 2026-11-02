@@ -1851,7 +1851,7 @@ void TerminalGrid::render(SDL_Renderer* renderer, const FontManager& font_manage
     // Opens the glyph atlas's per-pass reset budget. Without it, a screen
     // wanting more distinct glyphs than the atlas holds re-rasterizes all of
     // them every frame forever instead of just missing a few.
-    font_manager.begin_frame();
+    font_manager.begin_frame(renderer);
 
     SDL_Texture* dyn_atlas = font_manager.get_dynamic_atlas_texture();
 

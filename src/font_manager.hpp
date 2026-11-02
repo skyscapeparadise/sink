@@ -93,8 +93,12 @@ public:
     bool has_ligature_glyph(char32_t codepoint) const;
 
     // Opens a frame for the glyph atlas. Only the reset budget is per-frame;
-    // cached glyphs are untouched and survive across frames as before.
-    void begin_frame() const { dynamic_resets_this_frame_ = 0; }
+    // cached glyphs are untouched and survive across frames as before --
+    // unless the last frame wanted more distinct glyphs than the atlas holds,
+    // in which case the atlas grows here, before this frame's drawing takes
+    // hold of the texture (see grow_pending_).
+    void begin_frame(SDL_Renderer* renderer) const;
+    int dynamic_atlas_size() const { return dynamic_atlas_size_; }
 
     float get_cell_width() const { return cell_width_; }
     float get_cell_height() const { return cell_height_; }
@@ -131,7 +135,7 @@ private:
     static FontLookup font_lookup_;
     TTF_Font* ligature_font_ = nullptr; // same face as font_, ~2x point size
     SDL_Texture* atlas_texture_ = nullptr;
-    SDL_Texture* dynamic_atlas_texture_ = nullptr;
+    mutable SDL_Texture* dynamic_atlas_texture_ = nullptr;
     std::unordered_map<char32_t, GlyphInfo> glyph_cache_;
     // One dynamic cache per style, since a bold/italic glyph rasterizes to
     // different pixels than its regular counterpart and both must be able
@@ -164,9 +168,23 @@ private:
     // glyphs one screen can want at once: exceed it and the packer resets,
     // dropping every cached glyph, and the screen re-rasterizes from scratch
     // on every frame from then on. At 1024 a 200x50 grid of CJK blew past it
-    // and rendered at 7fps indefinitely; 2048 holds roughly four times as many
-    // and covers a full screen of dense text, for 16MB of texture memory.
+    // and rendered at 7fps indefinitely.
+    //
+    // 2048 (16MB) holds 3,480 distinct CJK glyphs at 15pt on a 2x display,
+    // and a full window of real Chinese text uses around 1,300. Only a screen
+    // of nearly all-different glyphs -- a character table, a Unicode dump --
+    // wants more, and then this window's atlas grows once to 4096 (64MB,
+    // about 13,900 such glyphs) instead of every window paying for that up
+    // front.
     static constexpr int kDynamicAtlasSize = 2048;
+    static constexpr int kDynamicAtlasMaxSize = 4096;
+    mutable int dynamic_atlas_size_ = kDynamicAtlasSize;
+    // Set when a frame needed a second reset: its glyphs don't all fit at
+    // once. Acted on by the next begin_frame(), never mid-frame, because
+    // render() holds the texture and its size for the whole pass.
+    mutable bool grow_pending_ = false;
+    mutable bool grow_failed_ = false;  // couldn't allocate the bigger one; stay put
+    bool create_dynamic_atlas(SDL_Renderer* renderer, int size) const;
 
     static int style_index(bool bold, bool italic) { return (bold ? 1 : 0) | (italic ? 2 : 0); }
     TTF_Font* font_for_style(int idx) const {
