@@ -96,6 +96,9 @@ const Scene kScenes[] = {
     // More distinct glyphs than the atlas holds, so which are cached when the
     // evidence frame is drawn depends on how many frames came before it.
     {"cjk",         "distinct CJK screenful",  "distinct_cjk.bin", Backdrop::Color, false, false, 1, 0, nullptr, false},
+    // What real Chinese text needs: far fewer distinct glyphs (see
+    // gen_cjk_text in gen_workloads.py).
+    {"cjk_text",    "CJK text",                "cjk_text.bin"},
     {"painted",     "painted backgrounds",     "@painted"},
     {"images",      "inline images",           "images.bin"},
     {"scrollback",  "scrollback (deep)",       "plain_text.bin", Backdrop::Color, false, false, 1, 4000},

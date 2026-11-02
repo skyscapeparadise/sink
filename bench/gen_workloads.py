@@ -272,6 +272,38 @@ def gen_images():
         n += 1
 
 
+# ---- Workload 10: CJK text as people actually write it ------------------
+# distinct_cjk is the worst case -- every glyph on screen different. Real
+# Chinese reuses a few hundred characters for most of any text: character
+# frequency follows Zipf's law, roughly 1/rank. This samples the 3,755 common
+# (GB2312 level-1) characters that way, in a fixed shuffled order standing in
+# for frequency rank, with the punctuation prose has. A screenful uses around
+# 1,300 distinct characters, which is what the glyph atlas has to hold.
+def gen_cjk_text():
+    rng = random.Random(10)
+    chars = []
+    for row in range(0xB0, 0xD8):
+        for col in range(0xA1, 0xFF):
+            if row == 0xD7 and col > 0xF9:
+                break
+            chars.append(bytes([row, col]).decode("gb2312"))
+    rng.shuffle(chars)
+    weights = [1.0 / (k + 1) for k in range(len(chars))]
+    cum, c = [], 0.0
+    for w in weights:
+        c += w
+        cum.append(c)
+    import bisect
+    while True:
+        line = []
+        for i in range(60):  # 60 wide characters = 120 columns
+            if i % 12 == 11:
+                line.append(rng.choice("，。、；"))
+            else:
+                line.append(chars[bisect.bisect_left(cum, rng.random() * c)])
+        yield "".join(line) + "\r\n"
+
+
 WORKLOADS = [
     ("plain_text.bin", gen_plain_text),
     ("colored_text.bin", gen_colored_text),
@@ -282,6 +314,7 @@ WORKLOADS = [
     ("graphemes.bin", gen_graphemes),
     ("hyperlinks.bin", gen_hyperlinks),
     ("images.bin", gen_images),
+    ("cjk_text.bin", gen_cjk_text),
 ]
 
 

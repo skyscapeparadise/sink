@@ -41,7 +41,8 @@ UTF-8 (emoji/CJK/box drawing), distinct CJK (an atlas stress test), and since
 October 2026 also synchronized-output TUI frames, grapheme clusters, OSC 8
 links with OSC 133 marks, and sixel and kitty images.
 
-Render scenes: text of each kind, deep scrollback, scrollback with search,
+Render scenes: text of each kind (including CJK prose, and a screen of
+entirely distinct CJK as a stress test), deep scrollback, scrollback with search,
 four panes, and each background kind (gradient, gel, shader, 4K picture,
 video), the CRT effect, HDR text, and all of it at once.
 
@@ -208,11 +209,17 @@ The first full runs, 2026-10-29, Apple M1 Max:
    without the quadratic case (`parser.colored_text` 152 against
    `parser_core.colored_text` 180 MB/s): one `find` per chunk that can't skip
    ahead where escapes are dense. Open.
-3. **The distinct-CJK atlas cliff is back at real resolution.** It was fixed
-   in September at 16 px and 1x density, where it measured 0.30 ms. At the
-   app's default (15 pt on a 2x display, so 30 px glyphs), one screen of
-   distinct CJK doesn't fit the 2048 atlas, and frames take 60–90 ms. Open;
-   it was invisible because the old bench didn't render at the real size.
+3. **The distinct-CJK atlas cliff was back at real resolution. Fixed
+   2026-11-01.** It was fixed in September at 16 px and 1x density, where it
+   measured 0.30 ms. At the app's default (15 pt on a 2x display, so 30 px
+   glyphs), the 2048 atlas holds 3,480 distinct CJK glyphs, against 4,686
+   that a 143x66 window of all-different characters can show, and frames
+   took 60–90 ms. It was invisible because the old bench didn't render at the
+   real size. Real text never got near it: a window of Chinese prose uses
+   about 1,300 distinct characters (the new `cjk_text` scene renders in
+   0.8 ms). So rather than a bigger atlas for every window, a window whose
+   screen doesn't fit grows its own atlas once, to 4096: the stress scene
+   went from ~86 ms to 0.9 ms a frame.
 4. **The gel is the most expensive thing in the render path:** ~5.2 ms of GPU
    per frame on a 4208x1678 backbuffer. A fairly heavy shader background
    costs 2.5 ms and the CRT effect 2.3 ms. With every effect on, a frame takes

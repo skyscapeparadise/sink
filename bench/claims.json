@@ -46,6 +46,14 @@
    "metric": "render.video.frame", "op": "<=", "value": 2.0, "machine": "Apple M1 Max"
   },
   {
+   "claim": "a screen of Chinese text is finished, GPU included, in under 2ms",
+   "metric": "render.cjk_text.frame", "op": "<=", "value": 2.0, "machine": "Apple M1 Max"
+  },
+  {
+   "claim": "even a screen of entirely different CJK characters renders within a 120Hz refresh",
+   "metric": "render.cjk.frame", "op": "<=", "value": 8.33, "machine": "Apple M1 Max"
+  },
+  {
    "claim": "a find-bar keystroke at the default 10,000 lines of scrollback takes under 5ms",
    "metric": "findbar.10000", "op": "<=", "value": 5.0, "machine": "Apple M1 Max"
   },

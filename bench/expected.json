@@ -1,5 +1,5 @@
 {
- "blessed_from": "2026-11-01T1745-020d7ed.json",
+ "blessed_from": "2026-11-01T2336-e31c4d2-dirty-quick.json",
  "fingerprints": {
   "findbar.1000": "matches=4502",
   "findbar.10000": "matches=37139",
@@ -28,6 +28,8 @@
   "render.blank.frame": "51c4bc74",
   "render.cjk.cpu": "0d0bc569",
   "render.cjk.frame": "0d0bc569",
+  "render.cjk_text.cpu": "fcb26e0f",
+  "render.cjk_text.frame": "fcb26e0f",
   "render.crt.cpu": "70a77620",
   "render.crt.frame": "70a77620",
   "render.everything.cpu": "f23e92e0f23e92e0f23e92e0f23e92e0",
@@ -66,6 +68,7 @@
  "machine": "Apple M1 Max",
  "pixels": {
   "render.blank.frame": "2ddb07471b3a9462",
+  "render.cjk_text.frame": "c668ab48e6f63827",
   "render.crt.frame": "b6f48b6a141e2840",
   "render.everything.frame": "6ac0d225dfa1c60e",
   "render.gel.frame": "4cc10418cbaafc4f",
