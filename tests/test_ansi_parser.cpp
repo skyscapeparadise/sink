@@ -2687,6 +2687,34 @@ static void test_synchronized_output_holds_output() {
     CHECK(!g.is_synchronized_output());
 }
 
+// Control characters with no meaning here are ignored, not drawn; CAN and SUB
+// also cancel any sequence in progress. Both used to go wrong: stray controls
+// were written to the grid as glyphs, and CAN inside a CSI was skipped so the
+// next letter finished the sequence.
+static void test_unused_controls_and_cancel() {
+    auto screen = [](const std::string& bytes) {
+        TerminalGrid g; g.resize(20, 3);
+        ANSIParser p;
+        feed(p, g, bytes);
+        return std::make_pair(row_text(g, 0), g.get_cursor_col());
+    };
+    // NUL, SOH..ACK, DLE..US apart from ESC, and DEL draw nothing.
+    for (int c : {0x00, 0x01, 0x05, 0x06, 0x10, 0x11, 0x13, 0x18, 0x1A, 0x1C, 0x1F, 0x7F}) {
+        auto [text, col] = screen(std::string("a") + static_cast<char>(c) + "b");
+        CHECK(text == "ab");
+        CHECK(col == 2);
+    }
+    // CAN and SUB cancel a CSI, an escape, a charset designation and the
+    // string sequences; what follows is ordinary text.
+    for (const char* cancel : {"\x18", "\x1a"}) {
+        for (const char* start : {"\x1b[31", "\x1b", "\x1b(", "\x1b]0;title", "\x1bP1q", "\x1b_Gf=32"}) {
+            auto [text, col] = screen(std::string("a") + start + cancel + "b");
+            CHECK(text == "ab");
+            CHECK(col == 2);
+        }
+    }
+}
+
 // An opening sequence that straddles the end of a parse slice is still found,
 // and nothing after it is parsed. The scan for it used to search all pending
 // output on every slice (quadratic under backpressure); bounding it to the
@@ -2835,6 +2863,7 @@ int main() {
     test_synchronized_output_and_focus_modes();
     test_synchronized_output_holds_output();
     test_synchronized_output_open_across_slice();
+    test_unused_controls_and_cancel();
     test_kitty_placement_keeps_proportions();
     test_sinkview();
     test_picture_decoding();

@@ -20,11 +20,13 @@
 // fifteen branches for the most common byte in any terminal stream. One
 // indexed load plus a jump table reaches the same place directly.
 //
-// Everything without a special meaning maps to NA_PRINT, *including* the
-// control characters this parser doesn't handle (NUL, SUB, DEL and friends).
-// That is deliberate: they previously fell through the whole if-chain into the
-// printable branch and were written to the grid, so mapping them to NA_PRINT
-// preserves that behaviour exactly rather than quietly starting to drop them.
+// Printable ASCII maps to NA_PRINT. Control characters this parser has no use
+// for (NUL, ENQ, CAN, SUB, DEL and the rest) are ignored, as xterm and the VT
+// standards ignore them. They used to be written to the grid as if they were
+// text -- kept that way when this table replaced an if-chain, to change
+// nothing during a performance rewrite -- so a stray control byte in a log
+// drew a junk glyph and pushed every column after it one to the right.
+// bench/termbench.py's cursor check caught it against another terminal.
 enum NormalAction : uint8_t {
     NA_PRINT = 0,
     NA_ESC,
@@ -37,6 +39,8 @@ enum NormalAction : uint8_t {
 
 static constexpr std::array<uint8_t, 128> make_normal_table() {
     std::array<uint8_t, 128> t{};   // NA_PRINT (0) everywhere by default
+    for (int c = 0; c < 0x20; ++c) t[c] = NA_IGNORE;  // C0 controls, then the ones that do something:
+    t[0x7F] = NA_IGNORE;            // DEL
     t[0x07] = NA_IGNORE;            // BEL
     t[0x08] = NA_BS;
     t[0x09] = NA_TAB;
@@ -609,6 +613,15 @@ void ANSIParser::dispatch_dcs(TerminalGrid& grid) {
 }
 
 void ANSIParser::process_char(TerminalGrid& grid, char32_t c) {
+    // CAN and SUB cancel whatever sequence is in progress, in any state, and
+    // are otherwise ignored. Without this, CAN inside "ESC [ 31" was skipped
+    // and the next ordinary letter became the sequence's final byte -- "b"
+    // made it CSI 31 b, repeat the last character 31 times -- and inside an
+    // OSC, CAN and the text after it were swallowed into the title.
+    if (c == 0x18 || c == 0x1A) {
+        state_ = STATE_NORMAL;
+        return;
+    }
     switch (state_) {
         case STATE_NORMAL: {
             // ASCII dispatches through the table. Anything above 0x7F is text
