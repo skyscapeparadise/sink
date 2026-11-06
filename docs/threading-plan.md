@@ -471,11 +471,11 @@ remains. The soak itself is the test.
 | deadlock: the reader holds the lock and blocks writing a reply while the shell blocks writing output | phase 3 | write replies after releasing the lock |
 | timing-dependent bugs nobody can reproduce | phases 3–6 | TSan on tests and fuzzers, the concurrent fuzzer, the switch, the soak |
 
-## Open questions for Kady
+## Decided, 2026-11-06
 
-1. Should arrow-key and other escape echoes stay outside the typewriter
-   animation? They already are, since the 2026-11-01 query fix, and the
-   threaded design keeps that.
-2. Is a hidden `sink.toml` switch fine for the soak, or should it be
-   visible in Settings?
-3. Should the TSan build and baseline (phase 0) happen before 1.0?
+1. Arrow-key and other escape echoes stay outside the typewriter animation,
+   as they already are.
+2. The `threaded_parser` switch stays in `sink.toml` only, with no Settings
+   control, since phase 6 removes it.
+3. Phase 5's concurrent parse-while-render fuzzer under TSan is to be done
+   before 1.0. (Phase 0's TSan build and baseline were already done.)
