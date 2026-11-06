@@ -62,3 +62,6 @@ build-ab/
 bench/results/*-frames/
 build-tsan/
 __pycache__/
+
+# Scratch shaders kept at the top level, not for inclusion
+/*.frag
