@@ -10,7 +10,6 @@ namespace sync_output {
 
 namespace {
 
-constexpr std::string_view kBegin = "\x1b[?2026h";
 constexpr std::string_view kEnd = "\x1b[?2026l";
 
 // Where `needle` ends in `data`, or 0 if it isn't there.
@@ -50,19 +49,12 @@ size_t parse(ANSIParser& parser, TerminalGrid& grid, Hold& hold,
                 continue;
             }
         } else {
-            // Up to and including the next opening sequence, so nothing after
-            // it is parsed before it's held. Only this slice is searched, plus
-            // the bytes a sequence starting inside it can run over: searching
-            // all of `rest` made every slice rescan everything pending (up to
-            // the pty's 4MB backpressure cap), which on escape-dense output,
-            // where find() can't skip ahead, cost more than parsing did.
-            // Taking the whole sequence when it straddles the slice's end also
-            // means a slice boundary never splits it.
-            const size_t window = std::min(rest.size(), kSliceBytes + kBegin.size() - 1);
-            const size_t open = end_of(rest.substr(0, window), kBegin);
-            const size_t take = open > 0 ? open : std::min(kSliceBytes, rest.size());
-            parser.parse(grid, rest.data(), take);
-            pos += take;
+            // A slice at a time, stopping just after an update opens, so
+            // nothing after it is parsed before it's held. The parser spots
+            // the opening sequence itself: searching the bytes for it first
+            // cost 10-15% on escape-heavy output, where find() can't skip
+            // ahead, and missed a sequence split across two reads.
+            pos += parser.parse_until_synchronized(grid, rest.data(), std::min(kSliceBytes, rest.size()));
         }
         if (out_of_time()) break;
     }

@@ -2755,9 +2755,7 @@ static void test_malformed_utf8_is_replaced() {
 }
 
 // An opening sequence that straddles the end of a parse slice is still found,
-// and nothing after it is parsed. The scan for it used to search all pending
-// output on every slice (quadratic under backpressure); bounding it to the
-// slice must not lose a sequence that starts inside the slice and ends past it.
+// and nothing after it is parsed.
 static void test_synchronized_output_open_across_slice() {
     auto never = []() { return false; };
     for (size_t back : {1, 4, 7}) {
@@ -2771,6 +2769,35 @@ static void test_synchronized_output_open_across_slice() {
         CHECK(used == bytes.size() - 4);
         CHECK(g.is_synchronized_output());
     }
+}
+
+// An opening sequence split across two reads from the pty still holds what
+// follows it. When sync_output searched the bytes for the whole sequence,
+// neither read contained it, and the text after it was drawn unheld. Also an
+// opening set together with another mode, which the search never matched.
+static void test_synchronized_output_open_across_reads() {
+    auto never = []() { return false; };
+    const std::string open = "\x1b[?2026h";
+    for (size_t cut = 1; cut < open.size(); ++cut) {
+        TerminalGrid g; g.resize(20, 5);
+        ANSIParser p;
+        sync_output::Hold hold;
+        std::string first = "a" + open.substr(0, cut);
+        CHECK(sync_output::parse(p, g, hold, first.data(), first.size(), 0, never) == first.size());
+        CHECK(!g.is_synchronized_output());
+        std::string second = open.substr(cut) + "held";
+        CHECK(sync_output::parse(p, g, hold, second.data(), second.size(), 0, never) == second.size() - 4);
+        CHECK(g.is_synchronized_output());
+        CHECK(row_text(g, 0) == "a");
+    }
+
+    TerminalGrid g; g.resize(20, 5);
+    ANSIParser p;
+    sync_output::Hold hold;
+    std::string bytes = "a\x1b[?2026;1004hheld";
+    CHECK(sync_output::parse(p, g, hold, bytes.data(), bytes.size(), 0, never) == bytes.size() - 4);
+    CHECK(g.is_synchronized_output());
+    CHECK(g.is_focus_reporting());
 }
 
 // A kitty image given only a width or a height keeps its proportions, as the
@@ -2902,6 +2929,7 @@ int main() {
     test_synchronized_output_and_focus_modes();
     test_synchronized_output_holds_output();
     test_synchronized_output_open_across_slice();
+    test_synchronized_output_open_across_reads();
     test_unused_controls_and_cancel();
     test_malformed_utf8_is_replaced();
     test_kitty_placement_keeps_proportions();

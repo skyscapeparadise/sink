@@ -68,6 +68,19 @@ void ANSIParser::reset_csi() {
 }
 
 void ANSIParser::parse(TerminalGrid& grid, const char* data, size_t size) {
+    parse_impl<false>(grid, data, size);
+}
+
+size_t ANSIParser::parse_until_synchronized(TerminalGrid& grid, const char* data, size_t size) {
+    return parse_impl<true>(grid, data, size);
+}
+
+template <bool kStopAtSynchronized>
+size_t ANSIParser::parse_impl(TerminalGrid& grid, const char* data, size_t size) {
+    // Only a CSI final byte can turn synchronized output on, and DECSET's is
+    // 'h'. Checked only when stopping is wanted, and if it was already on at
+    // the start, there's no opening to stop at.
+    const bool watch = kStopAtSynchronized && !grid.is_synchronized_output();
     for (size_t i = 0; i < size; ++i) {
         uint8_t byte = static_cast<uint8_t>(data[i]);
 
@@ -136,6 +149,9 @@ void ANSIParser::parse(TerminalGrid& grid, const char* data, size_t size) {
         }
         if (byte < 0x80) {
             process_char(grid, static_cast<char32_t>(byte));
+            if constexpr (kStopAtSynchronized) {
+                if (byte == 'h' && watch && grid.is_synchronized_output()) return i + 1;
+            }
         } else if (byte >= 0xC2 && byte <= 0xDF) {
             utf8_codepoint_ = byte & 0x1F;
             utf8_bytes_needed_ = 1;
@@ -158,6 +174,7 @@ void ANSIParser::parse(TerminalGrid& grid, const char* data, size_t size) {
             process_char(grid, kReplacement);
         }
     }
+    return size;
 }
 
 // See the declaration. Kept out of line so both the per-character path and

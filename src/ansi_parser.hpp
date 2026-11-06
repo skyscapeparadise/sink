@@ -22,7 +22,18 @@ public:
     // Parse bytes and apply text content, scrolls, cursor movements, and formatting to the grid
     void parse(TerminalGrid& grid, const char* data, size_t size);
 
+    // The same, but stops just after the byte that turns synchronized output
+    // (DECSET 2026) on, and returns how many bytes it parsed: `size` if that
+    // didn't happen. sync_output uses it to hold everything after an update
+    // opens. The parser spots the opening sequence as it parses, so this
+    // costs nothing like searching the bytes for it first did (10-15% on
+    // escape-heavy output), and it works however the sequence is split
+    // across calls or combined with other modes.
+    size_t parse_until_synchronized(TerminalGrid& grid, const char* data, size_t size);
+
 private:
+    template <bool kStopAtSynchronized>
+    size_t parse_impl(TerminalGrid& grid, const char* data, size_t size);
     ParserState state_ = STATE_NORMAL;
     std::vector<int> csi_params_;
     // Cap on parameters kept from one CSI sequence. xterm's own limit is in

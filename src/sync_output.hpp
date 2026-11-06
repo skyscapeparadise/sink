@@ -9,9 +9,10 @@
 // presents instead froze the whole window, background and all.) kitty works
 // the same way.
 //
-// Only the plain sequences are recognised in the byte stream. 2026 set
-// together with other modes ("CSI ? 2026 ; 1049 h") still turns the mode on in
-// the parser, and output is held from the end of that parse slice on.
+// An update opens wherever the parser turns the mode on, including 2026 set
+// together with other modes ("CSI ? 2026 ; 1049 h"). Its end is found by
+// searching for the plain closing sequence, since the whole update has to
+// have arrived before any of it is parsed.
 
 #include <cstddef>
 #include <cstdint>
