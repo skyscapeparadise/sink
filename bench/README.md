@@ -208,7 +208,14 @@ The first full runs, 2026-10-29, Apple M1 Max:
 2. **The sync-output layer costs 10–15% on escape-heavy output** even
    without the quadratic case (`parser.colored_text` 152 against
    `parser_core.colored_text` 180 MB/s): one `find` per chunk that can't skip
-   ahead where escapes are dense. Open.
+   ahead where escapes are dense. **Fixed 2026-11-06:** the parser now stops
+   itself just after the sequence that opens an update
+   (`ANSIParser::parse_until_synchronized`), so outside an update nothing is
+   searched. Interleaved A/B, 6 rounds, busy machine: `parser.colored_text`
+   1.17x (now level with `parser_core`), `cursor_heavy` 1.11x, `hyperlinks`
+   1.09x, `pty_threaded.cursor_heavy` 1.06x. It also fixed an opening
+   sequence split across two pty reads, which the search never saw, letting
+   what followed it through unheld.
 3. **The distinct-CJK atlas cliff was back at real resolution. Fixed
    2026-11-01.** It was fixed in September at 16 px and 1x density, where it
    measured 0.30 ms. At the app's default (15 pt on a 2x display, so 30 px
@@ -225,7 +232,14 @@ The first full runs, 2026-10-29, Apple M1 Max:
    costs 2.5 ms and the CRT effect 2.3 ms. With every effect on, a frame takes
    6.9 ms against a 120 Hz budget of 8.3 ms. Open.
 5. **Live reflow takes ~11 ms per resize step at the default 10,000 lines of
-   scrollback**, most of a 60 Hz frame during a window drag. Open.
+   scrollback**, most of a 60 Hz frame during a window drag. **Fixed
+   2026-11-06:** resize copied every row four times through fresh vectors.
+   It now works out where each line lands first, builds only the rows that
+   survive scrollback's limit, and a scrollback row that is a whole line and
+   still fits keeps its own storage. Same 6-round A/B: `reflow.10000`
+   11.45 -> 4.49 ms (0.40x), `reflow.1000` 0.90 -> 0.26 ms. A differential
+   check against the old code (random output and resizes, every cell, flag
+   and cursor compared over 24,000 steps) found no difference.
 6. **Find-bar keystrokes take 2.5 ms at the default depth** (the September
    figure was 1.9 ms); still comfortably inside a frame.
 
