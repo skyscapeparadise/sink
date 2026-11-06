@@ -1,0 +1,2613 @@
+{
+ "suite": 1,
+ "kind": "ab",
+ "separate_builds": true,
+ "a": "HEAD",
+ "b": "WORKTREE",
+ "build": {
+  "source_digest": "99a1ba283eb57f7a7f8f995c06373ffbb967e7c0615146de4bcfc490956de722",
+  "build_type": "Release",
+  "cxx_flags": "-O3 -DNDEBUG -std=gnu++20 -arch arm64 -mmacosx-version-min=26.0 -fstack-protector-strong -ftrivial-auto-var-init=zero -Wformat -Werror=format-security -falign-functions=64",
+  "compiler": "Apple clang version 21.0.0 (clang-2100.3.34.2)"
+ },
+ "rounds": 6,
+ "environment": {
+  "date": "2026-11-06T14:08:50-08:00",
+  "host_cpu": "Apple M1 Max",
+  "cores": 10,
+  "perf_cores": "8",
+  "memory_gb": 64.0,
+  "os": "macOS 27.2 (26B123)",
+  "model": "MacBookPro18,4",
+  "power": "AC",
+  "low_power_mode": false,
+  "thermal": "Note: No thermal warning level has been recorded Note: No performance warning level has been recorded Note: No CPU power status has been recorded",
+  "load_avg": [
+   3.86,
+   4.57,
+   4.65
+  ],
+  "busiest_processes": [
+   "44.1 /System/Library/PrivateFrameworks/SkyLight.framework/Resources/WindowServer",
+   "31.4 /Applications/Zed.app/Contents/MacOS/zed",
+   "17.4 /opt/homebrew/Cellar/python@3.14/3.14.7/Frameworks/Python.framework/Versions/3.14/Resources/Python.app/Contents/MacOS/Python",
+   "16.7 /System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.WebContent.xpc/Contents/MacOS/com.apple.WebKit.WebContent",
+   "14.2 /Users/kady/Library/Application Support/Zed/external_agents/registry/npx/claude-acp/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64/claude",
+   "10.4 /usr/sbin/coreaudiod"
+  ],
+  "git_commit": "d065336ddc7964e8273502e39734433408e01f2b",
+  "git_dirty": true,
+  "git_diff_sha256": "99e2f8f5b3f2e8c8756b67072204c0483aa337fc170a6ef6fcd1589d3c68582b"
+ },
+ "noise": [
+  "1-minute load average is 3.86"
+ ],
+ "rows": [
+  {
+   "id": "parser.plain_text",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 218.272848,
+   "b": 219.58932800000002,
+   "ratio": 1.000389380841098,
+   "ci": [
+    0.9909244903655696,
+    1.0099446759363373
+   ],
+   "rounds": 6,
+   "floor": 0.011173644651034431,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "parser.colored_text",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 143.0907325,
+   "b": 168.2595195,
+   "ratio": 1.1721575475876735,
+   "ci": [
+    1.159218052511847,
+    1.1852414766916406
+   ],
+   "rounds": 6,
+   "floor": 0.007752957763858648,
+   "verdict": "better",
+   "same_output": true
+  },
+  {
+   "id": "parser.cursor_heavy",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 178.903005,
+   "b": 198.41639049999998,
+   "ratio": 1.10694979184523,
+   "ci": [
+    1.0985982240677916,
+    1.1153648484239547
+   ],
+   "rounds": 6,
+   "floor": 0.014693475500859421,
+   "verdict": "better",
+   "same_output": true
+  },
+  {
+   "id": "parser.unicode_heavy",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 169.3109335,
+   "b": 170.1939075,
+   "ratio": 1.0037545947363586,
+   "ci": [
+    0.9945558238312323,
+    1.013038446221315
+   ],
+   "rounds": 6,
+   "floor": 0.009135193803468722,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "parser.sync_tui",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 162.8597225,
+   "b": 161.9783315,
+   "ratio": 1.0005814124793346,
+   "ci": [
+    0.9897013428098557,
+    1.011581089863679
+   ],
+   "rounds": 6,
+   "floor": 0.0056387520735770025,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "parser.graphemes",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 134.93034649999998,
+   "b": 137.6477315,
+   "ratio": 1.0215005937648747,
+   "ci": [
+    1.0131282108673643,
+    1.0299421651368847
+   ],
+   "rounds": 6,
+   "floor": 0.00442447525418177,
+   "verdict": "better",
+   "same_output": true
+  },
+  {
+   "id": "parser.hyperlinks",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 106.4706955,
+   "b": 116.49008549999999,
+   "ratio": 1.0902646944218137,
+   "ci": [
+    1.0774164717821282,
+    1.1032661324887016
+   ],
+   "rounds": 6,
+   "floor": 0.03046051322966936,
+   "verdict": "better",
+   "same_output": true
+  },
+  {
+   "id": "parser.images",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 79.8831534,
+   "b": 80.6978438,
+   "ratio": 1.008919866772114,
+   "ci": [
+    0.9935193999995209,
+    1.0245590549796522
+   ],
+   "rounds": 6,
+   "floor": 0.019193613658925468,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "parser_core.plain_text",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 219.49970150000001,
+   "b": 219.3164435,
+   "ratio": 1.0021660606565543,
+   "ci": [
+    0.9874598590076584,
+    1.0170912812002084
+   ],
+   "rounds": 6,
+   "floor": 0.02304951388101717,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "parser_core.colored_text",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 165.506826,
+   "b": 166.42552,
+   "ratio": 1.0140090054460624,
+   "ci": [
+    0.9924449605828709,
+    1.0360415982381876
+   ],
+   "rounds": 6,
+   "floor": 0.025192784128774015,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "parser_core.cursor_heavy",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 198.915155,
+   "b": 199.5999265,
+   "ratio": 1.009156705866045,
+   "ci": [
+    0.9923168527174133,
+    1.0262823353302664
+   ],
+   "rounds": 6,
+   "floor": 0.016011642915120028,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "parser_core.unicode_heavy",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 166.68449900000002,
+   "b": 169.970961,
+   "ratio": 1.0242032428636108,
+   "ci": [
+    0.9882130418648362,
+    1.061504188117984
+   ],
+   "rounds": 6,
+   "floor": 0.010883188046601378,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "findbar.1000",
+   "unit": "ms",
+   "better": "lower",
+   "a": 0.2563955,
+   "b": 0.260396,
+   "ratio": 1.0145030286849133,
+   "ci": [
+    0.9891352067417181,
+    1.0405214455980938
+   ],
+   "rounds": 6,
+   "floor": 0.06495297869333538,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "findbar.10000",
+   "unit": "ms",
+   "better": "lower",
+   "a": 2.4887915,
+   "b": 2.4912080000000003,
+   "ratio": 1.0002484360580342,
+   "ci": [
+    0.9653775817027751,
+    1.0363788768243647
+   ],
+   "rounds": 6,
+   "floor": 0.02244779649128903,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "findbar.100000",
+   "unit": "ms",
+   "better": "lower",
+   "a": 25.0070625,
+   "b": 24.754103999999998,
+   "ratio": 0.9877745187461817,
+   "ci": [
+    0.9666773319133182,
+    1.0093321397669246
+   ],
+   "rounds": 6,
+   "floor": 0.011240748699511638,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "reflow.1000",
+   "unit": "ms",
+   "better": "lower",
+   "a": 0.9013329999999999,
+   "b": 0.255729,
+   "ratio": 0.27463448011389124,
+   "ci": [
+    0.25328925654773315,
+    0.2977785110013674
+   ],
+   "rounds": 6,
+   "floor": 0.056890566826520494,
+   "verdict": "better",
+   "same_output": true
+  },
+  {
+   "id": "reflow.10000",
+   "unit": "ms",
+   "better": "lower",
+   "a": 11.450896,
+   "b": 4.4872914999999995,
+   "ratio": 0.40072399844968554,
+   "ci": [
+    0.3640563696554813,
+    0.44108477784763256
+   ],
+   "rounds": 6,
+   "floor": 0.0868246824187513,
+   "verdict": "better",
+   "same_output": true
+  },
+  {
+   "id": "pty.plain_text",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 154.0718975,
+   "b": 167.6441735,
+   "ratio": 1.0753328191535498,
+   "ci": [
+    1.0045883124343304,
+    1.1510592524679713
+   ],
+   "rounds": 6,
+   "floor": 0.051813465169625594,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "pty.cursor_heavy",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 153.82154400000002,
+   "b": 161.43490400000002,
+   "ratio": 1.059713546284941,
+   "ci": [
+    1.0395630053857956,
+    1.08025467851566
+   ],
+   "rounds": 6,
+   "floor": 0.03643263324273116,
+   "verdict": "better",
+   "same_output": true
+  },
+  {
+   "id": "pty.sync_tui",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 141.3047885,
+   "b": 144.0894535,
+   "ratio": 1.0986066055939219,
+   "ci": [
+    0.9600580210348649,
+    1.257149513269645
+   ],
+   "rounds": 6,
+   "floor": 0.028684160661435865,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "pty_paced.plain_text",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 86.57437375,
+   "b": 86.91251539999999,
+   "ratio": 1.012674162725571,
+   "ci": [
+    0.9850774922874141,
+    1.0410439461677656
+   ],
+   "rounds": 6,
+   "floor": 0.007400041809582314,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "pty_paced.plain_text.worst_frame",
+   "unit": "ms",
+   "better": "lower",
+   "a": 8.246917,
+   "b": 8.204896,
+   "ratio": 0.9954023469663956,
+   "ci": [
+    0.9844854921170141,
+    1.0064402576573885
+   ],
+   "rounds": 6,
+   "floor": 0.008270630827039493,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "pty_paced.cursor_heavy",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 74.78023495,
+   "b": 78.3022016,
+   "ratio": 1.0463372560877815,
+   "ci": [
+    1.0383817435257243,
+    1.0543537194326504
+   ],
+   "rounds": 6,
+   "floor": 0.007455495070643581,
+   "verdict": "better",
+   "same_output": true
+  },
+  {
+   "id": "pty_paced.cursor_heavy.worst_frame",
+   "unit": "ms",
+   "better": "lower",
+   "a": 8.283354,
+   "b": 8.2828335,
+   "ratio": 1.0007371131707452,
+   "ci": [
+    0.9946587960374673,
+    1.0068525746386632
+   ],
+   "rounds": 6,
+   "floor": 0.004515287651970068,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "pty_paced.sync_tui",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 66.30163925,
+   "b": 66.28202999999999,
+   "ratio": 1.0009758733186809,
+   "ci": [
+    0.9964401701161767,
+    1.0055322226213308
+   ],
+   "rounds": 6,
+   "floor": 0.010346815352547223,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "pty_paced.sync_tui.worst_frame",
+   "unit": "ms",
+   "better": "lower",
+   "a": 8.005646,
+   "b": 8.0064375,
+   "ratio": 0.9999470671866285,
+   "ci": [
+    0.9995789372779231,
+    1.00031533267205
+   ],
+   "rounds": 6,
+   "floor": 0.00034682005250386005,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "pty_threaded.idle.lock_wait",
+   "unit": "ms",
+   "better": "lower",
+   "a": 0.0034165000000000003,
+   "b": 0.0013544999999999998,
+   "ratio": 0.7205089290932186,
+   "ci": [
+    0.324329600648253,
+    1.6006344035988105
+   ],
+   "rounds": 6,
+   "floor": 0.01,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "pty_threaded.plain_text",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 79.3252972,
+   "b": 81.23512414999999,
+   "ratio": 1.0361635125195905,
+   "ci": [
+    0.9769087176444613,
+    1.099012431034193
+   ],
+   "rounds": 6,
+   "floor": 0.01,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "pty_threaded.plain_text.lock_wait",
+   "unit": "ms",
+   "better": "lower",
+   "a": 0.046375,
+   "b": 0.050875000000000004,
+   "ratio": 0.8967988783117197,
+   "ci": [
+    0.44676573557979127,
+    1.80015646700713
+   ],
+   "rounds": 6,
+   "floor": 0.01,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "pty_threaded.cursor_heavy",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 75.93929815,
+   "b": 79.9610217,
+   "ratio": 1.0640377538255426,
+   "ci": [
+    1.0336756782921601,
+    1.095291652248884
+   ],
+   "rounds": 6,
+   "floor": 0.01,
+   "verdict": "better",
+   "same_output": true
+  },
+  {
+   "id": "pty_threaded.cursor_heavy.lock_wait",
+   "unit": "ms",
+   "better": "lower",
+   "a": 0.038896,
+   "b": 0.0332915,
+   "ratio": 0.8761482280008753,
+   "ci": [
+    0.544672883879499,
+    1.4093518149122735
+   ],
+   "rounds": 6,
+   "floor": 0.01,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "pty_threaded.sync_tui",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 71.97757175000001,
+   "b": 70.8556986,
+   "ratio": 0.989978812011,
+   "ci": [
+    0.9682233185380641,
+    1.0122231405359214
+   ],
+   "rounds": 6,
+   "floor": 0.01,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "pty_threaded.sync_tui.lock_wait",
+   "unit": "ms",
+   "better": "lower",
+   "a": 0.0495625,
+   "b": 0.042332999999999996,
+   "ratio": 0.9008101048926941,
+   "ci": [
+    0.5073270737126406,
+    1.5994786935743381
+   ],
+   "rounds": 6,
+   "floor": 0.01,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "pty_threaded.images",
+   "unit": "MB/s",
+   "better": "higher",
+   "a": 47.961041300000005,
+   "b": 48.534480599999995,
+   "ratio": 1.0304920565644413,
+   "ci": [
+    1.007621938586727,
+    1.0538812603979562
+   ],
+   "rounds": 6,
+   "floor": 0.01,
+   "verdict": "no detectable difference",
+   "same_output": true
+  },
+  {
+   "id": "pty_threaded.images.lock_wait",
+   "unit": "ms",
+   "better": "lower",
+   "a": 0.128229,
+   "b": 0.11502100000000001,
+   "ratio": 0.9516286853914219,
+   "ci": [
+    0.5864765829659055,
+    1.544131822416603
+   ],
+   "rounds": 6,
+   "floor": 0.01,
+   "verdict": "no detectable difference",
+   "same_output": true
+  }
+ ],
+ "pooled": {
+  "A": [
+   {
+    "id": "parser.plain_text",
+    "label": "plain text (cat-like)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "11c624c82b6c772c",
+    "info": {
+     "screen_text": "ba9d41cfd4dca670",
+     "bytes": 8388608
+    },
+    "samples": [
+     220.671137,
+     219.381434,
+     218.28327,
+     217.06173,
+     215.193078,
+     218.788208,
+     217.272973,
+     217.403368,
+     216.402158,
+     220.152937,
+     218.262426,
+     219.724383,
+     218.563309,
+     219.878881,
+     219.944876,
+     217.282569,
+     218.133979,
+     217.741632
+    ]
+   },
+   {
+    "id": "parser.colored_text",
+    "label": "SGR-heavy (colorized ls)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "779df38d73ec7671",
+    "info": {
+     "screen_text": "89b5c2df0e85cfb1",
+     "bytes": 8388608
+    },
+    "samples": [
+     144.105739,
+     142.938503,
+     142.683566,
+     143.128812,
+     143.702571,
+     143.421224,
+     141.145439,
+     141.724611,
+     142.327967,
+     143.074309,
+     142.569458,
+     141.809502,
+     143.051499,
+     143.125608,
+     144.1777,
+     143.107156,
+     144.552734,
+     144.342885
+    ]
+   },
+   {
+    "id": "parser.cursor_heavy",
+    "label": "cursor-heavy (TUI redraw)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "ef7f2d28c21defbe",
+    "info": {
+     "screen_text": "09ab053c2a4d3ed0",
+     "bytes": 8388608
+    },
+    "samples": [
+     179.257814,
+     177.116053,
+     180.09348,
+     177.746344,
+     177.382447,
+     178.815404,
+     178.498551,
+     177.566013,
+     178.692916,
+     178.69009,
+     180.148569,
+     179.345388,
+     179.995389,
+     179.451494,
+     179.725471,
+     179.389625,
+     178.62492,
+     178.990606
+    ]
+   },
+   {
+    "id": "parser.unicode_heavy",
+    "label": "UTF-8 heavy (emoji/CJK/box)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "f96126fc6df44356",
+    "info": {
+     "screen_text": "702bcb945873ca57",
+     "bytes": 8388608
+    },
+    "samples": [
+     166.713843,
+     167.394953,
+     167.617958,
+     165.379945,
+     165.422124,
+     163.204521,
+     169.670513,
+     167.820432,
+     168.806497,
+     169.073766,
+     170.411277,
+     170.702173,
+     169.548101,
+     171.685488,
+     171.311558,
+     169.802112,
+     172.920783,
+     171.239445
+    ]
+   },
+   {
+    "id": "parser.sync_tui",
+    "label": "synchronized-output TUI",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "2362197c8e825316",
+    "info": {
+     "screen_text": "22b5cd5db7c9589c",
+     "bytes": 8388289
+    },
+    "samples": [
+     162.623125,
+     163.740153,
+     163.118865,
+     157.81385,
+     158.798953,
+     157.659374,
+     162.101507,
+     163.265065,
+     162.224502,
+     162.263989,
+     164.370274,
+     162.309942,
+     163.850548,
+     162.979428,
+     163.212602,
+     163.765574,
+     162.740017,
+     163.378577
+    ]
+   },
+   {
+    "id": "parser.graphemes",
+    "label": "grapheme clusters",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "8a42c81317b212fb",
+    "info": {
+     "screen_text": "4734722064b27dc2",
+     "bytes": 8388570
+    },
+    "samples": [
+     134.95557,
+     134.237902,
+     135.879815,
+     130.576211,
+     129.972843,
+     130.482413,
+     134.348742,
+     134.67244,
+     134.397363,
+     134.327219,
+     134.986881,
+     135.033779,
+     135.468522,
+     135.356116,
+     136.86206,
+     136.151151,
+     135.731789,
+     134.905123
+    ]
+   },
+   {
+    "id": "parser.hyperlinks",
+    "label": "OSC 8 links + OSC 133 marks",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "6cb570e81b3f5aa2",
+    "info": {
+     "screen_text": "309527855b007d9a",
+     "bytes": 8388585
+    },
+    "samples": [
+     105.493289,
+     105.619566,
+     107.423951,
+     100.105044,
+     101.965158,
+     105.982902,
+     104.530752,
+     104.49042,
+     102.651448,
+     109.840709,
+     111.201416,
+     109.513169,
+     109.654146,
+     106.958489,
+     109.921642,
+     108.627278,
+     110.390711,
+     105.409483
+    ]
+   },
+   {
+    "id": "parser.images",
+    "label": "sixel + kitty images",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "4455f4b6be3b7996",
+    "info": {
+     "screen_text": "ac739513c44b5326",
+     "bytes": 8387040
+    },
+    "samples": [
+     79.4137305,
+     80.237158,
+     79.2981586,
+     79.7903913,
+     78.4048938,
+     79.7047185,
+     79.9759155,
+     78.6106052,
+     78.6637247,
+     80.2964626,
+     80.6708494,
+     80.7315101,
+     80.9874343,
+     80.9681003,
+     81.2276606,
+     78.9664775,
+     78.7375158,
+     80.1806535
+    ]
+   },
+   {
+    "id": "parser_core.plain_text",
+    "label": "core: plain text (cat-like)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "11c624c82b6c772c",
+    "info": {
+     "screen_text": "ba9d41cfd4dca670",
+     "bytes": 8388608
+    },
+    "samples": [
+     220.421349,
+     219.451898,
+     220.234502,
+     217.689053,
+     219.554284,
+     217.301006,
+     216.541268,
+     217.262653,
+     214.535447,
+     219.922203,
+     219.547505,
+     221.35831,
+     221.478835,
+     220.122147,
+     220.990916,
+     218.112914,
+     216.579133,
+     211.732164
+    ]
+   },
+   {
+    "id": "parser_core.colored_text",
+    "label": "core: SGR-heavy (colorized ls)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "779df38d73ec7671",
+    "info": {
+     "screen_text": "89b5c2df0e85cfb1",
+     "bytes": 8388608
+    },
+    "samples": [
+     162.369098,
+     163.879997,
+     164.229457,
+     166.861627,
+     165.511106,
+     166.924008,
+     164.01397,
+     166.167876,
+     164.754963,
+     165.502546,
+     166.774375,
+     165.707091,
+     166.638314,
+     167.456854,
+     165.707376,
+     161.785981,
+     158.128417,
+     158.986856
+    ]
+   },
+   {
+    "id": "parser_core.cursor_heavy",
+    "label": "core: cursor-heavy (TUI redraw)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "ef7f2d28c21defbe",
+    "info": {
+     "screen_text": "09ab053c2a4d3ed0",
+     "bytes": 8388608
+    },
+    "samples": [
+     195.694118,
+     197.207055,
+     197.587784,
+     198.796866,
+     199.406144,
+     199.182108,
+     198.450636,
+     197.316092,
+     199.066874,
+     200.036051,
+     200.419001,
+     200.596358,
+     200.862453,
+     200.213352,
+     199.033444,
+     194.655097,
+     190.347026,
+     191.527884
+    ]
+   },
+   {
+    "id": "parser_core.unicode_heavy",
+    "label": "core: UTF-8 heavy (emoji/CJK/box)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "f96126fc6df44356",
+    "info": {
+     "screen_text": "702bcb945873ca57",
+     "bytes": 8388608
+    },
+    "samples": [
+     163.679516,
+     165.943547,
+     166.163706,
+     168.980317,
+     165.944834,
+     168.844647,
+     163.399804,
+     166.890199,
+     166.478799,
+     169.599023,
+     169.9485,
+     170.58994,
+     170.69853,
+     169.885945,
+     169.958129,
+     159.254029,
+     154.931542,
+     155.660321
+    ]
+   },
+   {
+    "id": "findbar.1000",
+    "label": "1000 lines, per keystroke",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": "matches=4502",
+    "info": {
+     "scrollback": 1000
+    },
+    "samples": [
+     0.258209,
+     0.258208,
+     0.258125,
+     0.255916,
+     0.253292,
+     0.253292,
+     0.256333,
+     0.2545,
+     0.25325,
+     0.253167,
+     0.255959,
+     0.256458,
+     0.261041,
+     0.265375,
+     0.260958,
+     0.26825,
+     0.258,
+     0.255667
+    ]
+   },
+   {
+    "id": "findbar.10000",
+    "label": "10000 lines, per keystroke",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": "matches=37139",
+    "info": {
+     "scrollback": 10000
+    },
+    "samples": [
+     2.457083,
+     2.481042,
+     2.450292,
+     2.490791,
+     2.527375,
+     2.457292,
+     2.540667,
+     2.463625,
+     2.51125,
+     2.486792,
+     2.637292,
+     2.497417,
+     2.432875,
+     2.524417,
+     2.446292,
+     2.600834,
+     2.623,
+     2.446458
+    ]
+   },
+   {
+    "id": "findbar.100000",
+    "label": "100000 lines, per keystroke",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": "matches=350275",
+    "info": {
+     "scrollback": 100000
+    },
+    "samples": [
+     24.841416,
+     25.055625,
+     26.020417,
+     24.916334,
+     24.729,
+     24.717041,
+     25.181208,
+     25.265334,
+     25.429833,
+     24.8065,
+     24.72,
+     24.9585,
+     24.45625,
+     27.040792,
+     24.80925,
+     28.448958,
+     25.685042,
+     25.820125
+    ]
+   },
+   {
+    "id": "reflow.1000",
+    "label": "1000 lines, per resize",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": "8a17a5b81f321530",
+    "info": {
+     "scrollback": 1000
+    },
+    "samples": [
+     0.8905,
+     0.922166,
+     0.854084,
+     0.896917,
+     0.888583,
+     0.937792,
+     0.897458,
+     0.912708,
+     0.882083,
+     0.941708,
+     0.871333,
+     0.955709,
+     0.965625,
+     1.179416,
+     0.87575,
+     0.949875,
+     0.885958,
+     0.938458,
+     0.893167,
+     0.897125,
+     0.848458,
+     0.881,
+     0.886625,
+     0.942917,
+     0.905208,
+     0.895042,
+     0.848833,
+     0.893583,
+     0.889125,
+     0.989459,
+     1.121458,
+     1.011,
+     1.093083,
+     1.245333,
+     1.0295,
+     1.227875
+    ]
+   },
+   {
+    "id": "reflow.10000",
+    "label": "10000 lines, per resize",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": "6825caa6e1c4ed23",
+    "info": {
+     "scrollback": 10000
+    },
+    "samples": [
+     10.531084,
+     11.547541,
+     9.110667,
+     12.070042,
+     10.841875,
+     13.18725,
+     9.654917,
+     11.963625,
+     9.126208,
+     11.906542,
+     9.074916,
+     11.891,
+     11.583125,
+     11.456542,
+     9.23075,
+     10.960709,
+     11.348458,
+     12.991541,
+     10.27725,
+     11.44525,
+     8.994125,
+     11.715583,
+     10.800667,
+     13.320042,
+     10.415833,
+     11.5735,
+     8.893666,
+     11.674292,
+     10.800791,
+     12.894833,
+     11.603625,
+     12.376834,
+     10.512708,
+     12.004125,
+     11.303792,
+     14.098167
+    ]
+   },
+   {
+    "id": "pty.plain_text",
+    "label": "pty: plain text",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "11c624c82b6c772c",
+    "info": {
+     "bytes": 8388608,
+     "same_as": "parser.plain_text"
+    },
+    "samples": [
+     159.897132,
+     137.682179,
+     136.548677,
+     149.980783,
+     154.411338,
+     150.857413,
+     165.844214,
+     162.949663,
+     167.810459,
+     170.005085,
+     145.698922,
+     153.732457
+    ]
+   },
+   {
+    "id": "pty.cursor_heavy",
+    "label": "pty: cursor-heavy",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "ef7f2d28c21defbe",
+    "info": {
+     "bytes": 8388608,
+     "same_as": "parser.cursor_heavy"
+    },
+    "samples": [
+     145.251523,
+     158.135972,
+     156.22292,
+     148.744849,
+     150.665873,
+     154.97156,
+     156.786787,
+     148.726988,
+     153.66245,
+     153.980638,
+     148.275946,
+     156.880303
+    ]
+   },
+   {
+    "id": "pty.sync_tui",
+    "label": "pty: synchronized-output TUI",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "2362197c8e825316",
+    "info": {
+     "bytes": 8388289,
+     "same_as": "parser.sync_tui"
+    },
+    "samples": [
+     146.36457,
+     137.696394,
+     142.024816,
+     145.852429,
+     141.356007,
+     68.3762927,
+     141.141212,
+     141.473708,
+     141.25357,
+     143.093285,
+     121.607264,
+     112.381124
+    ]
+   },
+   {
+    "id": "pty_paced.plain_text",
+    "label": "paced: plain text",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "11c624c82b6c772c",
+    "info": {
+     "bytes": 8388608,
+     "same_as": "parser.plain_text"
+    },
+    "samples": [
+     88.1907532,
+     86.7755043,
+     87.8357143,
+     85.5652723,
+     85.9001599,
+     78.3494705,
+     86.7431995,
+     87.1838394,
+     86.5977763,
+     86.5509712,
+     86.0511144,
+     85.8003922
+    ]
+   },
+   {
+    "id": "pty_paced.plain_text.worst_frame",
+    "label": "paced: plain text, worst frame",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": null,
+    "info": {
+     "frame_ms": 16.667
+    },
+    "samples": [
+     8.225208,
+     8.210667,
+     8.279042,
+     8.300542,
+     8.207084,
+     8.163834,
+     8.266625,
+     8.246417,
+     8.285333,
+     8.1705,
+     8.303459,
+     8.247417
+    ]
+   },
+   {
+    "id": "pty_paced.cursor_heavy",
+    "label": "paced: cursor-heavy",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "ef7f2d28c21defbe",
+    "info": {
+     "bytes": 8388608,
+     "same_as": "parser.cursor_heavy"
+    },
+    "samples": [
+     74.5023765,
+     74.4461324,
+     74.6655218,
+     75.4604858,
+     75.5504259,
+     74.9224438,
+     74.797987,
+     74.7624829,
+     75.3341777,
+     74.5404697,
+     73.9588845,
+     74.8161449
+    ]
+   },
+   {
+    "id": "pty_paced.cursor_heavy.worst_frame",
+    "label": "paced: cursor-heavy, worst frame",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": null,
+    "info": {
+     "frame_ms": 16.667
+    },
+    "samples": [
+     8.332833,
+     8.334833,
+     8.236625,
+     8.14825,
+     8.327959,
+     8.095042,
+     8.196125,
+     8.303667,
+     8.345125,
+     8.188084,
+     8.263041,
+     8.333292
+    ]
+   },
+   {
+    "id": "pty_paced.sync_tui",
+    "label": "paced: synchronized-output TUI",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "2362197c8e825316",
+    "info": {
+     "bytes": 8388289,
+     "same_as": "parser.sync_tui"
+    },
+    "samples": [
+     66.4123181,
+     65.9742198,
+     66.1102286,
+     66.5934913,
+     66.6800608,
+     66.2819283,
+     66.3478958,
+     66.288634,
+     66.8165104,
+     66.3146445,
+     65.4244965,
+     65.9654926
+    ]
+   },
+   {
+    "id": "pty_paced.sync_tui.worst_frame",
+    "label": "paced: synchronized-output TUI, worst frame",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": null,
+    "info": {
+     "frame_ms": 16.667
+    },
+    "samples": [
+     8.005542,
+     8.014792,
+     8.004959,
+     8.004917,
+     8.004,
+     8.003542,
+     8.006292,
+     8.006708,
+     8.005042,
+     8.00675,
+     8.00575,
+     8.005875
+    ]
+   },
+   {
+    "id": "pty_threaded.idle.lock_wait",
+    "label": "threaded: no output (control), worst lock wait",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": null,
+    "info": {
+     "note": "the probe's own noise: compare pty_threaded.*.lock_wait against this"
+    },
+    "samples": [
+     0.003834,
+     0.004166,
+     0.003125,
+     0.004667,
+     0.001583,
+     0.004584,
+     0.00425,
+     0.003375,
+     0.001,
+     0.00275,
+     0.003458,
+     0.000792
+    ]
+   },
+   {
+    "id": "pty_threaded.plain_text",
+    "label": "threaded: plain text",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "11c624c82b6c772c",
+    "info": {
+     "bytes": 8388608,
+     "same_as": "parser.plain_text"
+    },
+    "samples": [
+     80.5023686,
+     84.9098789,
+     72.1887558,
+     78.7013622,
+     78.3808799,
+     78.507058,
+     81.4049476,
+     83.1655944,
+     80.2965955,
+     79.9492322,
+     71.177781,
+     74.7538957
+    ]
+   },
+   {
+    "id": "pty_threaded.plain_text.lock_wait",
+    "label": "threaded: plain text, worst lock wait",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": null,
+    "info": {
+     "frame_ms": 16.667
+    },
+    "samples": [
+     0.090209,
+     0.015708,
+     0.063584,
+     0.078208,
+     0.046875,
+     0.045875,
+     0.06125,
+     0.034625,
+     0.036541,
+     0.03,
+     0.055375,
+     0.03025
+    ]
+   },
+   {
+    "id": "pty_threaded.cursor_heavy",
+    "label": "threaded: cursor-heavy",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "ef7f2d28c21defbe",
+    "info": {
+     "bytes": 8388608,
+     "same_as": "parser.cursor_heavy"
+    },
+    "samples": [
+     77.8787457,
+     78.3308357,
+     77.3879007,
+     71.0602901,
+     73.9124187,
+     72.4654091,
+     74.0286917,
+     78.5356378,
+     78.5897077,
+     75.3776538,
+     76.5009425,
+     71.8518507
+    ]
+   },
+   {
+    "id": "pty_threaded.cursor_heavy.lock_wait",
+    "label": "threaded: cursor-heavy, worst lock wait",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": null,
+    "info": {
+     "frame_ms": 16.667
+    },
+    "samples": [
+     0.042208,
+     0.025875,
+     0.045084,
+     0.061375,
+     0.047125,
+     0.030167,
+     0.083041,
+     0.033417,
+     0.02275,
+     0.03175,
+     0.035584,
+     0.132791
+    ]
+   },
+   {
+    "id": "pty_threaded.sync_tui",
+    "label": "threaded: synchronized-output TUI",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "2362197c8e825316",
+    "info": {
+     "bytes": 8388289,
+     "same_as": "parser.sync_tui"
+    },
+    "samples": [
+     72.4711598,
+     77.568921,
+     70.9503453,
+     72.6513604,
+     71.4265726,
+     70.1974776,
+     73.8712174,
+     71.6079651,
+     72.3471784,
+     70.7734647,
+     76.2636006,
+     70.986022
+    ]
+   },
+   {
+    "id": "pty_threaded.sync_tui.lock_wait",
+    "label": "threaded: synchronized-output TUI, worst lock wait",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": null,
+    "info": {
+     "frame_ms": 16.667
+    },
+    "samples": [
+     0.049584,
+     0.073875,
+     0.044583,
+     0.0505,
+     0.050666,
+     0.102875,
+     0.045458,
+     0.070375,
+     0.04725,
+     0.027625,
+     0.049541,
+     0.038166
+    ]
+   },
+   {
+    "id": "pty_threaded.images",
+    "label": "threaded: sixel + kitty images",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "4455f4b6be3b7996",
+    "info": {
+     "bytes": 8387040,
+     "same_as": "parser.images"
+    },
+    "samples": [
+     48.2041503,
+     46.0960094,
+     46.2684532,
+     48.2983501,
+     43.3723302,
+     49.2591807,
+     48.0065098,
+     47.8358839,
+     48.8779801,
+     48.9252929,
+     44.3152751,
+     47.9155728
+    ]
+   },
+   {
+    "id": "pty_threaded.images.lock_wait",
+    "label": "threaded: sixel + kitty images, worst lock wait",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": null,
+    "info": {
+     "frame_ms": 16.667
+    },
+    "samples": [
+     0.16625,
+     0.184667,
+     0.123375,
+     0.122167,
+     0.172458,
+     0.092625,
+     0.123208,
+     0.100958,
+     0.189,
+     0.14675,
+     0.094958,
+     0.133083
+    ]
+   }
+  ],
+  "B": [
+   {
+    "id": "parser.plain_text",
+    "label": "plain text (cat-like)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "11c624c82b6c772c",
+    "info": {
+     "screen_text": "ba9d41cfd4dca670",
+     "bytes": 8388608
+    },
+    "samples": [
+     219.872844,
+     220.752075,
+     221.454311,
+     213.830132,
+     215.423661,
+     213.131807,
+     215.259423,
+     216.279539,
+     218.005927,
+     220.394533,
+     219.767637,
+     218.58894,
+     222.352187,
+     218.989337,
+     221.198925,
+     219.821738,
+     219.411019,
+     219.90608
+    ]
+   },
+   {
+    "id": "parser.colored_text",
+    "label": "SGR-heavy (colorized ls)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "779df38d73ec7671",
+    "info": {
+     "screen_text": "89b5c2df0e85cfb1",
+     "bytes": 8388608
+    },
+    "samples": [
+     168.577652,
+     168.594972,
+     167.029434,
+     164.750016,
+     163.079206,
+     165.562345,
+     166.27033,
+     167.447653,
+     165.759307,
+     168.632137,
+     167.941387,
+     168.795213,
+     168.675543,
+     169.405986,
+     167.334698,
+     168.97809,
+     168.7473,
+     169.188338
+    ]
+   },
+   {
+    "id": "parser.cursor_heavy",
+    "label": "cursor-heavy (TUI redraw)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "ef7f2d28c21defbe",
+    "info": {
+     "screen_text": "09ab053c2a4d3ed0",
+     "bytes": 8388608
+    },
+    "samples": [
+     198.126054,
+     198.433821,
+     199.071416,
+     197.749365,
+     195.262445,
+     198.371494,
+     195.152695,
+     195.1517,
+     197.126065,
+     197.880414,
+     198.39896,
+     198.784927,
+     199.453791,
+     198.760436,
+     198.735752,
+     199.91087,
+     200.75702,
+     199.731401
+    ]
+   },
+   {
+    "id": "parser.unicode_heavy",
+    "label": "UTF-8 heavy (emoji/CJK/box)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "f96126fc6df44356",
+    "info": {
+     "screen_text": "702bcb945873ca57",
+     "bytes": 8388608
+    },
+    "samples": [
+     171.255941,
+     170.961026,
+     169.558131,
+     164.544302,
+     168.043542,
+     165.344202,
+     166.298703,
+     168.435237,
+     171.206463,
+     170.200244,
+     170.595397,
+     170.187571,
+     171.801779,
+     169.352789,
+     171.464703,
+     170.135843,
+     171.954877,
+     173.398348
+    ]
+   },
+   {
+    "id": "parser.sync_tui",
+    "label": "synchronized-output TUI",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "2362197c8e825316",
+    "info": {
+     "screen_text": "22b5cd5db7c9589c",
+     "bytes": 8388289
+    },
+    "samples": [
+     162.931293,
+     162.772716,
+     163.768226,
+     161.213765,
+     161.2204,
+     151.296151,
+     161.228117,
+     161.406083,
+     160.959402,
+     161.750117,
+     162.568596,
+     161.003002,
+     162.879048,
+     155.740008,
+     162.206546,
+     162.877665,
+     163.235222,
+     163.475813
+    ]
+   },
+   {
+    "id": "parser.graphemes",
+    "label": "grapheme clusters",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "8a42c81317b212fb",
+    "info": {
+     "screen_text": "4734722064b27dc2",
+     "bytes": 8388570
+    },
+    "samples": [
+     136.510971,
+     136.733597,
+     137.96718,
+     134.929583,
+     135.289066,
+     135.846646,
+     137.217411,
+     137.469314,
+     136.95285,
+     136.8604,
+     138.005956,
+     137.859795,
+     137.945274,
+     137.921492,
+     139.07065,
+     138.267836,
+     137.826149,
+     138.256385
+    ]
+   },
+   {
+    "id": "parser.hyperlinks",
+    "label": "OSC 8 links + OSC 133 marks",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "6cb570e81b3f5aa2",
+    "info": {
+     "screen_text": "309527855b007d9a",
+     "bytes": 8388585
+    },
+    "samples": [
+     116.209358,
+     113.127128,
+     118.23181,
+     112.076231,
+     111.497823,
+     114.567591,
+     114.76708,
+     116.770813,
+     112.371474,
+     114.656943,
+     117.527553,
+     118.201531,
+     119.743942,
+     118.419144,
+     118.529753,
+     114.961002,
+     118.75519,
+     119.040207
+    ]
+   },
+   {
+    "id": "parser.images",
+    "label": "sixel + kitty images",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "4455f4b6be3b7996",
+    "info": {
+     "screen_text": "ac739513c44b5326",
+     "bytes": 8387040
+    },
+    "samples": [
+     80.7020502,
+     80.7916157,
+     80.6936374,
+     79.1420522,
+     78.3268988,
+     79.9346875,
+     81.03499,
+     80.8262112,
+     80.0973501,
+     81.2288972,
+     80.5549055,
+     80.3028449,
+     80.704493,
+     80.5901438,
+     81.0160091,
+     80.8649582,
+     80.653157,
+     80.7304573
+    ]
+   },
+   {
+    "id": "parser_core.plain_text",
+    "label": "core: plain text (cat-like)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "11c624c82b6c772c",
+    "info": {
+     "screen_text": "ba9d41cfd4dca670",
+     "bytes": 8388608
+    },
+    "samples": [
+     218.76378,
+     219.739218,
+     220.269879,
+     219.698985,
+     219.716086,
+     217.712252,
+     219.7005,
+     220.414766,
+     221.259589,
+     218.160742,
+     218.933902,
+     217.103948,
+     216.46535,
+     216.977838,
+     218.080956,
+     218.527242,
+     219.782236,
+     219.818718
+    ]
+   },
+   {
+    "id": "parser_core.colored_text",
+    "label": "core: SGR-heavy (colorized ls)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "779df38d73ec7671",
+    "info": {
+     "screen_text": "89b5c2df0e85cfb1",
+     "bytes": 8388608
+    },
+    "samples": [
+     166.335441,
+     165.381658,
+     167.394368,
+     166.040125,
+     166.059801,
+     166.341635,
+     166.063245,
+     166.035958,
+     165.792945,
+     166.705304,
+     166.308929,
+     166.509405,
+     167.598792,
+     167.839797,
+     168.406871,
+     166.563866,
+     167.750492,
+     167.839212
+    ]
+   },
+   {
+    "id": "parser_core.cursor_heavy",
+    "label": "core: cursor-heavy (TUI redraw)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "ef7f2d28c21defbe",
+    "info": {
+     "screen_text": "09ab053c2a4d3ed0",
+     "bytes": 8388608
+    },
+    "samples": [
+     199.70876,
+     199.760707,
+     198.229562,
+     200.988613,
+     199.057998,
+     198.398965,
+     198.810448,
+     199.491093,
+     198.911991,
+     200.024798,
+     200.309227,
+     201.651653,
+     200.354798,
+     199.353556,
+     201.412404,
+     200.550471,
+     199.389579,
+     199.197195
+    ]
+   },
+   {
+    "id": "parser_core.unicode_heavy",
+    "label": "core: UTF-8 heavy (emoji/CJK/box)",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "f96126fc6df44356",
+    "info": {
+     "screen_text": "702bcb945873ca57",
+     "bytes": 8388608
+    },
+    "samples": [
+     168.829353,
+     170.520094,
+     170.981272,
+     169.123209,
+     168.744331,
+     169.790396,
+     169.573258,
+     169.268435,
+     170.316043,
+     170.151526,
+     169.727958,
+     171.510958,
+     168.743886,
+     170.78371,
+     171.055151,
+     168.619847,
+     171.135196,
+     170.350043
+    ]
+   },
+   {
+    "id": "findbar.1000",
+    "label": "1000 lines, per keystroke",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": "matches=4502",
+    "info": {
+     "scrollback": 1000
+    },
+    "samples": [
+     0.264584,
+     0.263917,
+     0.279209,
+     0.257958,
+     0.259417,
+     0.257875,
+     0.264042,
+     0.263583,
+     0.261375,
+     0.256,
+     0.253375,
+     0.253458,
+     0.255833,
+     0.253167,
+     0.258333,
+     0.268167,
+     0.264625,
+     0.272625
+    ]
+   },
+   {
+    "id": "findbar.10000",
+    "label": "10000 lines, per keystroke",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": "matches=37139",
+    "info": {
+     "scrollback": 10000
+    },
+    "samples": [
+     2.431292,
+     2.562,
+     2.617667,
+     2.512125,
+     2.479583,
+     2.481625,
+     2.498958,
+     2.561625,
+     2.482166,
+     2.550708,
+     2.478417,
+     2.483458,
+     2.520584,
+     2.466625,
+     2.518541,
+     2.461083,
+     2.610708,
+     2.436375
+    ]
+   },
+   {
+    "id": "findbar.100000",
+    "label": "100000 lines, per keystroke",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": "matches=350275",
+    "info": {
+     "scrollback": 100000
+    },
+    "samples": [
+     24.65025,
+     24.536417,
+     24.634166,
+     25.054292,
+     24.913083,
+     24.915708,
+     24.769375,
+     24.901416,
+     24.910458,
+     24.86925,
+     25.016208,
+     24.65725,
+     24.686167,
+     24.897958,
+     24.738833,
+     24.4335,
+     24.686417,
+     24.572208
+    ]
+   },
+   {
+    "id": "reflow.1000",
+    "label": "1000 lines, per resize",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": "8a17a5b81f321530",
+    "info": {
+     "scrollback": 1000
+    },
+    "samples": [
+     0.259375,
+     0.259375,
+     0.26075,
+     0.260792,
+     0.263083,
+     0.264791,
+     0.264,
+     0.253458,
+     0.255792,
+     0.251458,
+     0.250583,
+     0.250958,
+     0.255666,
+     0.250083,
+     0.25025,
+     0.25,
+     0.252875,
+     0.250167,
+     0.267791,
+     0.250458,
+     0.268917,
+     0.255291,
+     0.255625,
+     0.273708,
+     0.291791,
+     0.275666,
+     0.252292,
+     0.251083,
+     0.253375,
+     0.251,
+     0.255167,
+     0.25975,
+     0.268,
+     0.270333,
+     0.273875,
+     0.261875
+    ]
+   },
+   {
+    "id": "reflow.10000",
+    "label": "10000 lines, per resize",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": "6825caa6e1c4ed23",
+    "info": {
+     "scrollback": 10000
+    },
+    "samples": [
+     4.457458,
+     4.418917,
+     4.080625,
+     4.117959,
+     4.176917,
+     4.9385,
+     4.127,
+     5.043667,
+     4.169916,
+     4.691916,
+     4.622208,
+     4.107875,
+     4.942166,
+     4.137042,
+     4.862917,
+     4.517125,
+     4.073542,
+     4.138125,
+     4.72425,
+     4.16525,
+     4.172959,
+     4.366208,
+     4.728875,
+     4.854208,
+     5.541208,
+     5.254084,
+     4.981708,
+     5.005875,
+     5.279375,
+     5.459167,
+     4.118625,
+     4.666875,
+     4.804458,
+     4.317,
+     4.228666,
+     4.190167
+    ]
+   },
+   {
+    "id": "pty.plain_text",
+    "label": "pty: plain text",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "11c624c82b6c772c",
+    "info": {
+     "bytes": 8388608,
+     "same_as": "parser.plain_text"
+    },
+    "samples": [
+     158.313302,
+     156.996525,
+     168.032074,
+     169.480904,
+     163.409957,
+     168.786313,
+     170.152275,
+     170.637545,
+     165.581761,
+     164.663687,
+     169.15167,
+     167.256273
+    ]
+   },
+   {
+    "id": "pty.cursor_heavy",
+    "label": "pty: cursor-heavy",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "ef7f2d28c21defbe",
+    "info": {
+     "bytes": 8388608,
+     "same_as": "parser.cursor_heavy"
+    },
+    "samples": [
+     162.65893,
+     158.95237,
+     158.62813,
+     167.117099,
+     160.231268,
+     158.301554,
+     164.825684,
+     165.770899,
+     167.963132,
+     162.63854,
+     158.867144,
+     156.068884
+    ]
+   },
+   {
+    "id": "pty.sync_tui",
+    "label": "pty: synchronized-output TUI",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "2362197c8e825316",
+    "info": {
+     "bytes": 8388289,
+     "same_as": "parser.sync_tui"
+    },
+    "samples": [
+     144.323727,
+     145.187128,
+     147.964524,
+     144.384613,
+     143.748534,
+     144.126761,
+     144.135957,
+     143.842769,
+     144.052146,
+     142.980329,
+     138.821547,
+     142.700728
+    ]
+   },
+   {
+    "id": "pty_paced.plain_text",
+    "label": "paced: plain text",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "11c624c82b6c772c",
+    "info": {
+     "bytes": 8388608,
+     "same_as": "parser.plain_text"
+    },
+    "samples": [
+     87.6077876,
+     87.2362866,
+     86.6117608,
+     87.1302301,
+     87.4046282,
+     87.9835944,
+     86.5748555,
+     86.8698483,
+     86.5138436,
+     86.9202656,
+     86.9047652,
+     86.642091
+    ]
+   },
+   {
+    "id": "pty_paced.plain_text.worst_frame",
+    "label": "paced: plain text, worst frame",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": null,
+    "info": {
+     "frame_ms": 16.667
+    },
+    "samples": [
+     8.263625,
+     8.250875,
+     8.168875,
+     8.164708,
+     8.235042,
+     8.269917,
+     8.171417,
+     8.252208,
+     8.249208,
+     8.17475,
+     8.17325,
+     8.078166
+    ]
+   },
+   {
+    "id": "pty_paced.cursor_heavy",
+    "label": "paced: cursor-heavy",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "ef7f2d28c21defbe",
+    "info": {
+     "bytes": 8388608,
+     "same_as": "parser.cursor_heavy"
+    },
+    "samples": [
+     77.4334992,
+     78.4270798,
+     78.4174058,
+     78.3978744,
+     78.4323337,
+     77.7217169,
+     78.2065288,
+     78.1771695,
+     78.1861463,
+     78.1615749,
+     78.4287137,
+     79.3667525
+    ]
+   },
+   {
+    "id": "pty_paced.cursor_heavy.worst_frame",
+    "label": "paced: cursor-heavy, worst frame",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": null,
+    "info": {
+     "frame_ms": 16.667
+    },
+    "samples": [
+     8.297667,
+     8.248667,
+     8.191042,
+     8.303792,
+     8.334916,
+     8.126875,
+     8.340334,
+     8.268,
+     8.220916,
+     8.2315,
+     8.299916,
+     8.313375
+    ]
+   },
+   {
+    "id": "pty_paced.sync_tui",
+    "label": "paced: synchronized-output TUI",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "2362197c8e825316",
+    "info": {
+     "bytes": 8388289,
+     "same_as": "parser.sync_tui"
+    },
+    "samples": [
+     66.5683468,
+     66.4833107,
+     66.0335114,
+     66.5374558,
+     66.4930045,
+     66.5724091,
+     66.3076813,
+     66.1574071,
+     66.2563787,
+     66.2560357,
+     66.1686934,
+     66.1463757
+    ]
+   },
+   {
+    "id": "pty_paced.sync_tui.worst_frame",
+    "label": "paced: synchronized-output TUI, worst frame",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": null,
+    "info": {
+     "frame_ms": 16.667
+    },
+    "samples": [
+     8.005125,
+     8.003792,
+     8.006458,
+     8.006417,
+     8.006666,
+     8.005458,
+     8.006708,
+     8.006666,
+     8.002791,
+     8.007791,
+     8.006875,
+     8.004334
+    ]
+   },
+   {
+    "id": "pty_threaded.idle.lock_wait",
+    "label": "threaded: no output (control), worst lock wait",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": null,
+    "info": {
+     "note": "the probe's own noise: compare pty_threaded.*.lock_wait against this"
+    },
+    "samples": [
+     0.001416,
+     0.019958,
+     0.001,
+     0.00325,
+     0.0015,
+     0.001291,
+     0.001125,
+     0.001333,
+     0.001375,
+     0.000833,
+     0.001334,
+     0.003416
+    ]
+   },
+   {
+    "id": "pty_threaded.plain_text",
+    "label": "threaded: plain text",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "11c624c82b6c772c",
+    "info": {
+     "bytes": 8388608,
+     "same_as": "parser.plain_text"
+    },
+    "samples": [
+     85.3123651,
+     81.7991025,
+     78.1508531,
+     80.9798218,
+     79.7487913,
+     80.9700208,
+     78.6769163,
+     80.818557,
+     81.9941662,
+     81.7306464,
+     85.6134221,
+     81.4904265
+    ]
+   },
+   {
+    "id": "pty_threaded.plain_text.lock_wait",
+    "label": "threaded: plain text, worst lock wait",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": null,
+    "info": {
+     "frame_ms": 16.667
+    },
+    "samples": [
+     0.025083,
+     0.010584,
+     0.038167,
+     0.045375,
+     0.065542,
+     0.066041,
+     0.060833,
+     0.042958,
+     0.070417,
+     0.075667,
+     0.056375,
+     0.010208
+    ]
+   },
+   {
+    "id": "pty_threaded.cursor_heavy",
+    "label": "threaded: cursor-heavy",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "ef7f2d28c21defbe",
+    "info": {
+     "bytes": 8388608,
+     "same_as": "parser.cursor_heavy"
+    },
+    "samples": [
+     85.6483292,
+     85.1880212,
+     78.9292264,
+     80.3948731,
+     77.0002008,
+     79.5275072,
+     78.4296425,
+     78.1891074,
+     80.3945362,
+     78.3758563,
+     81.5410924,
+     80.494808
+    ]
+   },
+   {
+    "id": "pty_threaded.cursor_heavy.lock_wait",
+    "label": "threaded: cursor-heavy, worst lock wait",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": null,
+    "info": {
+     "frame_ms": 16.667
+    },
+    "samples": [
+     0.026709,
+     0.024,
+     0.050375,
+     0.040417,
+     0.032583,
+     0.03225,
+     0.034,
+     0.023083,
+     0.032042,
+     0.0755,
+     0.097625,
+     0.050167
+    ]
+   },
+   {
+    "id": "pty_threaded.sync_tui",
+    "label": "threaded: synchronized-output TUI",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "2362197c8e825316",
+    "info": {
+     "bytes": 8388289,
+     "same_as": "parser.sync_tui"
+    },
+    "samples": [
+     77.4803946,
+     74.4082183,
+     70.0517409,
+     70.5887171,
+     70.7280735,
+     70.7655087,
+     74.2782163,
+     71.3675765,
+     72.3993956,
+     70.0470386,
+     70.9458885,
+     69.4954183
+    ]
+   },
+   {
+    "id": "pty_threaded.sync_tui.lock_wait",
+    "label": "threaded: synchronized-output TUI, worst lock wait",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": null,
+    "info": {
+     "frame_ms": 16.667
+    },
+    "samples": [
+     0.0285,
+     0.032208,
+     0.068834,
+     0.063625,
+     0.04025,
+     0.039542,
+     0.03975,
+     0.036375,
+     0.060959,
+     0.048584,
+     0.0925,
+     0.044416
+    ]
+   },
+   {
+    "id": "pty_threaded.images",
+    "label": "threaded: sixel + kitty images",
+    "unit": "MB/s",
+    "better": "higher",
+    "fingerprint": "4455f4b6be3b7996",
+    "info": {
+     "bytes": 8387040,
+     "same_as": "parser.images"
+    },
+    "samples": [
+     51.6230587,
+     47.3845881,
+     48.6436552,
+     48.425306,
+     48.2072131,
+     48.705637,
+     47.890649,
+     48.9491213,
+     49.6313053,
+     48.1620995,
+     48.0492634,
+     48.9059604
+    ]
+   },
+   {
+    "id": "pty_threaded.images.lock_wait",
+    "label": "threaded: sixel + kitty images, worst lock wait",
+    "unit": "ms",
+    "better": "lower",
+    "fingerprint": null,
+    "info": {
+     "frame_ms": 16.667
+    },
+    "samples": [
+     0.15875,
+     0.14675,
+     0.087167,
+     0.078292,
+     0.097375,
+     0.132667,
+     0.085334,
+     0.204709,
+     0.091959,
+     0.09675,
+     0.258334,
+     0.199125
+    ]
+   }
+  ]
+ }
+}

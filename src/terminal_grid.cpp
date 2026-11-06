@@ -155,145 +155,122 @@ void TerminalGrid::resize(int cols, int rows) {
         return;
     }
 
-    // 1. Gather all rows (history + active) into a raw row sequence
-    struct RawRow {
-        std::vector<Cell> cells;
-        bool wrapped = false;
+    // Every row, scrollback then screen, as one sequence. Read in place:
+    // copying them all out first was one of four full copies a resize made.
+    const int history = static_cast<int>(scrollback_history_.size());
+    const int total_src = history + rows_;
+    auto src_cells = [&](int i) -> const Cell* {
+        return i < history ? scrollback_history_[i].cells.data() : row_data(i - history);
+    };
+    auto src_len = [&](int i) -> int {
+        return i < history ? static_cast<int>(scrollback_history_[i].cells.size()) : cols_;
+    };
+    auto src_wrapped = [&](int i) -> bool {
+        if (i < history) return scrollback_history_[i].wrapped;
+        const int r = i - history;
+        return r < static_cast<int>(row_wrapped_.size()) && row_wrapped_[r];
+    };
+    auto src_prompt = [&](int i) -> bool {
+        if (i < history) return scrollback_history_[i].prompt;
+        const int r = i - history;
+        return r < static_cast<int>(row_prompt_.size()) && row_prompt_[r];
+    };
+    // What a hard line break strips from the end of a line: spaces with no
+    // background, which only pad it out to the old width.
+    auto blank = [](const Cell& c) { return c.codepoint == 32 && c.bg.a == 0; };
+
+    // 1. Logical lines: runs of rows joined by soft wraps. Only where each
+    // starts and how long it is, not its cells.
+    struct Line {
+        int first = 0;     // first source row
+        int count = 0;     // source rows
+        size_t len = 0;    // cells, after stripping a hard break's padding
         bool prompt = false;
     };
-    std::vector<RawRow> raw_rows;
-    for (const auto& hist : scrollback_history_) {
-        raw_rows.push_back({ hist.cells, hist.wrapped, hist.prompt });
-    }
-    for (int r = 0; r < rows_; ++r) {
-        std::vector<Cell> row_cells(cols_);
-        for (int c = 0; c < cols_; ++c) {
-            row_cells[c] = row_data(r)[c];
-        }
-        bool is_wrapped = (r < static_cast<int>(row_wrapped_.size())) ? row_wrapped_[r] : false;
-        bool is_prompt = (r < static_cast<int>(row_prompt_.size())) ? row_prompt_[r] : false;
-        raw_rows.push_back({ std::move(row_cells), is_wrapped, is_prompt });
-    }
-
-    // Track the 1D index of the cursor cell in the raw rows stream
-    size_t cursor_1d_index = (scrollback_history_.size() + cursor_row_) * cols_ + cursor_col_;
+    std::vector<Line> lines;
+    lines.reserve(static_cast<size_t>(total_src));
+    const int cursor_src = history + cursor_row_;
     int cursor_line_idx = -1;
     int cursor_col_idx = -1;
-
-    // 2. Reconstruct logical lines by joining soft-wrapped rows
-    std::vector<std::vector<Cell>> logical_lines;
-    std::vector<bool> logical_prompt; // parallel: line began at a prompt mark
-    std::vector<Cell> current_line;
-    bool current_line_prompt = false;
     int line_top_logical = -1;
-    for (size_t row_idx = 0; row_idx < raw_rows.size(); ++row_idx) {
-        const auto& rr = raw_rows[row_idx];
-        if (static_cast<int>(row_idx) == line_top_raw) {
-            line_top_logical = static_cast<int>(logical_lines.size());
-        }
-        if (current_line.empty()) current_line_prompt = rr.prompt;
-        for (size_t col_idx = 0; col_idx < rr.cells.size(); ++col_idx) {
-            size_t cell_1d = row_idx * cols_ + col_idx;
-            if (cell_1d == cursor_1d_index) {
-                cursor_line_idx = static_cast<int>(logical_lines.size());
-                cursor_col_idx = static_cast<int>(current_line.size() + col_idx);
+    for (int i = 0; i < total_src;) {
+        Line line;
+        line.first = i;
+        line.prompt = src_prompt(i);
+        size_t len = 0;
+        bool hard = false;
+        for (;;) {
+            if (i == line_top_raw) line_top_logical = static_cast<int>(lines.size());
+            if (i == cursor_src && cursor_col_ < src_len(i)) {
+                cursor_line_idx = static_cast<int>(lines.size());
+                cursor_col_idx = static_cast<int>(len) + cursor_col_;
             }
+            len += static_cast<size_t>(src_len(i));
+            hard = !src_wrapped(i);
+            ++i;
+            ++line.count;
+            if (hard || i == total_src) break;
         }
-        current_line.insert(current_line.end(), rr.cells.begin(), rr.cells.end());
-        if (!rr.wrapped) {
-            // Hard break: strip trailing spaces to make wrapping/unwrapping cleaner
-            while (!current_line.empty() && current_line.back().codepoint == 32 && current_line.back().bg.a == 0) {
-                current_line.pop_back();
-            }
-            // Clamp cursor position if it fell into the stripped area
-            if (cursor_line_idx == static_cast<int>(logical_lines.size())) {
-                if (cursor_col_idx > static_cast<int>(current_line.size())) {
-                    cursor_col_idx = static_cast<int>(current_line.size());
+        if (hard) {
+            // Strip padding back across rows if need be, as a joined line would.
+            int r = line.first + line.count - 1;
+            size_t row_start = len - static_cast<size_t>(src_len(r));
+            while (len > 0) {
+                while (len == row_start && r > line.first) {
+                    --r;
+                    row_start -= static_cast<size_t>(src_len(r));
                 }
-            }
-            logical_lines.push_back(std::move(current_line));
-            logical_prompt.push_back(current_line_prompt);
-            current_line.clear();
-            current_line_prompt = false;
-        }
-    }
-    if (!current_line.empty()) {
-        if (cursor_line_idx == static_cast<int>(logical_lines.size())) {
-            if (cursor_col_idx > static_cast<int>(current_line.size())) {
-                cursor_col_idx = static_cast<int>(current_line.size());
+                if (!blank(src_cells(r)[len - 1 - row_start])) break;
+                --len;
             }
         }
-        logical_lines.push_back(std::move(current_line));
-        logical_prompt.push_back(current_line_prompt);
+        line.len = len;
+        if (cursor_line_idx == static_cast<int>(lines.size()) &&
+            cursor_col_idx > static_cast<int>(len)) {
+            cursor_col_idx = static_cast<int>(len);
+        }
+        lines.push_back(line);
     }
 
     // Trailing blank lines with nothing on them -- and not holding the
     // cursor -- only exist because the terminal was previously taller than
     // its actual content (e.g. after growing to a much bigger window).
-    // Left in, step 4 below counts them as real lines when deciding how
+    // Left in, step 3 below counts them as real lines when deciding how
     // many lines to push into scrollback on a shrink, which pushes the
     // *content* (and the cursor) out of the new viewport entirely -- the
     // active area ends up all blank, and the shell's next redraw then
     // reprints the prompt fresh on top of it, leaving the original still
     // sitting in scrollback: a visible duplicate.
-    while (!logical_lines.empty() && logical_lines.back().empty() &&
-           cursor_line_idx != static_cast<int>(logical_lines.size()) - 1) {
-        logical_lines.pop_back();
-        logical_prompt.pop_back();
+    while (!lines.empty() && lines.back().len == 0 &&
+           cursor_line_idx != static_cast<int>(lines.size()) - 1) {
+        lines.pop_back();
     }
 
-    // 3. Re-wrap all logical lines to the new width `cols`
-    std::vector<RawRow> wrapped_rows;
-    Cell space_cell = { 32, current_fg_packed_, current_bg_packed_ };
-    
+    // 2. Where every line lands at the new width, worked out before any cell
+    // moves: a line of n cells takes ceil(n / cols) rows, an empty one 1.
+    const Cell space_cell = { 32, current_fg_packed_, current_bg_packed_ };
+    auto rows_for = [&](const Line& l) -> int {
+        return l.len == 0 ? 1 : static_cast<int>((l.len + cols - 1) / static_cast<size_t>(cols));
+    };
     int new_cursor_row_wrapped = -1;
     int new_cursor_col_wrapped = -1;
-    int current_wrapped_row_idx = 0;
     int line_top_wrapped = -1;
-
-    for (size_t line_idx = 0; line_idx < logical_lines.size(); ++line_idx) {
-        const auto& line = logical_lines[line_idx];
-        if (static_cast<int>(line_idx) == line_top_logical) {
-            line_top_wrapped = current_wrapped_row_idx;
+    int total_rows = 0;
+    for (size_t li = 0; li < lines.size(); ++li) {
+        if (static_cast<int>(li) == line_top_logical) line_top_wrapped = total_rows;
+        if (static_cast<int>(li) == cursor_line_idx) {
+            // The chunk holding the cursor; one just past the end of the line
+            // stays on its last row.
+            const int c = cursor_col_idx;
+            const int chunk = lines[li].len == 0 ? 0
+                : std::min(c / cols, static_cast<int>((lines[li].len - 1) / static_cast<size_t>(cols)));
+            new_cursor_row_wrapped = total_rows + chunk;
+            new_cursor_col_wrapped = c - chunk * cols;
         }
-        if (line.empty()) {
-            if (static_cast<int>(line_idx) == cursor_line_idx) {
-                new_cursor_row_wrapped = current_wrapped_row_idx;
-                new_cursor_col_wrapped = 0;
-            }
-            std::vector<Cell> empty_cells(cols, space_cell);
-            wrapped_rows.push_back({ std::move(empty_cells), false, logical_prompt[line_idx] });
-            current_wrapped_row_idx++;
-            continue;
-        }
-        size_t idx = 0;
-        while (idx < line.size()) {
-            size_t chunk_size = std::min(static_cast<size_t>(cols), line.size() - idx);
-            std::vector<Cell> row_cells(cols, space_cell);
-            for (size_t i = 0; i < chunk_size; ++i) {
-                row_cells[i] = line[idx + i];
-            }
-            
-            // Check if this chunk contains the cursor
-            if (static_cast<int>(line_idx) == cursor_line_idx) {
-                bool is_last_chunk = (idx + chunk_size == line.size());
-                if ((cursor_col_idx >= static_cast<int>(idx) && cursor_col_idx < static_cast<int>(idx + chunk_size)) ||
-                    (is_last_chunk && cursor_col_idx == static_cast<int>(line.size()))) {
-                    new_cursor_row_wrapped = current_wrapped_row_idx;
-                    new_cursor_col_wrapped = cursor_col_idx - static_cast<int>(idx);
-                }
-            }
-            
-            bool first_chunk = (idx == 0);
-            idx += chunk_size;
-            bool is_wrapped = (idx < line.size());
-            wrapped_rows.push_back({ std::move(row_cells), is_wrapped,
-                                     first_chunk && logical_prompt[line_idx] });
-            current_wrapped_row_idx++;
-        }
+        total_rows += rows_for(lines[li]);
     }
 
-    // 3b. Keep the cursor where the shell will look for it.
+    // 2b. Keep the cursor where the shell will look for it.
     //
     // A shell redraws its line after a resize by moving up the number of
     // rows the line had *before* -- it cannot know the terminal rewrapped
@@ -308,42 +285,77 @@ void TerminalGrid::resize(int cols, int rows) {
     // rows added below if the line got shorter -- and the shell's redraw
     // replaces the line moments later.
     if (line_top_wrapped >= 0) {
-        int want = line_top_wrapped + line_top_offset;
-        while (static_cast<int>(wrapped_rows.size()) <= want) {
-            wrapped_rows.push_back({ std::vector<Cell>(cols, space_cell), false, false });
-        }
+        const int want = line_top_wrapped + line_top_offset;
+        if (total_rows <= want) total_rows = want + 1;  // blank rows, below
         new_cursor_row_wrapped = want;
         new_cursor_col_wrapped = std::clamp(new_cursor_col_wrapped, 0, cols - 1);
     }
 
-    // 4. Distribute wrapped rows into new active cells and scrollback history
+    const int active_start_idx = std::max(0, total_rows - rows);
+    // Rows that would only be pruned straight back out of scrollback are
+    // never built.
+    const int keep_from = std::max(0, active_start_idx - static_cast<int>(max_scrollback_size_));
+
+    // 3. Build the new rows straight into scrollback and the screen.
     std::deque<ScrollbackRow> new_history;
-    std::vector<Cell> new_cells(cols * rows, space_cell);
+    std::vector<Cell> new_cells(static_cast<size_t>(cols) * rows, space_cell);
     std::vector<uint8_t> new_row_wrapped(rows, false);
     std::vector<uint8_t> new_row_prompt(rows, false);
 
-    int active_start_idx = 0;
-    if (static_cast<int>(wrapped_rows.size()) > rows) {
-        active_start_idx = static_cast<int>(wrapped_rows.size()) - rows;
-    }
+    // Copies cells [from, from + n) of a line into `out`.
+    auto copy_cells = [&](const Line& l, size_t from, size_t n, Cell* out) {
+        int r = l.first;
+        size_t row_start = 0;
+        while (n > 0) {
+            const size_t rl = static_cast<size_t>(src_len(r));
+            if (from >= row_start + rl) { row_start += rl; ++r; continue; }
+            const size_t off = from - row_start;
+            const size_t take = std::min(n, rl - off);
+            std::copy_n(src_cells(r) + off, take, out);
+            out += take; from += take; n -= take;
+        }
+    };
 
-    for (int i = 0; i < active_start_idx; ++i) {
-        new_history.push_back({ std::move(wrapped_rows[i].cells), wrapped_rows[i].wrapped,
-                                wrapped_rows[i].prompt });
-    }
-    if (new_history.size() > max_scrollback_size_) {
-        size_t prune_cnt = new_history.size() - max_scrollback_size_;
-        new_history.erase(new_history.begin(), new_history.begin() + prune_cnt);
-    }
-
-    for (int r = 0; r < rows; ++r) {
-        int idx = active_start_idx + r;
-        if (idx < static_cast<int>(wrapped_rows.size())) {
-            for (int c = 0; c < cols; ++c) {
-                new_cells[r * cols + c] = wrapped_rows[idx].cells[c];
+    int out_row = 0;
+    for (const Line& l : lines) {
+        const int nrows = rows_for(l);
+        if (out_row + nrows <= keep_from) { out_row += nrows; continue; }
+        // A scrollback row that is a whole line and still fits keeps its own
+        // storage: resized, with its padding redone. That is nearly every
+        // line in a deep scrollback, and it moves no cells.
+        const bool reuse = nrows == 1 && l.count == 1 && l.first < history &&
+                           out_row >= keep_from && out_row < active_start_idx;
+        for (int k = 0; k < nrows; ++k, ++out_row) {
+            if (out_row < keep_from) continue;
+            const size_t from = static_cast<size_t>(k) * cols;
+            const size_t n = from < l.len ? std::min(static_cast<size_t>(cols), l.len - from) : 0;
+            const bool wrapped = from + n < l.len;
+            const bool prompt = k == 0 && l.prompt;
+            if (out_row < active_start_idx) {
+                std::vector<Cell> cells;
+                if (reuse) {
+                    cells = std::move(scrollback_history_[l.first].cells);
+                    cells.resize(static_cast<size_t>(cols), space_cell);
+                    std::fill(cells.begin() + static_cast<std::ptrdiff_t>(n), cells.end(), space_cell);
+                } else {
+                    cells.assign(static_cast<size_t>(cols), space_cell);
+                    copy_cells(l, from, n, cells.data());
+                }
+                new_history.push_back({ std::move(cells), wrapped, prompt });
+            } else {
+                const int r = out_row - active_start_idx;
+                copy_cells(l, from, n, new_cells.data() + static_cast<size_t>(r) * cols);
+                new_row_wrapped[r] = wrapped;
+                new_row_prompt[r] = prompt;
             }
-            new_row_wrapped[r] = wrapped_rows[idx].wrapped;
-            new_row_prompt[r] = wrapped_rows[idx].prompt;
+        }
+    }
+    // Rows past the last line, from 2b, are blank. new_cells starts out
+    // blank; any that reach scrollback (a line longer than the screen that
+    // got much shorter) are written here.
+    for (; out_row < total_rows && out_row < active_start_idx; ++out_row) {
+        if (out_row >= keep_from) {
+            new_history.push_back({ std::vector<Cell>(static_cast<size_t>(cols), space_cell), false, false });
         }
     }
 
