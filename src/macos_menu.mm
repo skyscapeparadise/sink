@@ -916,7 +916,10 @@ static void make_window_see_through(NSWindow* nswin) {
         if ([subview isKindOfClass:[NSVisualEffectView class]]) {
             if (subview.frame.size.height <= 36.0) {
                 [subview setFrame:NSMakeRect(0, b.size.height - 32, b.size.width, 32)];
-                if ([win titleVisibility] == NSWindowTitleVisible) {
+                // In full screen the title bar's blur stays hidden; see
+                // windowDidEnterFullScreen.
+                if ([win titleVisibility] == NSWindowTitleVisible &&
+                    ([win styleMask] & NSWindowStyleMaskFullScreen) == 0) {
                     [subview setHidden:NO];
                 }
             } else {
@@ -989,7 +992,12 @@ void enable_macos_window_vibrancy(SDL_Window* sdl_win, bool enable) {
             NSRect b = [contentView bounds];
             [titlebarEffectView setFrame:NSMakeRect(0, b.size.height - titlebar_h, b.size.width, titlebar_h)];
             [titlebarEffectView setMaterial:NSVisualEffectMaterialHUDWindow];
-            [titlebarEffectView setHidden:NO];
+            // Not in full screen, where there is no title bar to back: macOS
+            // slides its own down only while the pointer is at the top.
+            // Showing it there left a strip across the top of the screen
+            // after toggling HDR text (which reapplies this) in full screen.
+            const bool full_screen = ([nswin styleMask] & NSWindowStyleMaskFullScreen) != 0;
+            [titlebarEffectView setHidden:full_screen];
             [nswin setTitleVisibility:NSWindowTitleVisible];
         } else { // title bar: OFF (Full Bleed Floating Buttons, NO Title)
             [titlebarEffectView setHidden:YES];
