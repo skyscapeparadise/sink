@@ -2703,6 +2703,10 @@ SDL_AppResult SDL_AppEvent(void* appstate, SDL_Event* event) {
                     if (tw->demo_thread.joinable()) tw->demo_thread.join();
                     tw->demo_pane = tw->focused;
                     tw->demo_running.store(true);
+                    // Before the Enter: the pty reader drops the pane's output
+                    // from here on, and the shell's next prompt is moments
+                    // away. Left to the next frame, it was drawn into the demo.
+                    tw->focused->demo_owned.store(true);
                     const char enter = '\r';
                     tw->fpane().pty.write_to_pty(&enter, 1);
                     tw->demo_thread = std::thread(std::move(body));
@@ -3279,8 +3283,9 @@ static bool drain_pane_output(TerminalWindow* tw, Pane* pane_ptr, size_t max_byt
 
     if (pane.reader_parses) {
         // The reader thread parses and replies; tell it what it can't see.
+        // (Whether a demo owns the pane is set when the demo starts and ends,
+        // not here: a frame late either way loses or misplaces the prompt.)
         pane.typing_animation.store(tw->animated_typing, std::memory_order_relaxed);
-        pane.demo_owned.store(demo_owns_pane, std::memory_order_relaxed);
     } else {
         pane.pty.read_pending(pane.pty_output);
         // Carry anything last frame's budget did not reach. The swap keeps the

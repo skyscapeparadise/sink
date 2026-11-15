@@ -102,10 +102,10 @@ public:
     sync_output::Hold sync_hold;
 
     // With the threaded parser (docs/threading-plan.md), what the reader
-    // thread needs to know about its window, set by the frame each frame:
-    // whether the typewriter is on, and whether sinkdemo owns the pane (its
-    // output is dropped then). Atomics, because the window's own fields are
-    // the main thread's.
+    // thread needs to know about its window: whether the typewriter is on,
+    // set by the frame each frame, and whether sinkdemo owns the pane (its
+    // output is dropped then), set the moment a demo starts and ends.
+    // Atomics, because the window's own fields are the main thread's.
     std::atomic<bool> typing_animation{true};
     std::atomic<bool> demo_owned{false};
     // Whether this pane's pty reader thread parses its output (the threaded

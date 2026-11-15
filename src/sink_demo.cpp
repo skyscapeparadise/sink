@@ -103,6 +103,16 @@ bool is_demo_running(TerminalWindow* tw) {
     return tw ? tw->demo_running.load() : false;
 }
 
+// Hands the pane back to the shell. Its pty reader stops dropping output
+// here, before the caller asks the shell for a fresh prompt: done at the next
+// frame instead, the prompt the shell printed in the meantime was dropped,
+// and the demo ended on an empty screen.
+static void end_demo(TerminalWindow* tw) {
+    tw->demo_target().demo_owned.store(false);
+    tw->demo_running.store(false);
+    tw->demo_skip_requested.store(false);
+}
+
 void request_skip(TerminalWindow* tw) {
     if (tw) {
         tw->demo_skip_requested.store(true);
@@ -386,8 +396,7 @@ void run_sing(TerminalWindow* tw, const std::string& song_name) {
     std::string lyrics = get_song_lyrics(song_name);
     if (lyrics.empty()) {
         feed_to_terminal(tw, "\r\nUsage: sinksing <coelacanth | snake | sink | you>\r\n");
-        tw->demo_running.store(false);
-        tw->demo_skip_requested.store(false);
+        end_demo(tw);
         const char c = '\r';
         tw->demo_target().pty.write_to_pty(&c, 1);
         return;
@@ -400,8 +409,7 @@ void run_sing(TerminalWindow* tw, const std::string& song_name) {
     // Ensure finished lyrics return cleanly to the shell prompt
     feed_to_terminal(tw, "\r\n");
 
-    tw->demo_running.store(false);
-    tw->demo_skip_requested.store(false);
+    end_demo(tw);
 
     if (tw->demo_abort.load()) return;
 
@@ -1159,9 +1167,9 @@ void run_demo(TerminalWindow* tw, AppState* state) {
     // The window may be closing (demo_abort set): unwind between steps
     // instead of running the rest of the multi-second sequence, so the
     // thread finishes quickly and the caller can safely delete tw.
-    if (tw->demo_abort.load()) { tw->demo_running.store(false); return; }
+    if (tw->demo_abort.load()) { end_demo(tw); return; }
     do_song_step("coelacanth");
-    if (tw->demo_abort.load()) { tw->demo_running.store(false); return; }
+    if (tw->demo_abort.load()) { end_demo(tw); return; }
 
     // Finale sequence
     SwimIntro intro;
@@ -1178,16 +1186,14 @@ void run_demo(TerminalWindow* tw, AppState* state) {
     sleep_interruptible(tw, 200); // 0.2s hesitation
     feed_to_terminal(tw, "\r\n");
 
-    if (tw->demo_abort.load()) { tw->demo_running.store(false); return; }
+    if (tw->demo_abort.load()) { end_demo(tw); return; }
 
     // Resolve splash.dat path dynamically. The words shake, burst and
     // dissolve into the video (see play_swim_intro).
     std::string splash_path = resolve_splash_path();
     play_cpp_video_as_text(tw, splash_path, &intro);
 
-    // Reset demo state flags for this window
-    tw->demo_running.store(false);
-    tw->demo_skip_requested.store(false);
+    end_demo(tw);
 
     if (tw->demo_abort.load()) return;
 
